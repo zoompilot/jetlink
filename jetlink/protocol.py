@@ -24,7 +24,7 @@ from enum import IntEnum
 MAGIC = 0x4B4E4C4A  # b'JLNK'
 VERSION = 1
 
-# magic, version, msg_type, seq, flags, length, t_mono_ns, 4 pad
+# magic, version, msg_type, seq, flags, length, reserved, 4 pad
 HEADER_FMT = '<IHHIIIQ4x'
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 assert HEADER_SIZE == 32
@@ -42,8 +42,7 @@ class Msg(IntEnum):
   PROGRESS = 7         # json: {stage, frac, msg} - unsolicited, server -> client
   INFER_REQ = 8        # InferHeader + warped(u8) + packed(f32)
   INFER_RESP = 9       # InferRespHeader + outputs(f32)
-  RESET_REQ = 10       # clear queues
-  RESET_RESP = 11
+  # 10, 11 were RESET_REQ/RESP; queues are cleared with Flag.RESET_QUEUES
   STATE_REQ = 12       # telemetry
   STATE_RESP = 13      # json
   ERROR = 14           # json: {error, detail}
@@ -52,7 +51,6 @@ class Msg(IntEnum):
 
 
 class Flag(IntEnum):
-  NONE = 0
   RESET_QUEUES = 1 << 0   # on INFER_REQ: warm-start, clear history before this frame
   WANT_STATE = 1 << 1     # on INFER_REQ: append telemetry json to the response.
                           # Piggybacked because at 20 Hz there is no gap in which
@@ -75,17 +73,17 @@ class ProtocolError(RuntimeError):
   pass
 
 
-def pack_header(msg_type: int, seq: int, length: int, flags: int = 0, t_mono_ns: int = 0) -> bytes:
-  return _header.pack(MAGIC, VERSION, int(msg_type), seq, flags, length, t_mono_ns)
+def pack_header(msg_type: int, seq: int, length: int, flags: int = 0, reserved: int = 0) -> bytes:
+  return _header.pack(MAGIC, VERSION, int(msg_type), seq, flags, length, reserved)
 
 
 def unpack_header(buf) -> tuple[int, int, int, int, int, int, int]:
-  magic, version, msg_type, seq, flags, length, t_mono_ns = _header.unpack_from(buf)
+  magic, version, msg_type, seq, flags, length, reserved = _header.unpack_from(buf)
   if magic != MAGIC:
     raise ProtocolError(f"bad magic 0x{magic:08x} (link desynced or not a jetlink peer)")
   if version != VERSION:
     raise ProtocolError(f"peer speaks protocol v{version}, we speak v{VERSION}")
-  return magic, version, msg_type, seq, flags, length, t_mono_ns
+  return magic, version, msg_type, seq, flags, length, reserved
 
 
 def pack_infer_req(frame_id: int, flags: int = 0) -> bytes:

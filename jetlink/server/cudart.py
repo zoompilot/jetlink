@@ -76,10 +76,6 @@ def memcpy_d2h_async(dst: int, src: int, nbytes: int, stream: int) -> None:
   check(_rt.cudaMemcpyAsync(dst, src, nbytes, cudaMemcpyDeviceToHost, stream))
 
 
-def mem_info() -> tuple[int, int]:
-  free_b, total_b = check(_rt.cudaMemGetInfo())
-  return free_b, total_b
-
 
 def device_name(device: int = 0) -> tuple[str, int, int]:
   """(name, cc_major, cc_minor) for a CUDA device."""

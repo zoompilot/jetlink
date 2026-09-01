@@ -55,8 +55,6 @@ class TcpTransport(StreamTransport):
     self._set_timeout(None)
     try:
       return self.sock.sendmsg(bufs)
-    except socket.timeout as e:
-      raise LinkTimeout("send timed out") from e
     except OSError as e:
       raise LinkError(f"send failed: {e}") from e
 

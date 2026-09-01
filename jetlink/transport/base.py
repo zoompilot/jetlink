@@ -30,7 +30,6 @@ class Message:
   msg_type: int
   seq: int
   flags: int
-  t_mono_ns: int
   payload: memoryview  # valid only until the next recv() on this transport
 
 
@@ -52,12 +51,6 @@ class Transport(ABC):
   @abstractmethod
   def close(self) -> None:
     ...
-
-  def __enter__(self):
-    return self
-
-  def __exit__(self, *exc):
-    self.close()
 
   def send_json(self, msg_type: int, seq: int, obj, flags: int = 0) -> None:
     import json
@@ -130,6 +123,10 @@ class StreamTransport(Transport):
   # must land in a buffer of at least a given size (FunctionFS OUT endpoints
   # want a multiple of the max packet size).
   read_slack = 0
+  # Bulk endpoints reject a read whose buffer is not a whole number of packets.
+  # 0 means "no constraint" (TCP).
+  packet_size = 0
+  read_chunk = 1 << 20
 
   def __init__(self, rx_size: int = 1 << 20):
     self.rx = RxBuffer(rx_size)
@@ -157,13 +154,18 @@ class StreamTransport(Transport):
     # would step by elements, not bytes.
     bufs = [memoryview(p).cast('B') for p in parts]
     length = sum(b.nbytes for b in bufs)
-    header = P.pack_header(msg_type, seq, length, flags, time.monotonic_ns())
+    header = P.pack_header(msg_type, seq, length, flags)
     bufs.insert(0, memoryview(header))
     while bufs:
       n = self._write(bufs)
       if n <= 0:
         raise LinkError("peer went away during send")
       bufs = advance(bufs, n)
+
+  def _clamp_read(self, dest: memoryview) -> int:
+    """How many bytes this transport may ask for in one read."""
+    n = min(dest.nbytes, self.read_chunk)
+    return (n // self.packet_size) * self.packet_size if self.packet_size else n
 
   def _fill(self, need: int, timeout: float | None) -> None:
     """Read until `need` bytes are buffered, or the deadline passes.
@@ -188,9 +190,10 @@ class StreamTransport(Transport):
   def recv(self, timeout: float | None = None) -> Message:
     if self._desynced:
       raise LinkError("stream desynced; the link must be reopened")
+    end = None if timeout is None else time.monotonic() + timeout
     self._fill(P.HEADER_SIZE, timeout)
     try:
-      _, _, msg_type, seq, flags, length, t_mono_ns = P.unpack_header(
+      _, _, msg_type, seq, flags, length, _reserved = P.unpack_header(
         self.rx.view[self.rx.start:self.rx.start + P.HEADER_SIZE])
       if length > MAX_MESSAGE:
         raise P.ProtocolError(f"message claims {length} bytes, over the {MAX_MESSAGE} cap")
@@ -201,11 +204,14 @@ class StreamTransport(Transport):
       # unwinds out of the server's accept loop and kills the process.
       self._desynced = True
       raise LinkError(f"protocol error, link unusable: {e}") from e
-    self._fill(P.HEADER_SIZE + length, timeout)
+    # The remainder of the caller's budget, not a second full one: otherwise a
+    # recv(0.035) could block 70 ms, past the whole frame.
+    self._fill(P.HEADER_SIZE + length,
+               None if end is None else max(0.0, end - time.monotonic()))
     self.rx.take(P.HEADER_SIZE)
     payload = self.rx.take(length)
     self.rx.consumed()
-    return Message(msg_type, seq, flags, t_mono_ns, payload)
+    return Message(msg_type, seq, flags, payload)
 
 
 def advance(bufs: list[memoryview], n: int) -> list[memoryview]:

@@ -44,7 +44,11 @@ EP_IN = 0x82   # device -> host
 
 SS_MAX_PACKET = 1024
 READ_CHUNK = 256 * SS_MAX_PACKET  # 256 KB
-EAGAIN_FALLBACK = 2000  # consecutive EAGAINs before giving up on O_NONBLOCK
+# Consecutive EAGAINs *before a single successful read* that mean this kernel
+# has no working non-blocking path. Only counted before the first success:
+# an idle link produces EAGAIN exactly like a broken one, so a running counter
+# would trip on any quiet second and lose the deadline for good.
+EAGAIN_FALLBACK = 2000
 
 
 def _interface_desc(n_endpoints: int = 2, i_interface: int = 1) -> bytes:
@@ -85,6 +89,8 @@ class FfsTransport(StreamTransport):
   # FunctionFS rejects an OUT read whose buffer is not a multiple of the max
   # packet size, so always keep a full chunk of room available.
   read_slack = READ_CHUNK
+  packet_size = SS_MAX_PACKET
+  read_chunk = READ_CHUNK
 
   def __init__(self, mount: str = '/dev/ffs-jetlink', gadget: str | None = None,
                udc: str | None = None):
@@ -95,6 +101,7 @@ class FfsTransport(StreamTransport):
     self.ep0 = self.ep_out = self.ep_in = -1
     self._blocking_reads = False
     self._eagain_streak = 0
+    self._ever_read = False
     try:
       self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
       os.write(self.ep0, build_descriptors())
@@ -142,7 +149,7 @@ class FfsTransport(StreamTransport):
       raise LinkError(f"gadget write failed: {e}") from e
 
   def _read_into(self, dest: memoryview, timeout: float | None) -> int:
-    n = (min(dest.nbytes, READ_CHUNK) // SS_MAX_PACKET) * SS_MAX_PACKET
+    n = self._clamp_read(dest)
     if n == 0:
       return 0
     try:
@@ -150,16 +157,17 @@ class FfsTransport(StreamTransport):
     except BlockingIOError:
       # Nothing queued yet. Sleeping briefly keeps the deadline enforceable
       # without spinning a core; _fill decides when to give up.
-      self._eagain_streak += 1
-      if self._eagain_streak > EAGAIN_FALLBACK:
-        self._use_blocking_reads()
+      if not self._ever_read:
+        self._eagain_streak += 1
+        if self._eagain_streak > EAGAIN_FALLBACK:
+          self._use_blocking_reads()
       time.sleep(0.0005)
       return 0
     except OSError as e:
       raise LinkError(f"gadget read failed: {e}") from e
     if got == 0:
       raise LinkError("gadget read returned EOF (host disconnected)")
-    self._eagain_streak = 0
+    self._ever_read = True
     return got
 
   def _use_blocking_reads(self) -> None:

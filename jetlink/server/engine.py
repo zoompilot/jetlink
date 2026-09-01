@@ -106,9 +106,6 @@ class TrtEngine:
     """Pinned array for an input. Write into it, then call run()."""
     return self.inputs[name].host
 
-  def host_output(self, name: str) -> np.ndarray:
-    return self.outputs[name].host
-
   # -- execution ------------------------------------------------------------
 
   def load_inputs(self, values: dict[str, np.ndarray]) -> None:

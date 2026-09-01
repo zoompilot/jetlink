@@ -13,10 +13,10 @@ alone takes ~21 ms, so what matters is the whole distribution, not the mean.
 This sends real-sized payloads at the real rate and reports the tail.
 
     # against a Jetson on the LAN
-    python3 scripts/bench_link.py --host 192.168.1.87 --sha256 <hex> --n 400
+    python3 scripts/bench_link.py --host 192.168.1.87 --onnx big_model.onnx --n 400
 
     # over the USB gadget, from the comma
-    python3 scripts/bench_link.py --usb --sha256 <hex>
+    python3 scripts/bench_link.py --usb --spec spec.json
 """
 from __future__ import annotations
 
@@ -29,33 +29,15 @@ from pathlib import Path
 import numpy as np
 
 from jetlink.client import JetlinkClient
-from jetlink.spec import DEFAULT_FRAME_SKIP, ModelSpec
-
-# The big (chestnut) model as shipped. Override with --spec if it changes.
-BIG_SHAPES = {
-  'img': (1, 12, 128, 256),
-  'big_img': (1, 12, 128, 256),
-  'desire_pulse': (1, 33, 8),
-  'traffic_convention': (1, 2),
-  'action_t': (1, 2),
-  'features_buffer': (1, 32, 32, 512),
-}
-BIG_OUTPUT = {'outputs': (1, 18452)}
-BIG_SLICES = {'hidden_state': slice(2066, 18450)}
-
+from jetlink.spec import ModelSpec, spec_from_onnx
 
 def load_spec(args) -> ModelSpec:
+  """Take the spec from a file, or from the model itself."""
   if args.spec:
-    d = json.loads(Path(args.spec).read_text())
-    return ModelSpec(
-      sha256=d['sha256'], nbytes=d['nbytes'], frame_skip=d.get('frame_skip', DEFAULT_FRAME_SKIP),
-      input_shapes={k: tuple(v) for k, v in d['input_shapes'].items()},
-      output_shapes={k: tuple(v) for k, v in d['output_shapes'].items()},
-      output_slices={k: slice(*v) for k, v in d['output_slices'].items()},
-      checkpoint=d.get('checkpoint'))
-  return ModelSpec(sha256=args.sha256, nbytes=args.nbytes, frame_skip=DEFAULT_FRAME_SKIP,
-                   input_shapes=BIG_SHAPES, output_shapes=BIG_OUTPUT,
-                   output_slices=BIG_SLICES, checkpoint=None)
+    return ModelSpec.from_dict(json.loads(Path(args.spec).read_text()))
+  if args.onnx:
+    return spec_from_onnx(args.onnx)
+  raise SystemExit("need --spec or --onnx (the shapes come from the model)")
 
 
 def pct(a: np.ndarray, q: float) -> float:
@@ -68,10 +50,8 @@ def main() -> int:
   g.add_argument('--host', help='TCP host of the Jetson')
   g.add_argument('--usb', action='store_true', help='use the USB gadget')
   p.add_argument('--port', type=int, default=5599)
-  p.add_argument('--sha256', help='sha256 of an already-cached model')
-  p.add_argument('--nbytes', type=int, default=765953504)
-  p.add_argument('--spec', help='json spec file (overrides --sha256/--nbytes)')
-  p.add_argument('--onnx', help='upload and build this model if the server lacks it')
+  p.add_argument('--spec', help='json spec file, as written by --dump-spec')
+  p.add_argument('--onnx', help='read the spec from this model, uploading it if the server lacks it')
   p.add_argument('--n', type=int, default=400)
   p.add_argument('--rate', type=float, default=20.0, help='Hz; 0 = as fast as possible')
   p.add_argument('--deadline', type=float, default=0.2, help='per-frame timeout, seconds')

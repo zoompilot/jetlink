@@ -23,11 +23,6 @@ GPU = Path('/sys/devices/platform/bus@0/17000000.gpu')
 GPU_DEVFREQ = Path('/sys/class/devfreq/17000000.gpu')
 HWMON = Path('/sys/class/hwmon')
 
-# chestnut reports LTSSM L0 (link trained) as 0x78, and openpilot alerts on
-# anything else. Reuse the value so "link up" means the same thing downstream.
-LTSSM_L0 = 0x78
-
-
 def _read(path: Path, default=None):
   # Broad except on purpose: the cv*-thermal zones on an Orin Nano have no
   # sensor wired up and reading them raises a TypeError out of the codec layer,
@@ -75,7 +70,7 @@ class Telemetry:
     self.fan = _hwmon('pwm_tach')
     self.power_limit_w = power_limit_w
 
-  def read(self, link_up: bool = True) -> dict:
+  def read(self) -> dict:
     zones = _thermal_zones()
     # tj-thermal is the junction temperature the throttle point is defined on
     # (~92 C); it is the closest analogue to chestnut's GPU hotspot.
@@ -92,22 +87,13 @@ class Telemetry:
     freq_hz = _read_int(GPU_DEVFREQ / 'cur_freq')
 
     return {
-      'tempC': round(temp, 1),
-      'memoryTempC': round(mem_temp, 1),
-      'powerDrawW': round(mv * ma / 1e6, 2),
-      'powerLimitW': self.power_limit_w,
-      'gpuUsagePercent': min(100, load_permille // 10),
-      'gpuClockMhz': freq_hz // 1_000_000,
-      'fanSpeedRpm': _read_int(self.fan / 'rpm') if self.fan else 0,
-      'pcieLtssm': LTSSM_L0 if link_up else 0,
-      'supplyVoltage': mv,
-      'supplyCurrent': ma,
-    }
-
-  def extra(self) -> dict:
-    """Detail that has no chestnutState field but is worth logging."""
-    zones = _thermal_zones()
-    return {
-      'thermal_zones': {k: round(v, 1) for k, v in zones.items()},
-      'gpu_max_mhz': _read_int(GPU_DEVFREQ / 'max_freq') // 1_000_000,
+      'temp_c': round(temp, 1),
+      'memory_temp_c': round(mem_temp, 1),
+      'power_w': round(mv * ma / 1e6, 2),
+      'power_limit_w': self.power_limit_w,
+      'gpu_load_pct': min(100, load_permille // 10),
+      'gpu_clock_mhz': freq_hz // 1_000_000,
+      'fan_rpm': _read_int(self.fan / 'rpm') if self.fan else 0,
+      'supply_mv': mv,
+      'supply_ma': ma,
     }

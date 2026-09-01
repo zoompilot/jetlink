@@ -78,6 +78,12 @@ class RingQueue:
     # The slot the oldest element occupies becomes the newest once head moves.
     dest = self.buf[self.head]
     if self._lut and getattr(value, 'dtype', None) == np.uint8:
+      # np.take with out=, NOT `dest[:] = lut[src]`. Advanced indexing measures
+      # faster on x86/newer numpy, but on the Orin's A78 cores with the numpy
+      # in the JetPack image it is the other way round: take-with-out keeps
+      # 1.4 ms of queue time where advanced indexing costs 2.4 ms, because it
+      # writes straight into the destination instead of building a 393 KB
+      # temporary. Measure on the device before changing this.
       # mode='clip' skips a bounds check that a uint8 index can never fail.
       np.take(_U8_TO_F16_BITS, value.reshape(-1),
               out=dest.reshape(-1).view(np.uint16), mode='clip')
@@ -172,19 +178,13 @@ class PolicyQueues:
 
     warped: (2, 6, H, W) uint8, as produced by openpilot's warp on the comma.
     packed: flat float32, laid out per ModelSpec.packed_shapes.
+
+    Allocates its destinations; the server uses step_into() instead. Kept as a
+    thin wrapper so there is only one implementation to keep correct.
     """
-    traffic_convention, action_t = self._push(warped, packed)
-    return {
-      'img': sample_skip(self.img_q, self.frame_skip).reshape(self.model_shapes['img']),
-      'big_img': sample_skip(self.big_img_q, self.frame_skip).reshape(self.model_shapes['big_img']),
-      'features_buffer': sample_skip(self.feat_q, self.frame_skip).reshape(
-        self.model_shapes['features_buffer']),
-      'desire_pulse': sample_desire(self.desire_q, self.frame_skip).reshape(
-        self.model_shapes['desire_pulse']),
-      'traffic_convention': traffic_convention.astype(self.dtype, copy=False).reshape(
-        self.model_shapes['traffic_convention']),
-      'action_t': action_t.astype(self.dtype, copy=False).reshape(self.model_shapes['action_t']),
-    }
+    dest = {n: np.empty(s, self.dtype) for n, s in self.model_shapes.items()}
+    self.step_into(warped, packed, dest)
+    return dest
 
   def step_into(self, warped: np.ndarray, packed: np.ndarray,
                 dest: dict[str, np.ndarray]) -> None:

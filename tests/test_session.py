@@ -174,7 +174,7 @@ def test_telemetry_piggybacks_without_an_extra_round_trip(link):
   assert client.last_state is None
   client.infer(warped, packed, want_state=True)
   assert client.last_state is not None
-  assert 'tempC' in client.last_state and 'pcieLtssm' in client.last_state
+  assert 'temp_c' in client.last_state and 'power_w' in client.last_state
 
 
 def test_not_ready_is_reported_rather_than_crashing():

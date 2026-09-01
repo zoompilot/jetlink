@@ -14,7 +14,6 @@ buffer in place.
 from __future__ import annotations
 
 import json
-import hashlib
 import logging
 import threading
 import time
@@ -25,7 +24,7 @@ from jetlink import protocol as P
 from jetlink.server.builder import EngineCache, build_engine
 from jetlink.server.engine import TrtEngine
 from jetlink.server.telemetry import Telemetry
-from jetlink.spec import ModelSpec
+from jetlink.spec import CHUNK, ModelSpec, sha256_file
 from jetlink.transport.base import LinkError, LinkTimeout, Message, Transport
 
 log = logging.getLogger('jetlink.server')
@@ -49,7 +48,6 @@ class ModelSlot:
     self.engine: TrtEngine | None = None
     self.queues = None
     self.host_inputs: dict = {}
-    self.received = 0
 
 
 class Session:
@@ -59,7 +57,6 @@ class Session:
     self.telemetry = telemetry or Telemetry()
     self.slot: ModelSlot | None = None
     self.send_lock = threading.Lock()
-    self.build_thread: threading.Thread | None = None
     self._last_progress = 0.0
     self.frames = 0
     # Primed here so the first health publish carries real values. Session
@@ -90,6 +87,17 @@ class Session:
       pass  # the comma may have given up and fallen back; the build continues
 
   # -- handlers -------------------------------------------------------------
+
+  def close(self) -> None:
+    """Release the GPU allocations this session owns.
+
+    TrtEngine deliberately has no __del__ (its pinned buffers are aliased by
+    numpy views), so without this a reconnect would leak an engine's device
+    memory every time.
+    """
+    slot, self.slot = self.slot, None
+    if slot is not None and slot.engine is not None:
+      slot.engine.close()
 
   def serve_forever(self) -> None:
     while True:
@@ -122,8 +130,6 @@ class Session:
       self.on_upload_chunk(msg)
     elif mt == P.Msg.UPLOAD_DONE:
       self.on_upload_done(msg)
-    elif mt == P.Msg.RESET_REQ:
-      self.on_reset(msg)
     elif mt == P.Msg.STATE_REQ:
       self.on_state(msg)
     else:
@@ -142,14 +148,7 @@ class Session:
     })
 
   def on_engine_req(self, msg: Message) -> None:
-    req = json.loads(bytes(msg.payload))
-    spec = ModelSpec(
-      sha256=req['sha256'], nbytes=req['nbytes'], frame_skip=req['frame_skip'],
-      input_shapes={k: tuple(v) for k, v in req['input_shapes'].items()},
-      output_shapes={k: tuple(v) for k, v in req['output_shapes'].items()},
-      output_slices={k: slice(*v) for k, v in req['output_slices'].items()},
-      checkpoint=req.get('checkpoint'),
-    )
+    spec = ModelSpec.from_dict(json.loads(bytes(msg.payload)))
     slot = ModelSlot(spec)
     self.slot = slot
 
@@ -165,7 +164,6 @@ class Session:
       self._start_worker(slot, load_only=False)
     else:
       slot.state = 'need_upload'
-      slot.received = 0  # a partial file is not resumable without a chunk digest
       slot.detail = f'have {have} of {spec.nbytes} bytes'
     self._respond_engine(msg.seq)
 
@@ -175,9 +173,8 @@ class Session:
     self._send_json(P.Msg.ENGINE_RESP, seq, {
       'state': slot.state,
       'detail': slot.detail,
-      'offset': slot.received,
       'sha256': slot.spec.sha256,
-      'chunk': 4 << 20,
+      'chunk': CHUNK,
     })
 
   def on_upload_chunk(self, msg: Message) -> None:
@@ -191,7 +188,6 @@ class Session:
     with open(path, mode) as f:
       f.seek(offset)
       f.write(data)
-    slot.received = offset + data.nbytes
     # Deliberately silent. The client streams chunks without reading between
     # them, and over USB a gadget only accepts data while its peer has a read
     # posted - so a progress write here stalls for the whole transfer timeout
@@ -202,11 +198,7 @@ class Session:
     if slot is None:
       return self._error(msg.seq, 'no_model', 'send ENGINE_REQ first')
     path = self.cache.model_path(slot.spec.sha256)
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-      while chunk := f.read(1 << 20):
-        h.update(chunk)
-    if h.hexdigest() != slot.spec.sha256:
+    if sha256_file(str(path))[0] != slot.spec.sha256:
       path.unlink(missing_ok=True)
       slot.state = 'failed'
       slot.detail = 'sha256 mismatch after upload'
@@ -225,10 +217,8 @@ class Session:
       return
     slot.state = 'building'
     slot.detail = 'loading engine' if load_only else 'building engine'
-    self.build_thread = threading.Thread(
-      target=self._build_and_load, args=(slot, load_only), daemon=True,
-      name='jetlink-build')
-    self.build_thread.start()
+    threading.Thread(target=self._build_and_load, args=(slot, load_only),
+                     daemon=True, name='jetlink-build').start()
 
   def _build_and_load(self, slot: ModelSlot, load_only: bool) -> None:
     from jetlink.queues import PolicyQueues
@@ -272,9 +262,7 @@ class Session:
         log.info("build finished for a superseded model %s", slot.spec.sha256[:16])
         return
       try:
-        self._send_json(P.Msg.ENGINE_RESP, 0, {
-          'state': slot.state, 'detail': slot.detail,
-          'offset': slot.received, 'sha256': slot.spec.sha256, 'chunk': 4 << 20})
+        self._respond_engine(0)
       except LinkError:
         pass
 
@@ -327,11 +315,16 @@ class Session:
     outputs = slot.engine.run()
     out = next(iter(outputs.values())).reshape(-1)
 
+    # asarray, not astype: a no-op when the engine already outputs float32,
+    # instead of a 74 KB copy and an allocation every frame. Check finiteness on
+    # the result - isfinite is ~7x faster on float32 than on float16, and the
+    # non-finites map across the cast exactly.
+    #
     # openpilot treats a non-finite big-model output as a hard failure and drops
-    # to the small model. Check here so the comma does not have to rescan 18452
-    # floats, and so the reason survives in the response.
-    status = P.Status.OK if np.all(np.isfinite(out)) else P.Status.NOT_FINITE
-    out32 = out.astype(np.float32)
+    # to the small model. Checking here saves the comma rescanning 18452 floats
+    # and keeps the reason in the response.
+    out32 = np.asarray(out, dtype=np.float32)
+    status = P.Status.OK if np.all(np.isfinite(out32)) else P.Status.NOT_FINITE
 
     total_us = int((time.perf_counter() - t0) * 1e6)
     parts = [P.pack_infer_resp(frame_id, status, slot.engine.last_gpu_us, queue_us, total_us),
@@ -344,11 +337,6 @@ class Session:
       # ~30 sysfs reads. Refresh after replying, never between the GPU result
       # and the wire: health data must not cost a frame.
       self._telemetry_cache = json.dumps(self.telemetry.read()).encode()
-
-  def on_reset(self, msg: Message) -> None:
-    if self.slot is not None and self.slot.queues is not None:
-      self.slot.queues.reset()
-    self._send(P.Msg.RESET_RESP, msg.seq)
 
   def on_state(self, msg: Message) -> None:
     slot = self.slot

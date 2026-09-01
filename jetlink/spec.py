@@ -10,9 +10,12 @@ Both ends compute this independently from the same file and compare the model
 hash at handshake, so there is exactly one source of truth for shapes and no
 version skew between comma and Jetson can go unnoticed.
 
-The layout mirrors openpilot's `compile_modeld.get_policy_npy_shapes` /
-`make_input_queues`. Keep it that way: if openpilot changes the packing, this
-must change with it, and `tests/test_queues.py` is what catches the drift.
+The layout mirrors `get_policy_npy_shapes` / `make_input_queues` from
+openpilot *master*'s selfdrive/modeld/compile_modeld.py, which computes
+`feat_dim = math.prod(fb[2:])`. Note some forks still carry an older copy using
+`fb[2]`, which is wrong for the big model's 4-D features_buffer (1,32,32,512):
+it gives 32 where the answer is 16384. Keep this in step with upstream master;
+`tests/test_queues.py` is what catches the drift.
 """
 from __future__ import annotations
 
@@ -21,6 +24,7 @@ import math
 from dataclasses import dataclass
 
 from jetlink.onnx_meta import OnnxMeta, parse_file
+from jetlink.protocol import INFER_REQ_SIZE, INFER_RESP_SIZE
 
 # openpilot ModelConstants; duplicated so the server needs no openpilot import
 MODEL_RUN_FREQ = 20
@@ -120,35 +124,40 @@ class ModelSpec:
   def output_nbytes(self) -> int:
     return self.output_nelem * 4  # we return float32, as openpilot's JIT does
 
-  @property
-  def hidden_state_slice(self) -> slice:
-    return self.output_slices['hidden_state']
-
   # --- wire sizes ---
   @property
   def infer_req_nbytes(self) -> int:
-    from jetlink.protocol import INFER_REQ_SIZE
     return INFER_REQ_SIZE + self.warped_nbytes + self.packed_nbytes
 
   @property
   def infer_resp_nbytes(self) -> int:
-    from jetlink.protocol import INFER_RESP_SIZE
     return INFER_RESP_SIZE + self.output_nbytes
 
-  def summary(self) -> dict:
+  # -- the wire form of a spec ---------------------------------------------
+  #
+  # One encoder and one decoder, because both ends and the benchmark need this
+  # and three hand-written copies would drift the moment a field is added.
+
+  def to_dict(self) -> dict:
     return {
       'sha256': self.sha256,
       'nbytes': self.nbytes,
       'frame_skip': self.frame_skip,
       'checkpoint': self.checkpoint,
-      'model_hw': list(self.model_hw),
-      'warped_shape': list(self.warped_shape),
-      'packed_nelem': self.packed_nelem,
-      'feat_dim': self.feat_dim,
-      'output_nelem': self.output_nelem,
-      'infer_req_nbytes': self.infer_req_nbytes,
-      'infer_resp_nbytes': self.infer_resp_nbytes,
+      'input_shapes': {k: list(v) for k, v in self.input_shapes.items()},
+      'output_shapes': {k: list(v) for k, v in self.output_shapes.items()},
+      'output_slices': {k: [v.start, v.stop] for k, v in self.output_slices.items()},
     }
+
+  @classmethod
+  def from_dict(cls, d: dict) -> ModelSpec:
+    return cls(
+      sha256=d['sha256'], nbytes=d['nbytes'],
+      frame_skip=d.get('frame_skip', DEFAULT_FRAME_SKIP),
+      input_shapes={k: tuple(v) for k, v in d['input_shapes'].items()},
+      output_shapes={k: tuple(v) for k, v in d['output_shapes'].items()},
+      output_slices={k: slice(*v) for k, v in d['output_slices'].items()},
+      checkpoint=d.get('checkpoint'))
 
 
 def sha256_file(path: str, bufsize: int = 1 << 20) -> tuple[str, int]:

@@ -13,6 +13,7 @@ chestnut the same way, so `usb1` is not a new dependency.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from jetlink.transport.base import LinkError, StreamTransport
@@ -27,8 +28,13 @@ MAX_PACKET = 1024   # SuperSpeed bulk
 READ_CHUNK = 256 * MAX_PACKET
 DEFAULT_TIMEOUT_MS = 2000
 
+log = logging.getLogger('jetlink.usb')
+
 
 class UsbBulkTransport(StreamTransport):
+  packet_size = MAX_PACKET
+  read_chunk = READ_CHUNK
+
   def __init__(self, handle, context=None, timeout_ms: int = DEFAULT_TIMEOUT_MS,
                interface: int = 0):
     super().__init__(rx_size=2 << 20)
@@ -36,6 +42,7 @@ class UsbBulkTransport(StreamTransport):
     self.context = context
     self.timeout_ms = timeout_ms
     self.interface = interface
+    self._zero_copy_reads = True
     # libusb has no vectored bulk write, so messages are gathered here. Reused
     # so the steady state does not allocate half a megabyte per frame.
     self._tx = bytearray(1 << 20)
@@ -96,16 +103,34 @@ class UsbBulkTransport(StreamTransport):
 
   def _read_into(self, dest: memoryview, timeout: float | None) -> int:
     import usb1
-    # Round down to a whole number of packets: a bulk IN whose buffer is not a
+    # _clamp_read rounds to whole packets: a bulk IN whose buffer is not a
     # packet multiple can overflow when the device delivers a full final packet.
-    n = (min(dest.nbytes, READ_CHUNK) // MAX_PACKET) * MAX_PACKET
+    n = self._clamp_read(dest)
     if n == 0:
       return 0
+    if self._zero_copy_reads:
+      try:
+        # bulkRead() allocates a 256 KB buffer, slices it, and hands back a
+        # copy - about 768 KB of allocation and 918 KB of memcpy per frame on
+        # the receive path, which is exactly what RxBuffer exists to avoid.
+        # create_binary_buffer over `dest` writes straight into it.
+        buf, _ = usb1.create_binary_buffer(dest[:n])
+        return self.handle._bulkTransfer(EP_IN, buf, n, self._ms(timeout))
+      except usb1.USBErrorTimeout as e:
+        # libusb attaches whatever did arrive to the exception. Dropping it
+        # would desync the stream, far worse than a late frame.
+        return getattr(e, 'transferred', 0)
+      except usb1.USBError as e:
+        raise LinkError(f"usb bulk read failed: {e}") from e
+      except (AttributeError, TypeError) as e:
+        # A python-libusb1 without the private transfer helper. Fall back for
+        # good rather than paying the exception on every read.
+        self._zero_copy_reads = False
+        log.warning("jetlink: no zero-copy bulk read (%s), using bulkRead", e)
+
     try:
       data = self.handle.bulkRead(EP_IN, n, timeout=self._ms(timeout))
     except usb1.USBErrorTimeout as e:
-      # libusb attaches whatever did arrive to the exception. Dropping it would
-      # desync the stream, which is far worse than a late frame.
       data = getattr(e, 'received', b'')
     except usb1.USBError as e:
       raise LinkError(f"usb bulk read failed: {e}") from e

@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from jetlink import protocol as P
-from jetlink.spec import CHUNK, ModelSpec, sha256_file, spec_from_onnx
+from jetlink.spec import CHUNK, ModelSpec, spec_from_onnx
 from jetlink.transport.base import LinkError, LinkTimeout, Message, Transport
 
 
@@ -83,11 +83,6 @@ class JetlinkClient:
   def open_tcp(cls, host: str, port: int = 5599, **kw) -> JetlinkClient:
     from jetlink.transport.tcp import TcpTransport
     return cls(TcpTransport.connect(host, port), **kw)
-
-  @staticmethod
-  def usb_present() -> bool:
-    from jetlink.transport.usbbulk import UsbBulkTransport
-    return UsbBulkTransport.present()
 
   # -- plumbing -------------------------------------------------------------
 
@@ -169,15 +164,7 @@ class JetlinkClient:
     self.spec = spec
 
     seq = self._next_seq()
-    self.t.send_json(P.Msg.ENGINE_REQ, seq, {
-      'sha256': spec.sha256,
-      'nbytes': spec.nbytes,
-      'frame_skip': spec.frame_skip,
-      'checkpoint': spec.checkpoint,
-      'input_shapes': {k: list(v) for k, v in spec.input_shapes.items()},
-      'output_shapes': {k: list(v) for k, v in spec.output_shapes.items()},
-      'output_slices': {k: [v.start, v.stop] for k, v in spec.output_slices.items()},
-    })
+    self.t.send_json(P.Msg.ENGINE_REQ, seq, spec.to_dict())
     resp = json.loads(bytes(self._expect(P.Msg.ENGINE_RESP, seq, 60.0).payload))
     self._engine_state = resp
     log.info("server engine state: %s (%s)", resp['state'], resp.get('detail', ''))
@@ -287,11 +274,6 @@ class JetlinkClient:
     """
     return self.infer_end(self.infer_begin(warped, packed, frame_id, reset, want_state), deadline)
 
-  def reset(self, timeout: float = 1.0) -> None:
-    seq = self._next_seq()
-    self.t.send(P.Msg.RESET_REQ, seq)
-    self._expect(P.Msg.RESET_RESP, seq, timeout)
-
   def close(self) -> None:
     self.t.close()
 
@@ -310,10 +292,3 @@ def _as_bytes(buf, expect: int, name: str) -> memoryview:
   if mv.nbytes != expect:
     raise LinkError(f"{name} is {mv.nbytes} bytes, expected {expect}")
   return mv
-
-
-def spec_for(onnx_path: str | Path, frame_skip: int | None = None) -> ModelSpec:
-  """Convenience: hash and parse a model in one call."""
-  from jetlink.spec import DEFAULT_FRAME_SKIP
-  sha, nbytes = sha256_file(str(onnx_path))
-  return spec_from_onnx(str(onnx_path), frame_skip or DEFAULT_FRAME_SKIP, sha, nbytes)

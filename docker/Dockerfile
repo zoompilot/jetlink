@@ -20,7 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install --no-cache-dir --ignore-installed \
       "numpy>=1.24,<2" \
       "onnx>=1.16" \
-      "cuda-python>=12.6,<13"
+      "cuda-python>=12.6,<13" \
+      "libusb1>=3.0"
 
 WORKDIR /opt/jetlink
 COPY jetlink /opt/jetlink/jetlink
