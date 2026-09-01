@@ -84,9 +84,12 @@ mountpoint -q "$CONFIGFS" || fail "no configfs at $CONFIGFS; this kernel cannot 
 # AGNOS build has no CONFIG_USB_LIBCOMPOSITE, and jetlink cannot work here.
 [[ -d "$CONFIGFS/usb_gadget" ]] || fail "kernel has no USB gadget support (CONFIG_USB_LIBCOMPOSITE); jetlink needs an AGNOS build that has it"
 
-# FunctionFS is what carries our two bulk endpoints. Without it the gadget
-# would build and then have nothing to attach.
-grep -qw functionfs /proc/filesystems || fail "kernel has no FunctionFS (CONFIG_USB_FUNCTIONFS); jetlink cannot present its endpoints"
+# No FunctionFS preflight here on purpose. The kernel registers the functionfs
+# filesystem when the first ffs.* function is instantiated and deregisters it
+# with the last, so /proc/filesystems lists it only while some other gadget is
+# already using it - on a cold boot it never does, and a check here fails on a
+# kernel that supports FunctionFS perfectly well. The mkdir, mount and ep0
+# checks below test the same capability at the point it is actually used.
 
 # A device controller has to exist before anything can be a gadget. A comma has
 # exactly one; a machine wired host-only has none.
@@ -129,8 +132,8 @@ echo "jetlink inference link" > configs/c.1/strings/0x409/configuration
 echo 0xC0 > configs/c.1/bmAttributes
 echo 8    > configs/c.1/MaxPower
 
-# configfs instantiates the function on mkdir, so this is where a kernel that
-# reports functionfs but has no usb_f_fs gadget function actually shows up.
+# configfs instantiates the function on mkdir, and this is also what registers
+# the functionfs filesystem, so a kernel genuinely without it fails here.
 mkdir -p "functions/ffs.$FFS_NAME" ||
   fail "kernel has no ffs gadget function (CONFIG_USB_CONFIGFS_F_FS); jetlink cannot present its endpoints"
 ln -sf "$GADGET/functions/ffs.$FFS_NAME" "configs/c.1/ffs.$FFS_NAME" 2>/dev/null || true
