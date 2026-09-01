@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jetlink"
+version = "0.1.0"
+description = "Run openpilot's large driving models on an attached NVIDIA Jetson"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Zeph Leggett" }]
+requires-python = ">=3.10"
+# numpy only. The client additionally needs `usb1` for the USB transport, and
+# the server needs tensorrt + cuda-python, which ship in the Jetson image
+# rather than from PyPI.
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+usb = ["libusb1>=3.0"]
+server = ["onnx>=1.16", "cuda-python>=12.6,<13"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+jetlink-server = "jetlink.server.main:main"
+
+[tool.setuptools.packages.find]
+include = ["jetlink*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

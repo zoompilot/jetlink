@@ -1,0 +1,25 @@
+# systemd unit for the Jetson. Install to /etc/systemd/system/ and enable:
+#   sudo systemctl enable --now jetlink-server
+#
+# The Jetson is the USB host, so there is no gadget to set up on this side -
+# it just needs /dev/bus/usb. The comma runs the gadget (see docs/transport.md).
+[Unit]
+Description=jetlink inference server
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStartPre=-/usr/bin/docker rm -f jetlink
+ExecStart=/usr/bin/docker run --rm --name jetlink \
+  --runtime nvidia \
+  -v /mnt/data/jetlink:/mnt/data/jetlink \
+  -v /dev/bus/usb:/dev/bus/usb \
+  -v /sys:/sys:ro \
+  jetlink:latest --transport usb
+ExecStop=/usr/bin/docker stop jetlink
+
+[Install]
+WantedBy=multi-user.target
