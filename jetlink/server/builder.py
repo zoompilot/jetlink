@@ -18,6 +18,7 @@ way a model download and compile does.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -31,10 +32,42 @@ import tensorrt as trt
 
 from jetlink.onnx_patch import patch_file
 
+log = logging.getLogger('jetlink.builder')
+
 ProgressFn = Callable[[str, float, str], None]
 
 DEFAULT_CACHE = Path(os.environ.get('JETLINK_CACHE', '/mnt/data/jetlink'))
-WORKSPACE_BYTES = 4 << 30
+# Ceiling, not an allocation: TensorRT picks tactics that fit inside it. On an
+# 8 GB Orin the old flat 4 GB let it choose tactics that, on top of the parsed
+# weights, walked the builder into the OOM killer on a 1.76 GB model. Size it
+# from what the machine actually has free instead.
+MAX_WORKSPACE_BYTES = 4 << 30
+MIN_WORKSPACE_BYTES = 256 << 20
+WORKSPACE_FRACTION = 0.4
+
+
+def available_bytes() -> int:
+  """Free memory as the kernel sees it, swap included.
+
+  MemAvailable is the honest number - free plus what the kernel would reclaim -
+  and swap counts because a build that swaps is slow, not dead.
+  """
+  fields = {}
+  try:
+    with open('/proc/meminfo') as f:
+      for line in f:
+        key, _, rest = line.partition(':')
+        fields[key] = int(rest.split()[0]) * 1024
+  except OSError:
+    return 0
+  return fields.get('MemAvailable', 0) + max(0, fields.get('SwapFree', 0))
+
+
+def workspace_bytes() -> int:
+  free = available_bytes()
+  if free <= 0:
+    return MAX_WORKSPACE_BYTES
+  return max(MIN_WORKSPACE_BYTES, min(MAX_WORKSPACE_BYTES, int(free * WORKSPACE_FRACTION)))
 
 
 def _sanitize(s: str) -> str:
@@ -132,11 +165,14 @@ class _Monitor(trt.IProgressMonitor):
 def build_engine(onnx_path: str | Path, out_path: str | Path,
                  report: ProgressFn | None = None,
                  fp16: bool = True, optimization_level: int = 3,
-                 workspace: int = WORKSPACE_BYTES) -> Path:
+                 workspace: int | None = None) -> Path:
   """Patch, parse and build. Writes the plan atomically."""
   onnx_path, out_path = Path(onnx_path), Path(out_path)
   report = report or (lambda *_: None)
+  workspace = workspace_bytes() if workspace is None else workspace
   t0 = time.time()
+  log.info("building with a %d MB workspace (%d MB available)",
+           workspace >> 20, available_bytes() >> 20)
 
   logger = trt.Logger(trt.Logger.WARNING)
   trt.init_libnvinfer_plugins(logger, '')
