@@ -164,21 +164,27 @@ class FfsTransport(StreamTransport):
       pass
     self.bound_udc = None
 
-  def _shrink_write(self) -> bool:
-    """Halve the write size after the kernel refused to allocate for one.
+  def _shrink(self, attr: str) -> bool:
+    """Halve a transfer size after the kernel refused to allocate for one.
 
     ENOMEM here is about contiguous DMA memory, not about how much RAM is
     free, so it depends on how fragmented the machine is right now and a size
-    that worked at boot can fail an hour in. Backing off keeps a 1.7 GB upload
-    slow rather than failed.
+    that worked at boot can fail an hour in - which is exactly what handling a
+    1.7 GB model does to a comma. Backing off keeps the link slow rather than
+    broken. Both directions need it: reads hit this after a big upload just as
+    writes hit it during one.
     """
     floor = self.packet_size * 16
-    if self.write_chunk <= floor:
+    current = getattr(self, attr)
+    if current <= floor:
       return False
-    self.write_chunk = max(floor, self.write_chunk // 2)
-    log.warning("jetlink: gadget could not allocate a write, dropping to %d KB",
-                self.write_chunk >> 10)
+    setattr(self, attr, max(floor, current // 2))
+    log.warning("jetlink: gadget could not allocate for %s, dropping to %d KB",
+                attr, getattr(self, attr) >> 10)
     return True
+
+  def _shrink_write(self) -> bool:
+    return self._shrink('write_chunk')
 
   def _write(self, bufs: list[memoryview]) -> int:
     while True:
@@ -214,6 +220,8 @@ class FfsTransport(StreamTransport):
       # NB BlockingIOError subclasses OSError and is handled above.
       if e.errno in _NOT_READY and self._wait_for_host_ready():
         return 0
+      if e.errno == errno.ENOMEM and self._shrink('read_chunk'):
+        return 0   # _fill loops; the next read asks for half as much
       raise LinkError(f"gadget read failed: {e}") from e
     if got == 0:
       raise LinkError("gadget read returned EOF (host disconnected)")

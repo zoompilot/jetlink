@@ -335,20 +335,37 @@ class TestWriteChunking:
 
 
 class TestEnomemBackoff:
-  def test_halves_until_the_kernel_accepts_it(self):
+  """ENOMEM from the gadget is about contiguous DMA memory, not free RAM, so a
+  size that worked at boot can fail after the comma has handled a 1.7 GB model.
+  Both directions back off: writes hit it during an upload, reads after one."""
+
+  def _transport(self):
     from jetlink.transport.ffs import FfsTransport
 
     t = _CappedTransport()
     t.write_chunk = 4096
+    t.read_chunk = 4096
     t.packet_size = 64
+    t._shrink = FfsTransport._shrink.__get__(t)
     t._shrink_write = FfsTransport._shrink_write.__get__(t)
+    return t
 
+  def test_writes_halve_until_the_kernel_accepts_them(self):
+    t = self._transport()
     assert t._shrink_write() and t.write_chunk == 2048
     assert t._shrink_write() and t.write_chunk == 1024
+
+  def test_reads_halve_too(self):
+    t = self._transport()
+    assert t._shrink('read_chunk') and t.read_chunk == 2048
+    assert t.write_chunk == 4096, "shrinking reads must not touch writes"
+
+  def test_never_below_a_floor(self):
+    # Shrinking towards nothing would stall the link instead of failing it,
+    # which is worse: a stalled provision looks like a hung device.
+    t = self._transport()
     while t._shrink_write():
       pass
-    # Never below a floor: shrinking to nothing would stall the link instead
-    # of failing it, which is worse.
     assert t.write_chunk == 64 * 16
 
 
