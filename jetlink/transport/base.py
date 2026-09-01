@@ -127,6 +127,12 @@ class StreamTransport(Transport):
   # 0 means "no constraint" (TCP).
   packet_size = 0
   read_chunk = 1 << 20
+  # Largest single write to hand the kernel. FunctionFS turns one writev into
+  # one USB request and has to allocate a contiguous buffer for it, so a big
+  # write fails with ENOMEM on a device whose memory is fragmented - which the
+  # inference path never sees, because its largest message is a few hundred KB,
+  # and the model upload hits immediately at 4 MB a chunk. 0 means no cap (TCP).
+  write_chunk = 0
 
   def __init__(self, rx_size: int = 1 << 20):
     self.rx = RxBuffer(rx_size)
@@ -157,7 +163,7 @@ class StreamTransport(Transport):
     header = P.pack_header(msg_type, seq, length, flags)
     bufs.insert(0, memoryview(header))
     while bufs:
-      n = self._write(bufs)
+      n = self._write(take(bufs, self.write_chunk) if self.write_chunk else bufs)
       if n <= 0:
         raise LinkError("peer went away during send")
       bufs = advance(bufs, n)
@@ -212,6 +218,17 @@ class StreamTransport(Transport):
     payload = self.rx.take(length)
     self.rx.consumed()
     return Message(msg_type, seq, flags, payload)
+
+
+def take(bufs: list[memoryview], n: int) -> list[memoryview]:
+  """The first `n` bytes across a list of buffers, without copying."""
+  out: list[memoryview] = []
+  for mv in bufs:
+    if n <= 0:
+      break
+    out.append(mv if mv.nbytes <= n else mv[:n])
+    n -= out[-1].nbytes
+  return out
 
 
 def advance(bufs: list[memoryview], n: int) -> list[memoryview]:

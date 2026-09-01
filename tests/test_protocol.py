@@ -8,6 +8,7 @@ Framing and transport tests. No Jetson, no CUDA - these run anywhere.
 """
 from __future__ import annotations
 
+import errno
 import socket
 import threading
 
@@ -15,6 +16,7 @@ import numpy as np
 import pytest
 
 from jetlink import protocol as P
+from jetlink.transport.base import StreamTransport
 from jetlink.spec import ModelSpec
 from jetlink.transport.base import LinkError, LinkTimeout
 from jetlink.transport.tcp import TcpTransport
@@ -280,3 +282,71 @@ def test_send_rejects_a_wrongly_sized_buffer():
                          np.zeros(spec.packed_nelem, np.float32))
   finally:
     client.close(); b.close()
+
+
+class _CappedTransport(StreamTransport):
+  """Records the size of every write the framing layer submits."""
+  write_chunk = 64
+
+  def __init__(self, fail_over: int | None = None):
+    super().__init__()
+    self.writes: list[int] = []
+    self.fail_over = fail_over
+    self.out = bytearray()
+
+  def _write(self, bufs):
+    n = sum(b.nbytes for b in bufs)
+    if self.fail_over is not None and n > self.fail_over:
+      raise OSError(errno.ENOMEM, 'Cannot allocate memory')
+    self.writes.append(n)
+    for b in bufs:
+      self.out += bytes(b)
+    return n
+
+  def _read_into(self, dest, timeout):
+    return 0
+
+  def close(self) -> None:
+    pass
+
+
+class TestWriteChunking:
+  """FunctionFS turns one writev into one USB request and has to allocate a
+  contiguous buffer for it, so an uncapped write fails with ENOMEM on a
+  fragmented device. The inference path never hit it; a 4 MB upload chunk did."""
+
+  def test_a_big_message_is_split(self):
+    t = _CappedTransport()
+    t.send(1, 1, (bytes(500),))
+    assert max(t.writes) <= 64
+    assert sum(t.writes) == 500 + P.HEADER_SIZE
+
+  def test_the_bytes_still_arrive_in_order(self):
+    t = _CappedTransport()
+    payload = bytes(range(256)) * 3
+    t.send(1, 1, (payload,))
+    assert bytes(t.out[P.HEADER_SIZE:]) == payload
+
+  def test_an_uncapped_transport_writes_once(self):
+    t = _CappedTransport()
+    t.write_chunk = 0
+    t.send(1, 1, (bytes(500),))
+    assert len(t.writes) == 1
+
+
+class TestEnomemBackoff:
+  def test_halves_until_the_kernel_accepts_it(self):
+    from jetlink.transport.ffs import FfsTransport
+
+    t = _CappedTransport()
+    t.write_chunk = 4096
+    t.packet_size = 64
+    t._shrink_write = FfsTransport._shrink_write.__get__(t)
+
+    assert t._shrink_write() and t.write_chunk == 2048
+    assert t._shrink_write() and t.write_chunk == 1024
+    while t._shrink_write():
+      pass
+    # Never below a floor: shrinking to nothing would stall the link instead
+    # of failing it, which is worse.
+    assert t.write_chunk == 64 * 16

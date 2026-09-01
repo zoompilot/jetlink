@@ -24,7 +24,9 @@ import os
 import struct
 import time
 
-from jetlink.transport.base import LinkError, StreamTransport
+import logging
+
+from jetlink.transport.base import LinkError, StreamTransport, take
 
 # --- FunctionFS ABI -------------------------------------------------------
 
@@ -56,6 +58,8 @@ EAGAIN_FALLBACK = 2000
 # endpoints return EIO/ESHUTDOWN. The server polls sysfs every couple of
 # seconds to notice us, so that gap is easily a second or two. Wait it out
 # rather than reporting a dead link on the first frame after connect.
+log = logging.getLogger('jetlink')
+
 EP_READY_TIMEOUT = 10.0
 _NOT_READY = (errno.EIO, errno.ESHUTDOWN, errno.ENODEV)
 
@@ -107,6 +111,7 @@ class FfsTransport(StreamTransport):
   read_slack = READ_CHUNK
   packet_size = SS_MAX_PACKET
   read_chunk = READ_CHUNK
+  write_chunk = READ_CHUNK
 
   def __init__(self, mount: str = '/dev/ffs-jetlink', gadget: str | None = None,
                udc: str | None = None):
@@ -159,6 +164,22 @@ class FfsTransport(StreamTransport):
       pass
     self.bound_udc = None
 
+  def _shrink_write(self) -> bool:
+    """Halve the write size after the kernel refused to allocate for one.
+
+    ENOMEM here is about contiguous DMA memory, not about how much RAM is
+    free, so it depends on how fragmented the machine is right now and a size
+    that worked at boot can fail an hour in. Backing off keeps a 1.7 GB upload
+    slow rather than failed.
+    """
+    floor = self.packet_size * 16
+    if self.write_chunk <= floor:
+      return False
+    self.write_chunk = max(floor, self.write_chunk // 2)
+    log.warning("jetlink: gadget could not allocate a write, dropping to %d KB",
+                self.write_chunk >> 10)
+    return True
+
   def _write(self, bufs: list[memoryview]) -> int:
     while True:
       try:
@@ -167,6 +188,10 @@ class FfsTransport(StreamTransport):
         # FunctionFS submits a write as one request, so a failed writev put
         # nothing on the wire and is safe to retry.
         if e.errno in _NOT_READY and self._wait_for_host_ready():
+          continue
+        if e.errno == errno.ENOMEM and self._shrink_write():
+          # A short write is fine: send() loops until the message is out.
+          bufs = take(bufs, self.write_chunk)
           continue
         raise LinkError(f"gadget write failed: {e}") from e
 
