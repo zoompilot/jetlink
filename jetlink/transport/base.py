@@ -184,6 +184,13 @@ class StreamTransport(Transport):
     self.rx.reserve(need + self.read_slack)
     end = None if timeout is None else time.monotonic() + timeout
     while self.rx.available < need:
+      if self._clamp_read(self.rx.writable()) == 0:
+        # No room to post a whole packet, so every read from here returns 0 and
+        # this loop would spin on a core forever while the peer blocks writing
+        # the rest. A transport whose read_slack is too small gets here; say so
+        # rather than hanging.
+        raise LinkError(f"no room to read the rest of a {need} byte message "
+                        + f"({self.rx.available} in hand); read_slack too small")
       remaining = None
       if end is not None:
         remaining = end - time.monotonic()

@@ -39,6 +39,12 @@ log = logging.getLogger('jetlink.usb')
 class UsbBulkTransport(StreamTransport):
   packet_size = MAX_PACKET
   read_chunk = READ_CHUNK
+  # A bulk IN read has to be posted for a whole packet, so the buffer needs a
+  # packet of headroom beyond the message itself. Without it a message whose
+  # length is not a packet multiple *and* big enough to resize the buffer ends
+  # with a few bytes of room, which rounds down to zero packets and stalls the
+  # read for good. Only the model upload is ever that big.
+  read_slack = MAX_PACKET
 
   def __init__(self, handle, context=None, timeout_ms: int = DEFAULT_TIMEOUT_MS,
                interface: int = 0, ep_in: int = 0x81, ep_out: int = 0x01):
