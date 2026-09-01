@@ -72,7 +72,23 @@ mkdir -p "functions/ffs.$FFS_NAME"
 ln -sf "$GADGET/functions/ffs.$FFS_NAME" "configs/c.1/ffs.$FFS_NAME" 2>/dev/null || true
 
 mkdir -p "$FFS_MOUNT"
-mountpoint -q "$FFS_MOUNT" || mount -t functionfs "$FFS_NAME" "$FFS_MOUNT"
+# Mount owned by the user openpilot runs as. launch_chffrplus.sh runs as
+# `comma`, so a root-only mount means modeld and jetlinkd cannot open the
+# endpoints at all - and Path.exists() on them raises PermissionError rather
+# than returning False, which hides the problem.
+FFS_USER="${JETLINK_USER:-comma}"
+if id -u "$FFS_USER" >/dev/null 2>&1; then
+  FFS_OPTS="uid=$(id -u "$FFS_USER"),gid=$(id -g "$FFS_USER")"
+else
+  FFS_OPTS=""
+fi
+mountpoint -q "$FFS_MOUNT" || mount -t functionfs ${FFS_OPTS:+-o "$FFS_OPTS"} "$FFS_NAME" "$FFS_MOUNT"
+
+# The client binds the UDC, and it does so as the openpilot user, so hand it
+# that one attribute. Everything else in the gadget stays root-owned.
+if [ -n "$FFS_OPTS" ]; then
+  chown "$FFS_USER" "$GADGET/UDC" 2>/dev/null || true
+fi
 
 echo "gadget ready at $GADGET"
 echo "functionfs mounted at $FFS_MOUNT"
