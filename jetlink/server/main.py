@@ -78,7 +78,10 @@ def _usb_opener(args):
       return None
     try:
       return UsbBulkTransport.open(args.vid, args.pid, timeout_ms=args.usb_timeout_ms)
-    except LinkError as e:
+    except Exception as e:
+      # Broad on purpose: this loop is the server's only supervisor. Anything
+      # that escapes here exits the process, and under a restart policy that is
+      # a crash loop rather than a retry.
       log.warning("could not open the gadget: %s", e)
       return None
   return open_transport
@@ -97,7 +100,7 @@ def _ffs_opener(args):
       # This writes the descriptors and binds the UDC; either can fail
       # transiently, and returning None just retries.
       return FfsTransport(str(mount), gadget=args.gadget, udc=args.udc)
-    except OSError as e:
+    except Exception as e:
       log.warning("could not open the gadget: %s", e)
       return None
   return open_transport
@@ -122,12 +125,20 @@ def main(argv=None) -> int:
   p.add_argument('--usb-timeout-ms', type=int, default=2000)
   p.add_argument('--cache', default=str(DEFAULT_CACHE))
   p.add_argument('--build', metavar='ONNX', help='build an engine and exit')
+  p.add_argument('--dump-spec', metavar='ONNX',
+                 help='write this model\'s spec as json to stdout and exit')
   p.add_argument('--log-level', default='INFO')
   args = p.parse_args(argv)
 
   logging.basicConfig(
     level=getattr(logging, args.log_level.upper(), logging.INFO),
     format='%(asctime)s %(levelname)-7s %(name)s: %(message)s')
+
+  if args.dump_spec:
+    import json
+    from jetlink.spec import spec_from_onnx
+    print(json.dumps(spec_from_onnx(args.dump_spec).to_dict()))
+    return 0
 
   cache = EngineCache(Path(args.cache))
 

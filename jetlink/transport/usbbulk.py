@@ -53,16 +53,23 @@ class UsbBulkTransport(StreamTransport):
     import usb1
     context = usb1.USBContext()
     context.open()
-    handle = context.openByVendorIDAndProductID(vid, pid, skip_on_error=True)
-    if handle is None:
-      context.close()
-      raise LinkError(f"no jetlink gadget at {vid:04x}:{pid:04x}")
+    handle = None
     try:
+      # libusb_open itself can fail with EIO on a device that is enumerated but
+      # not answering - which is exactly what a FunctionFS gadget looks like
+      # when the process owning its endpoints has exited. Everything in here
+      # has to come back as LinkError, or it escapes the server's accept loop
+      # and takes the process down instead of retrying.
+      handle = context.openByVendorIDAndProductID(vid, pid, skip_on_error=True)
+      if handle is None:
+        raise LinkError(f"no jetlink gadget at {vid:04x}:{pid:04x}")
       handle.claimInterface(interface)
+    except LinkError:
+      _close_quietly(handle, context)
+      raise
     except Exception as e:
-      handle.close()
-      context.close()
-      raise LinkError(f"could not claim interface {interface}: {e}") from e
+      _close_quietly(handle, context)
+      raise LinkError(f"could not open {vid:04x}:{pid:04x}: {e}") from e
     return cls(handle, context, timeout_ms, interface)
 
   @staticmethod
@@ -148,3 +155,13 @@ class UsbBulkTransport(StreamTransport):
         fn()
       except Exception:
         pass
+
+
+def _close_quietly(handle, context) -> None:
+  for closer in (getattr(handle, 'close', None), getattr(context, 'close', None)):
+    if closer is None:
+      continue
+    try:
+      closer()
+    except Exception:
+      pass

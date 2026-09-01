@@ -15,8 +15,8 @@ This sends real-sized payloads at the real rate and reports the tail.
     # against a Jetson on the LAN
     python3 scripts/bench_link.py --host 192.168.1.87 --onnx big_model.onnx --n 400
 
-    # over the USB gadget, from the comma
-    python3 scripts/bench_link.py --usb --spec spec.json
+    # over the cable, from the comma (the comma is the gadget)
+    python3 scripts/bench_link.py --ffs --spec spec.json
 """
 from __future__ import annotations
 
@@ -40,6 +40,32 @@ def load_spec(args) -> ModelSpec:
   raise SystemExit("need --spec or --onnx (the shapes come from the model)")
 
 
+def _wait_for_host(timeout: float) -> None:
+  """Block until a USB host has configured us.
+
+  The gadget has to be bound before anything can enumerate it, and binding is
+  what opening the transport does - so the wait belongs after the open, not
+  before it. Until a host attaches, the UDC reports "not attached" and every
+  read would simply time out.
+  """
+  udcs = list(Path('/sys/class/udc').glob('*/state'))
+  deadline = time.monotonic() + timeout
+  reported = False
+  while time.monotonic() < deadline:
+    for udc in udcs:
+      try:
+        if udc.read_text().strip() == 'configured':
+          print(f"host attached ({udc.parent.name})")
+          return
+      except OSError:
+        pass
+    if not reported:
+      print(f"waiting up to {timeout:.0f}s for a USB host to enumerate the gadget...")
+      reported = True
+    time.sleep(0.25)
+  raise SystemExit("no USB host attached: check the cable")
+
+
 def pct(a: np.ndarray, q: float) -> float:
   return float(np.percentile(a, q))
 
@@ -48,8 +74,15 @@ def main() -> int:
   p = argparse.ArgumentParser()
   g = p.add_mutually_exclusive_group(required=True)
   g.add_argument('--host', help='TCP host of the Jetson')
-  g.add_argument('--usb', action='store_true', help='use the USB gadget')
+  g.add_argument('--usb', action='store_true',
+                 help='this end is the USB host (libusb)')
+  g.add_argument('--ffs', action='store_true',
+                 help='this end is the USB gadget (FunctionFS) - use this on a comma')
   p.add_argument('--port', type=int, default=5599)
+  p.add_argument('--ffs-mount', default='/dev/ffs-jetlink')
+  p.add_argument('--gadget', default='/sys/kernel/config/usb_gadget/jetlink')
+  p.add_argument('--wait-host', type=float, default=0.0, metavar='SECONDS',
+                 help='gadget mode: wait for a host to enumerate us before starting')
   p.add_argument('--spec', help='json spec file, as written by --dump-spec')
   p.add_argument('--onnx', help='read the spec from this model, uploading it if the server lacks it')
   p.add_argument('--n', type=int, default=400)
@@ -57,8 +90,18 @@ def main() -> int:
   p.add_argument('--deadline', type=float, default=0.2, help='per-frame timeout, seconds')
   args = p.parse_args()
 
-  client = (JetlinkClient.open_usb(deadline=args.deadline) if args.usb
-            else JetlinkClient.open_tcp(args.host, args.port, deadline=args.deadline))
+  if args.usb:
+    client = JetlinkClient.open_usb(deadline=args.deadline)
+  elif args.ffs:
+    # On a comma the comma is the gadget: opening this writes the descriptors
+    # and binds the UDC, so the Jetson can enumerate us.
+    client = JetlinkClient.open_ffs(args.ffs_mount, gadget=args.gadget,
+                                    deadline=args.deadline)
+  else:
+    client = JetlinkClient.open_tcp(args.host, args.port, deadline=args.deadline)
+  if args.wait_host:
+    _wait_for_host(args.wait_host)
+
   hello = client.hello()
   print(f"server: trt {hello['trt_version']} on {hello['device']}, "
         f"engine {hello['engine_state']}")

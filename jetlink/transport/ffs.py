@@ -18,6 +18,7 @@ Bring-up (scripts/setup_gadget.sh does all of this):
 """
 from __future__ import annotations
 
+import errno
 import fcntl
 import os
 import struct
@@ -49,6 +50,14 @@ READ_CHUNK = 256 * SS_MAX_PACKET  # 256 KB
 # an idle link produces EAGAIN exactly like a broken one, so a running counter
 # would trip on any quiet second and lose the deadline for good.
 EAGAIN_FALLBACK = 2000
+
+# A host enumerating us is not the same as a host being ready to talk: it still
+# has to open the device and claim the interface, and until it does the gadget's
+# endpoints return EIO/ESHUTDOWN. The server polls sysfs every couple of
+# seconds to notice us, so that gap is easily a second or two. Wait it out
+# rather than reporting a dead link on the first frame after connect.
+EP_READY_TIMEOUT = 10.0
+_NOT_READY = (errno.EIO, errno.ESHUTDOWN, errno.ENODEV)
 
 
 def _interface_desc(n_endpoints: int = 2, i_interface: int = 1) -> bytes:
@@ -102,6 +111,7 @@ class FfsTransport(StreamTransport):
     self._blocking_reads = False
     self._eagain_streak = 0
     self._ever_read = False
+    self._ready_deadline: float | None = None
     try:
       self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
       os.write(self.ep0, build_descriptors())
@@ -143,10 +153,15 @@ class FfsTransport(StreamTransport):
     self.bound_udc = None
 
   def _write(self, bufs: list[memoryview]) -> int:
-    try:
-      return os.writev(self.ep_in, bufs)
-    except OSError as e:
-      raise LinkError(f"gadget write failed: {e}") from e
+    while True:
+      try:
+        return os.writev(self.ep_in, bufs)
+      except OSError as e:
+        # FunctionFS submits a write as one request, so a failed writev put
+        # nothing on the wire and is safe to retry.
+        if e.errno in _NOT_READY and self._wait_for_host_ready():
+          continue
+        raise LinkError(f"gadget write failed: {e}") from e
 
   def _read_into(self, dest: memoryview, timeout: float | None) -> int:
     n = self._clamp_read(dest)
@@ -155,7 +170,7 @@ class FfsTransport(StreamTransport):
     try:
       got = os.readv(self.ep_out, [dest[:n]])
     except BlockingIOError:
-      # Nothing queued yet. Sleeping briefly keeps the deadline enforceable
+      # Nothing queued yet. A short sleep keeps the deadline enforceable
       # without spinning a core; _fill decides when to give up.
       if not self._ever_read:
         self._eagain_streak += 1
@@ -164,11 +179,31 @@ class FfsTransport(StreamTransport):
       time.sleep(0.0005)
       return 0
     except OSError as e:
+      # NB BlockingIOError subclasses OSError and is handled above.
+      if e.errno in _NOT_READY and self._wait_for_host_ready():
+        return 0
       raise LinkError(f"gadget read failed: {e}") from e
     if got == 0:
       raise LinkError("gadget read returned EOF (host disconnected)")
     self._ever_read = True
+    self._ready_deadline = None
     return got
+
+  def _wait_for_host_ready(self) -> bool:
+    """True while we are still inside the grace period for the host to claim us.
+
+    Enumeration and readiness are different things: the host has to open the
+    device and claim the interface before our endpoints work, and until then
+    they return EIO. Starting the clock on the first such error rather than at
+    open means the wait covers a re-enumeration too.
+    """
+    now = time.monotonic()
+    if self._ready_deadline is None:
+      self._ready_deadline = now + EP_READY_TIMEOUT
+    if now < self._ready_deadline:
+      time.sleep(0.005)
+      return True
+    return False
 
   def _use_blocking_reads(self) -> None:
     """Give up on O_NONBLOCK if this kernel never delivers data through it.

@@ -32,7 +32,10 @@ if [[ "${1:-}" == "--teardown" ]]; then
     rmdir "$GADGET/strings/0x409" 2>/dev/null || true
     rmdir "$GADGET" 2>/dev/null || true
   fi
-  umount "$FFS_MOUNT" 2>/dev/null || true
+  # A plain umount can block, or segfault, on a FunctionFS instance whose
+  # userspace owner died with endpoints still open. Lazy-detach instead: it
+  # unhooks the mount immediately and lets the kernel finish when it can.
+  umount -l "$FFS_MOUNT" 2>/dev/null || umount "$FFS_MOUNT" 2>/dev/null || true
   rmdir "$FFS_MOUNT" 2>/dev/null || true
   echo "jetlink gadget torn down"
   exit 0
