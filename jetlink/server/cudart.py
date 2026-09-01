@@ -82,3 +82,47 @@ def device_name(device: int = 0) -> tuple[str, int, int]:
   props = check(_rt.cudaGetDeviceProperties(device))
   name = props.name
   return (name.decode() if isinstance(name, bytes) else str(name), props.major, props.minor)
+
+
+# --- CUDA graphs -----------------------------------------------------------
+#
+# Capturing the whole per-frame sequence (H2D, enqueue, D2H) into a graph and
+# replaying it removes the per-launch CPU work, which is both latency and
+# jitter. Safe here only because every buffer is preallocated and never moves.
+
+cudaStreamCaptureModeThreadLocal = 1
+
+
+def stream_begin_capture(stream: int) -> None:
+  check(_rt.cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal))
+
+
+def stream_end_capture(stream: int):
+  return check(_rt.cudaStreamEndCapture(stream))
+
+
+def graph_instantiate(graph):
+  # Signature moved across cuda-python releases: newer takes (graph, flags),
+  # older takes (graph, errNode, logBuffer, bufferSize).
+  try:
+    return check(_rt.cudaGraphInstantiate(graph, 0))
+  except TypeError:
+    return check(_rt.cudaGraphInstantiate(graph, None, None, 0))
+
+
+def graph_launch(exec_graph, stream: int) -> None:
+  check(_rt.cudaGraphLaunch(exec_graph, stream))
+
+
+def graph_destroy(graph) -> None:
+  try:
+    check(_rt.cudaGraphDestroy(graph))
+  except Exception:
+    pass
+
+
+def graph_exec_destroy(exec_graph) -> None:
+  try:
+    check(_rt.cudaGraphExecDestroy(exec_graph))
+  except Exception:
+    pass

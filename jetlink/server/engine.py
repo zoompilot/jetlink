@@ -91,6 +91,7 @@ class TrtEngine:
     self.inputs = {n: b for n, b in self.bindings.items() if b.is_input}
     self.outputs = {n: b for n, b in self.bindings.items() if not b.is_input}
     self.last_gpu_us = 0
+    self.graph_exec = None
 
   # -- introspection --------------------------------------------------------
 
@@ -119,15 +120,43 @@ class TrtEngine:
       # copyto casts if needed; the queues already produce the engine's dtype.
       np.copyto(b.host, value.reshape(b.shape), casting='unsafe')
 
-  def run(self) -> dict[str, np.ndarray]:
-    """Run one frame. Returns views over pinned output memory, valid until the next run."""
-    t0 = time.perf_counter()
+  def _enqueue(self) -> None:
     for b in self.inputs.values():
       cudart.memcpy_h2d_async(b.device_ptr, b.host_ptr, b.nbytes, self.stream)
     if not self.context.execute_async_v3(self.stream):
       raise RuntimeError("execute_async_v3 failed")
     for b in self.outputs.values():
       cudart.memcpy_d2h_async(b.host_ptr, b.device_ptr, b.nbytes, self.stream)
+
+  def capture_graph(self) -> bool:
+    """Capture the per-frame sequence into a CUDA graph.
+
+    Replaying a graph skips the per-launch CPU work for every copy and kernel,
+    which is worth a couple of ms here and, more importantly, takes the
+    variance out of the launch path. Only valid because every buffer is
+    preallocated and never moves. Call after at least one warm run.
+    """
+    if self.graph_exec is not None:
+      return True
+    try:
+      cudart.stream_begin_capture(self.stream)
+      self._enqueue()
+      graph = cudart.stream_end_capture(self.stream)
+      self.graph_exec = cudart.graph_instantiate(graph)
+      cudart.graph_destroy(graph)
+      return True
+    except Exception:
+      # Not fatal: fall back to enqueueing each frame.
+      self.graph_exec = None
+      return False
+
+  def run(self) -> dict[str, np.ndarray]:
+    """Run one frame. Returns views over pinned output memory, valid until the next run."""
+    t0 = time.perf_counter()
+    if self.graph_exec is not None:
+      cudart.graph_launch(self.graph_exec, self.stream)
+    else:
+      self._enqueue()
     cudart.stream_sync(self.stream)
     self.last_gpu_us = int((time.perf_counter() - t0) * 1e6)
     return {n: b.host for n, b in self.outputs.items()}
@@ -149,6 +178,9 @@ class TrtEngine:
       except Exception:
         pass
     self.bindings.clear()
+    if self.graph_exec is not None:
+      cudart.graph_exec_destroy(self.graph_exec)
+      self.graph_exec = None
     try:
       cudart.stream_destroy(self.stream)
     except Exception:

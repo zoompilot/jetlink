@@ -241,6 +241,11 @@ class Session:
       packed = np.zeros(slot.spec.packed_nelem, np.float32)
       queues.step_into(warped, packed, host_inputs)
       engine.run()
+      if engine.capture_graph():
+        engine.run()   # first replay, so the steady state is never the first
+        log.info("cuda graph captured")
+      else:
+        log.info("cuda graph unavailable, enqueueing per frame")
       queues.reset()
 
       previous = slot.engine
