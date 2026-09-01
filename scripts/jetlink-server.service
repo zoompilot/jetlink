@@ -15,6 +15,7 @@ RestartSec=5
 ExecStartPre=-/usr/bin/docker rm -f jetlink
 ExecStart=/usr/bin/docker run --rm --name jetlink \
   --runtime nvidia \
+  --device-cgroup-rule "c 189:* rmw" \
   -v /mnt/data/jetlink:/mnt/data/jetlink \
   -v /dev/bus/usb:/dev/bus/usb \
   -v /sys:/sys:ro \

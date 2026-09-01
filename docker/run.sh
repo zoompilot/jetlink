@@ -12,6 +12,7 @@ exec docker run --rm -it \
   --runtime nvidia \
   --network host \
   --ipc host \
+  --device-cgroup-rule "c 189:* rmw" \
   -v "$CACHE":/mnt/data/jetlink \
   -v /dev:/dev \
   -v /sys:/sys:ro \

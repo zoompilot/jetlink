@@ -22,8 +22,13 @@ from jetlink.transport.base import LinkError, StreamTransport
 JETLINK_VID = 0x1209
 JETLINK_PID = 0x0001
 
-EP_OUT = 0x01
-EP_IN = 0x82
+# NB the endpoint addresses are discovered, never assumed. FunctionFS treats
+# the addresses in the gadget's descriptors as logical and renumbers them when
+# it binds, so a gadget that declares 0x01/0x82 can appear to the host as
+# 0x01/0x81. Reading a hardcoded address that does not exist fails with a bare
+# LIBUSB_ERROR_IO and looks exactly like a broken cable.
+USB_ENDPOINT_DIR_IN = 0x80
+USB_TRANSFER_TYPE_BULK = 0x02
 MAX_PACKET = 1024   # SuperSpeed bulk
 READ_CHUNK = 256 * MAX_PACKET
 DEFAULT_TIMEOUT_MS = 2000
@@ -36,12 +41,14 @@ class UsbBulkTransport(StreamTransport):
   read_chunk = READ_CHUNK
 
   def __init__(self, handle, context=None, timeout_ms: int = DEFAULT_TIMEOUT_MS,
-               interface: int = 0):
+               interface: int = 0, ep_in: int = 0x81, ep_out: int = 0x01):
     super().__init__(rx_size=2 << 20)
     self.handle = handle
     self.context = context
     self.timeout_ms = timeout_ms
     self.interface = interface
+    self.ep_in = ep_in
+    self.ep_out = ep_out
     self._zero_copy_reads = True
     # libusb has no vectored bulk write, so messages are gathered here. Reused
     # so the steady state does not allocate half a megabyte per frame.
@@ -55,14 +62,17 @@ class UsbBulkTransport(StreamTransport):
     context.open()
     handle = None
     try:
+      device = next((d for d in context.getDeviceIterator(skip_on_error=True)
+                     if (d.getVendorID(), d.getProductID()) == (vid, pid)), None)
+      if device is None:
+        raise LinkError(f"no jetlink gadget at {vid:04x}:{pid:04x}")
+      ep_in, ep_out = _find_bulk_endpoints(device, interface)
       # libusb_open itself can fail with EIO on a device that is enumerated but
       # not answering - which is exactly what a FunctionFS gadget looks like
       # when the process owning its endpoints has exited. Everything in here
       # has to come back as LinkError, or it escapes the server's accept loop
       # and takes the process down instead of retrying.
-      handle = context.openByVendorIDAndProductID(vid, pid, skip_on_error=True)
-      if handle is None:
-        raise LinkError(f"no jetlink gadget at {vid:04x}:{pid:04x}")
+      handle = device.open()
       handle.claimInterface(interface)
     except LinkError:
       _close_quietly(handle, context)
@@ -70,7 +80,7 @@ class UsbBulkTransport(StreamTransport):
     except Exception as e:
       _close_quietly(handle, context)
       raise LinkError(f"could not open {vid:04x}:{pid:04x}: {e}") from e
-    return cls(handle, context, timeout_ms, interface)
+    return cls(handle, context, timeout_ms, interface, ep_in, ep_out)
 
   @staticmethod
   def present(vid: int = JETLINK_VID, pid: int = JETLINK_PID) -> bool:
@@ -99,7 +109,7 @@ class UsbBulkTransport(StreamTransport):
     try:
       # One transfer, not several: multiple writes would let the host scheduler
       # interleave and show up as jitter.
-      return self.handle.bulkWrite(EP_OUT, memoryview(self._tx)[:total],
+      return self.handle.bulkWrite(self.ep_out, memoryview(self._tx)[:total],
                                    timeout=self.timeout_ms)
     except usb1.USBErrorTimeout as e:
       # Report what actually went out so the caller resends only the remainder;
@@ -122,7 +132,7 @@ class UsbBulkTransport(StreamTransport):
         # the receive path, which is exactly what RxBuffer exists to avoid.
         # create_binary_buffer over `dest` writes straight into it.
         buf, _ = usb1.create_binary_buffer(dest[:n])
-        return self.handle._bulkTransfer(EP_IN, buf, n, self._ms(timeout))
+        return self.handle._bulkTransfer(self.ep_in, buf, n, self._ms(timeout))
       except usb1.USBErrorTimeout as e:
         # libusb attaches whatever did arrive to the exception. Dropping it
         # would desync the stream, far worse than a late frame.
@@ -136,7 +146,7 @@ class UsbBulkTransport(StreamTransport):
         log.warning("jetlink: no zero-copy bulk read (%s), using bulkRead", e)
 
     try:
-      data = self.handle.bulkRead(EP_IN, n, timeout=self._ms(timeout))
+      data = self.handle.bulkRead(self.ep_in, n, timeout=self._ms(timeout))
     except usb1.USBErrorTimeout as e:
       data = getattr(e, 'received', b'')
     except usb1.USBError as e:
@@ -165,3 +175,23 @@ def _close_quietly(handle, context) -> None:
       closer()
     except Exception:
       pass
+
+
+def _find_bulk_endpoints(device, interface: int) -> tuple[int, int]:
+  """(IN, OUT) bulk endpoint addresses for `interface`, from its descriptors."""
+  for cfg in device.iterConfigurations():
+    for iface in cfg:
+      for setting in iface:
+        if setting.getNumber() != interface:
+          continue
+        ep_in = ep_out = None
+        for ep in setting:
+          if ep.getAttributes() & 0x03 != USB_TRANSFER_TYPE_BULK:
+            continue
+          if ep.getAddress() & USB_ENDPOINT_DIR_IN:
+            ep_in = ep.getAddress()
+          else:
+            ep_out = ep.getAddress()
+        if ep_in is not None and ep_out is not None:
+          return ep_in, ep_out
+  raise LinkError(f"interface {interface} has no bulk IN/OUT endpoint pair")

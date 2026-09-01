@@ -99,6 +99,16 @@ def main() -> int:
                                     deadline=args.deadline)
   else:
     client = JetlinkClient.open_tcp(args.host, args.port, deadline=args.deadline)
+  try:
+    return _run(args, client)
+  finally:
+    # Always hand the endpoints back. A FunctionFS owner that dies without
+    # closing leaves the gadget bound with nothing servicing it, and the next
+    # teardown can wedge the driver.
+    client.close()
+
+
+def _run(args, client) -> int:
   if args.wait_host:
     _wait_for_host(args.wait_host)
 
@@ -118,6 +128,7 @@ def main() -> int:
   hidden = spec.output_slices['hidden_state']
 
   lat, gpu, queue, srv = [], [], [], []
+  send_ms, recv_ms = [], []
   period = 1.0 / args.rate if args.rate > 0 else 0.0
   next_t = time.perf_counter()
   for i in range(args.n):
@@ -127,8 +138,13 @@ def main() -> int:
         time.sleep(next_t - now)
       next_t += period
     t = time.perf_counter()
-    out = client.infer(warped, packed, frame_id=i, reset=(i == 0), deadline=args.deadline)
-    lat.append((time.perf_counter() - t) * 1e3)
+    seq = client.infer_begin(warped, packed, frame_id=i, reset=(i == 0))
+    t_sent = time.perf_counter()
+    out = client.infer_end(seq, deadline=args.deadline)
+    t_done = time.perf_counter()
+    lat.append((t_done - t) * 1e3)
+    send_ms.append((t_sent - t) * 1e3)
+    recv_ms.append((t_done - t_sent) * 1e3)
     # Feed the hidden state back exactly as modeld does, so the queues see a
     # realistic sequence rather than a constant.
     packed[-(hidden.stop - hidden.start):] = out[hidden]
@@ -145,13 +161,15 @@ def main() -> int:
   print(f"  mean {a.mean():6.2f}  min {a.min():6.2f}  p50 {pct(a,50):6.2f}  "
         f"p90 {pct(a,90):6.2f}  p99 {pct(a,99):6.2f}  max {a.max():6.2f}")
   print(f"  jitter: p99-p50 {pct(a,99)-pct(a,50):5.2f}  stdev {a.std():5.2f}")
+  snd, rcv = np.array(send_ms[10:]), np.array(recv_ms[10:])
+  print(f"  send ({spec.infer_req_nbytes/1e3:.0f} KB up):   mean {snd.mean():6.2f}  p50 {pct(snd,50):6.2f}  max {snd.max():6.2f}")
+  print(f"  recv ({spec.infer_resp_nbytes/1e3:.0f} KB down): mean {rcv.mean():6.2f}  p50 {pct(rcv,50):6.2f}  max {rcv.max():6.2f}")
   s = np.array(srv[10:])
   print(f"server-side total {np.mean(s):6.2f} ms  (gpu {np.mean(gpu[10:]):5.2f}, "
         f"queues {np.mean(queue[10:]):5.2f})")
   print(f"transport overhead: {a.mean() - s.mean():.2f} ms mean")
   over = int((a > 50).sum())
   print(f"frames over the 50 ms budget: {over}/{len(a)} ({100*over/len(a):.1f}%)")
-  client.close()
   return 0
 
 

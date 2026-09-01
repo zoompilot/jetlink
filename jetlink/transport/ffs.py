@@ -70,6 +70,13 @@ def _endpoint_desc(addr: int, max_packet: int) -> bytes:
 
 
 def _ss_companion(max_burst: int = 15) -> bytes:
+  """SuperSpeed endpoint companion.
+
+  bMaxBurst is the number of *additional* packets per burst, so 15 means bursts
+  of 16 x 1024 bytes. It matters enormously: without bursting the gadget sends
+  one packet per handshake and the 459 KB request takes 167 ms (~2.75 MB/s),
+  which blows the whole 50 ms frame budget on its own.
+  """
   return struct.pack('<BBBBH', 6, USB_DT_SS_ENDPOINT_COMP, max_burst, 0, 0)
 
 

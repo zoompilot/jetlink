@@ -24,13 +24,19 @@ Measured on an Orin Nano Super 8 GB, JetPack 6.1, TensorRT 10.3 FP16:
 | Frame budget (`MODEL_RUN_FREQ = 20`) | **50 ms** |
 | Model, GPU | 21.9 ms |
 | History buffers, CPU | 1.4 ms |
-| Transport (loopback) | 0.7 ms |
-| **Round trip, client to client** | **24.2 ms** |
-| p99 / max | 24.6 / 25.1 ms |
-| Jitter (p99−p50) | **0.41 ms** |
-| Frames over budget, 290 sampled | **0** |
+| Transport, over the USB cable | 4.7 ms |
+| **Round trip, comma to Jetson and back** | **28.1 ms** |
+| p99 / max | 30.8 / 39.9 ms |
+| Jitter (p99−p50) | **2.8 ms** |
+| Frames over budget, 190 sampled | **0** |
 | Reading `warped` off the comma's GPU | 4.4 ms |
-| **On-car total** | **~28.6 ms** |
+| **On-car total** | **~32.5 ms** |
+
+Measured comma-to-Jetson over the real USB 3 link, not a loopback: a comma 3X
+as the FunctionFS gadget, an Orin Nano as the libusb host, SuperSpeed. Of the
+4.7 ms transport, 2.9 ms is the 459 KB request and the rest is the 74 KB reply.
+Over TCP loopback the same benchmark runs at 24.2 ms, so the cable costs about
+4 ms.
 
 That last row matters and is easy to miss: the benchmark hands the client a
 numpy array, but on the car the warped frame has to be read back from the
