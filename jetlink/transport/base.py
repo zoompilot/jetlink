@@ -12,13 +12,17 @@ from dataclasses import dataclass
 
 from jetlink import protocol as P
 
+# One frame is ~460 KB. The cap is what stops a corrupt length field making
+# RxBuffer allocate gigabytes before a single byte of it has been read.
+MAX_MESSAGE = 16 << 20
+
 
 class LinkError(IOError):
   """The link is unusable. Callers treat this as 'fall back to the small model'."""
 
 
 class LinkTimeout(LinkError):
-  pass
+  """No complete message arrived in time. The stream is still in sync."""
 
 
 @dataclass
@@ -49,8 +53,6 @@ class Transport(ABC):
   def close(self) -> None:
     ...
 
-  # -- shared helpers ------------------------------------------------------
-
   def __enter__(self):
     return self
 
@@ -61,34 +63,160 @@ class Transport(ABC):
     import json
     self.send(msg_type, seq, (json.dumps(obj).encode(),), flags)
 
-  @staticmethod
-  def json_of(msg: Message):
-    import json
-    return json.loads(bytes(msg.payload))
 
+class RxBuffer:
+  """Receive buffer for a byte stream carrying framed messages.
 
-class FramedBuffer:
-  """Reassembles the 32-byte-header framing out of a byte stream.
-
-  Bulk USB and TCP are both streams, so both need this. The buffer grows to the
-  largest message seen and is then reused, which is what keeps the steady state
-  allocation-free.
+  Reads land directly in here and messages are handed out as views, so the
+  steady state does no allocation and no copying between the wire and the
+  caller. Crucially it is also *resumable*: a read that times out part way
+  through a message leaves the bytes in place, so a missed deadline costs a
+  frame rather than desyncing the stream.
   """
 
-  def __init__(self, initial: int = 1 << 20):
-    self.buf = bytearray(initial)
+  def __init__(self, size: int = 1 << 20):
+    self.buf = bytearray(size)
     self.view = memoryview(self.buf)
+    self.start = 0  # first byte not yet consumed
+    self.end = 0    # one past the last byte read
 
-  def ensure(self, n: int) -> memoryview:
-    if len(self.buf) < n:
-      self.buf = bytearray(max(n, len(self.buf) * 2))
-      self.view = memoryview(self.buf)
-    return self.view
+  @property
+  def available(self) -> int:
+    return self.end - self.start
 
-  def parse_header(self) -> tuple[int, int, int, int, int]:
-    _, _, msg_type, seq, flags, length, t_mono_ns = P.unpack_header(self.view[:P.HEADER_SIZE])
-    return msg_type, seq, flags, length, t_mono_ns
+  def reserve(self, need: int) -> None:
+    """Guarantee room for `need` unconsumed bytes, compacting or growing."""
+    if self.start and self.start + need > len(self.buf):
+      # Slide the partial message to the front before considering a resize.
+      # Go through the bytearray, not the memoryview: source and destination
+      # overlap, and a memoryview slice assignment is a memcpy, which is
+      # undefined on overlap. Slicing the bytearray materialises the source
+      # first. Compaction is rare, so the copy is not worth avoiding.
+      self.buf[:self.available] = self.buf[self.start:self.end]
+      self.end -= self.start
+      self.start = 0
+    if need > len(self.buf):
+      grown = bytearray(max(need, len(self.buf) * 2))
+      grown[:self.available] = self.view[self.start:self.end]
+      self.buf, self.view = grown, memoryview(grown)
+      self.end -= self.start
+      self.start = 0
+
+  def writable(self) -> memoryview:
+    return self.view[self.end:]
+
+  def committed(self, n: int) -> None:
+    self.end += n
+
+  def take(self, n: int) -> memoryview:
+    out = self.view[self.start:self.start + n]
+    self.start += n
+    return out
+
+  def consumed(self) -> None:
+    """Call once a message has been fully handed out."""
+    if self.start == self.end:
+      self.start = self.end = 0
 
 
-def now_ns() -> int:
-  return time.monotonic_ns()
+class StreamTransport(Transport):
+  """Framing over any ordered byte stream.
+
+  TCP, USB bulk and FunctionFS are all streams, so they all need exactly this.
+  Subclasses supply only the two primitives that differ.
+  """
+
+  # Extra capacity kept beyond the current message, for transports whose reads
+  # must land in a buffer of at least a given size (FunctionFS OUT endpoints
+  # want a multiple of the max packet size).
+  read_slack = 0
+
+  def __init__(self, rx_size: int = 1 << 20):
+    self.rx = RxBuffer(rx_size)
+    self._desynced = False
+
+  # -- primitives a subclass must provide ----------------------------------
+
+  @abstractmethod
+  def _write(self, bufs: list[memoryview]) -> int:
+    """Write from one or more buffers. Returns bytes written (may be partial)."""
+
+  @abstractmethod
+  def _read_into(self, dest: memoryview, timeout: float | None) -> int:
+    """Read up to len(dest) bytes, returning how many arrived.
+
+    May return short, including 0. Must NOT raise on a timeout: return whatever
+    arrived and let _fill decide. Dropping partially transferred bytes is how a
+    stream silently desyncs.
+    """
+
+  # -- framing -------------------------------------------------------------
+
+  def send(self, msg_type: int, seq: int, parts=(), flags: int = 0) -> None:
+    # cast('B') matters: slicing a memoryview of a float32 array in _advance
+    # would step by elements, not bytes.
+    bufs = [memoryview(p).cast('B') for p in parts]
+    length = sum(b.nbytes for b in bufs)
+    header = P.pack_header(msg_type, seq, length, flags, time.monotonic_ns())
+    bufs.insert(0, memoryview(header))
+    while bufs:
+      n = self._write(bufs)
+      if n <= 0:
+        raise LinkError("peer went away during send")
+      bufs = advance(bufs, n)
+
+  def _fill(self, need: int, timeout: float | None) -> None:
+    """Read until `need` bytes are buffered, or the deadline passes.
+
+    The deadline is per *message*, not per read: handing the full timeout to
+    each read would let one 74 KB response take several times the caller's
+    budget. Partial reads are kept, so a missed deadline costs a frame and
+    leaves the stream in sync.
+    """
+    self.rx.reserve(need + self.read_slack)
+    end = None if timeout is None else time.monotonic() + timeout
+    while self.rx.available < need:
+      remaining = None
+      if end is not None:
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+          raise LinkTimeout(f"only {self.rx.available} of {need} bytes arrived in time")
+      n = self._read_into(self.rx.writable(), remaining)
+      if n:
+        self.rx.committed(n)
+
+  def recv(self, timeout: float | None = None) -> Message:
+    if self._desynced:
+      raise LinkError("stream desynced; the link must be reopened")
+    self._fill(P.HEADER_SIZE, timeout)
+    try:
+      _, _, msg_type, seq, flags, length, t_mono_ns = P.unpack_header(
+        self.rx.view[self.rx.start:self.rx.start + P.HEADER_SIZE])
+      if length > MAX_MESSAGE:
+        raise P.ProtocolError(f"message claims {length} bytes, over the {MAX_MESSAGE} cap")
+    except P.ProtocolError as e:
+      # Nothing can resynchronise a byte stream mid-message, and the bad bytes
+      # are still buffered. Latch it and report a link failure: callers
+      # reconnect on LinkError, whereas a ProtocolError escaping from here
+      # unwinds out of the server's accept loop and kills the process.
+      self._desynced = True
+      raise LinkError(f"protocol error, link unusable: {e}") from e
+    self._fill(P.HEADER_SIZE + length, timeout)
+    self.rx.take(P.HEADER_SIZE)
+    payload = self.rx.take(length)
+    self.rx.consumed()
+    return Message(msg_type, seq, flags, t_mono_ns, payload)
+
+
+def advance(bufs: list[memoryview], n: int) -> list[memoryview]:
+  """Drop the first `n` bytes across a list of buffers, returning what is left."""
+  out: list[memoryview] = []
+  for mv in bufs:
+    if n:
+      if n >= mv.nbytes:
+        n -= mv.nbytes
+        continue
+      mv = mv[n:]
+      n = 0
+    out.append(mv)
+  return out

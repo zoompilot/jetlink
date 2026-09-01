@@ -183,6 +183,6 @@ def build_engine(onnx_path: str | Path, out_path: str | Path,
     'onnx': onnx_path.name,
     'built_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
   }
-  Path(str(out_path).replace('.plan', '.json')).write_text(json.dumps(meta, indent=2))
+  out_path.with_suffix('.json').write_text(json.dumps(meta, indent=2))
   report('build', 1.0, f"done in {meta['build_seconds']}s")
   return out_path

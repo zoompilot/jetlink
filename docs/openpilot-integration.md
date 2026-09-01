@@ -74,6 +74,22 @@ rather than returning it, matching openpilot's own guard on big-model output.
 Note upstream's fallback is one-way: once it drops to the small model it stays
 there for the drive. jetlink does not change that.
 
+## Getting the package onto the comma
+
+`jetlink` should be a submodule at the openpilot repo root, alongside
+`tinygrad_repo` and `opendbc_repo`. That is how the fork already carries its
+other Python dependencies, and it puts `jetlink` on the interpreter path with
+no install step, no writes to a read-only rootfs, and no fight with the updater.
+
+```bash
+git submodule add <url> jetlink
+```
+
+Until that repo exists, `scripts/deploy_to_comma.sh <user@host>` rsyncs it to
+`/data/openpilot/jetlink` and configures the gadget. Set `DisableUpdates=1`
+while testing that way: the updater does `fetch` + `reset --hard` + `clean` and
+will delete untracked files.
+
 ## Params
 
 | param | meaning |

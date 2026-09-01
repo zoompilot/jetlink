@@ -31,6 +31,31 @@ import numpy as np
 from jetlink.spec import ModelSpec
 
 
+# uint8 -> float16 is 68% of the per-frame cost if you let numpy do it: on
+# aarch64 numpy has no vectorised float16 *store* loop, so it converts at
+# ~5.2 ns/element. The source here is uint8, which has only 256 possible
+# values, so a lookup table indexed by the byte gives the exact same bits at
+# memcpy speed. Stored as the fp16 bit patterns viewed as uint16, because
+# np.take needs the table and the destination to share a dtype.
+_U8_TO_F16_BITS = np.arange(256, dtype=np.uint8).astype(np.float16).view(np.uint16)
+
+
+def _strided_runs(head: int, n: int, step: int) -> list[tuple[slice, slice]]:
+  """Rows head, head+step, ... (mod n) as at most two strided slices.
+
+  Fancy indexing (np.take / buf[idx]) costs more than the copy it performs;
+  plain strided slices hit numpy's memcpy path. The wrapped sequence is always
+  two runs of constant stride, so no generality is lost.
+  """
+  m = -(-n // step)                        # number of sampled rows
+  m1 = min(m, -(-(n - head) // step))      # rows before the wrap
+  runs = [(slice(head, head + m1 * step, step), slice(0, m1))]
+  if m1 < m:
+    start = head + m1 * step - n
+    runs.append((slice(start, start + (m - m1) * step, step), slice(m1, m)))
+  return runs
+
+
 class RingQueue:
   """Fixed-length FIFO over a preallocated array.
 
@@ -41,6 +66,9 @@ class RingQueue:
     self.buf = np.zeros(shape, dtype=dtype)
     self.n = shape[0]
     self.head = 0
+    # Only the fp16 rings can use the lookup table; a float32 ring (used by the
+    # equivalence test) falls back to a plain assignment.
+    self._lut = self.buf.dtype == np.float16
 
   def reset(self) -> None:
     self.buf[:] = 0
@@ -48,13 +76,25 @@ class RingQueue:
 
   def push(self, value) -> None:
     # The slot the oldest element occupies becomes the newest once head moves.
-    self.buf[self.head] = value
+    dest = self.buf[self.head]
+    if self._lut and getattr(value, 'dtype', None) == np.uint8:
+      # mode='clip' skips a bounds check that a uint8 index can never fail.
+      np.take(_U8_TO_F16_BITS, value.reshape(-1),
+              out=dest.reshape(-1).view(np.uint16), mode='clip')
+    else:
+      dest[...] = value
     self.head = (self.head + 1) % self.n
 
+  def gather(self, step: int, out: np.ndarray) -> np.ndarray:
+    """Write logical rows 0, step, 2*step, ... into `out`, oldest first."""
+    for src, dst in _strided_runs(self.head, self.n, step):
+      out[dst] = self.buf[src]
+    return out
+
   def logical(self, step: int = 1) -> np.ndarray:
-    """Gather logical indices 0, step, 2*step, ... in order."""
-    idx = (self.head + np.arange(0, self.n, step)) % self.n
-    return self.buf[idx]
+    """Same as gather(), allocating the destination."""
+    m = -(-self.n // step)
+    return self.gather(step, np.empty((m, *self.buf.shape[1:]), self.buf.dtype))
 
 
 def sample_skip(q: RingQueue, frame_skip: int, out: np.ndarray | None = None) -> np.ndarray:
@@ -64,11 +104,9 @@ def sample_skip(q: RingQueue, frame_skip: int, out: np.ndarray | None = None) ->
   destination - which is how the server writes into TensorRT's pinned input
   buffers without an intermediate array.
   """
-  idx = (q.head + np.arange(0, q.n, frame_skip)) % q.n
   if out is not None:
-    np.take(q.buf, idx, axis=0, out=out)
-    return out
-  s = q.buf[idx]
+    return q.gather(frame_skip, out)
+  s = q.logical(frame_skip)
   return s.reshape(1, s.shape[0] * s.shape[1], *s.shape[2:])
 
 
@@ -90,6 +128,12 @@ class PolicyQueues:
     self.dtype = dtype
     self.frame_skip = spec.frame_skip
 
+    offset = 0
+    self._packed_layout = []
+    for size, shape in zip(spec.packed_sizes, spec.packed_shapes.values()):
+      self._packed_layout.append((offset, offset + size, shape))
+      offset += size
+
     self.img_q = RingQueue(spec.img_buf_shape, dtype)
     self.big_img_q = RingQueue(spec.img_buf_shape, dtype)
     self.feat_q = RingQueue(spec.feat_q_shape, dtype)
@@ -104,9 +148,9 @@ class PolicyQueues:
       q.reset()
 
   def _unpack(self, packed: np.ndarray):
-    spec = self.spec
-    parts = np.split(packed, np.cumsum(spec.packed_sizes[:-1]))
-    return tuple(p.reshape(s) for p, s in zip(parts, spec.packed_shapes.values()))
+    # Slice views, not np.split: split builds a list of new array objects every
+    # frame for no benefit, and the offsets never change.
+    return tuple(packed[a:b].reshape(shape) for a, b, shape in self._packed_layout)
 
   def _push(self, warped: np.ndarray, packed: np.ndarray):
     spec = self.spec

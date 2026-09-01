@@ -59,13 +59,28 @@ class TinygradReference:
   """openpilot's queues, driven exactly as run_policy drives them."""
 
   def __init__(self, spec: ModelSpec):
+    import math
     fs = spec.frame_skip
     fb = spec.input_shapes['features_buffer']
     dp = spec.input_shapes['desire_pulse']
+    img = spec.input_shapes['img']
     self.fs = fs
-    self.img_q = Tensor(np.zeros(spec.img_buf_shape, np.uint8)).contiguous().realize()
-    self.big_img_q = Tensor(np.zeros(spec.img_buf_shape, np.uint8)).contiguous().realize()
-    self.feat_q = Tensor(np.zeros((fs * fb[1], fb[0], spec.feat_dim), np.float32)).contiguous().realize()
+
+    # Derive the shapes from openpilot's own formulae rather than reusing
+    # jetlink's properties, so this really is an independent reference. These
+    # mirror upstream master's compile_modeld.get_policy_npy_shapes /
+    # make_input_queues. NB the copy of compile_modeld checked out in this fork
+    # still uses fb[2] instead of prod(fb[2:]) and is wrong for a 4-D
+    # features_buffer; upstream master is the correct one.
+    feat_dim = math.prod(fb[2:])
+    assert feat_dim == spec.feat_dim, f"spec.feat_dim {spec.feat_dim} != openpilot's {feat_dim}"
+    n_frames = img[1] // 6
+    img_buf_shape = (fs * (n_frames - 1) + 1, 6, img[2], img[3])
+    assert img_buf_shape == spec.img_buf_shape
+
+    self.img_q = Tensor(np.zeros(img_buf_shape, np.uint8)).contiguous().realize()
+    self.big_img_q = Tensor(np.zeros(img_buf_shape, np.uint8)).contiguous().realize()
+    self.feat_q = Tensor(np.zeros((fs * fb[1], fb[0], feat_dim), np.float32)).contiguous().realize()
     self.desire_q = Tensor(np.zeros((fs * dp[1], dp[0], dp[2]), np.float32)).contiguous().realize()
 
   def step(self, warped: np.ndarray, desire: np.ndarray, prev_feat: np.ndarray):

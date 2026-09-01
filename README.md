@@ -23,12 +23,26 @@ Measured on an Orin Nano Super 8 GB, JetPack 6.1, TensorRT 10.3 FP16:
 |---|---|
 | Frame budget (`MODEL_RUN_FREQ = 20`) | **50 ms** |
 | Model, GPU | 21.9 ms |
-| History buffers, CPU | 3.5 ms |
+| History buffers, CPU | 1.4 ms |
 | Transport (loopback) | 0.7 ms |
-| **Round trip, end to end** | **26.3 ms** |
-| p99 / max | 26.8 / 26.9 ms |
-| Jitter (p99−p50) | **0.55 ms** |
+| **Round trip, client to client** | **24.2 ms** |
+| p99 / max | 24.6 / 25.1 ms |
+| Jitter (p99−p50) | **0.41 ms** |
 | Frames over budget, 290 sampled | **0** |
+| Reading `warped` off the comma's GPU | 4.4 ms |
+| **On-car total** | **~28.6 ms** |
+
+That last row matters and is easy to miss: the benchmark hands the client a
+numpy array, but on the car the warped frame has to be read back from the
+comma's QCOM GPU first, and that runs at ~90 MB/s because it is write-combined
+memory. It is a floor, not an inefficiency — upstream's chestnut path pays a
+similar read to push `warped` to the AMD device.
+
+The 1.4 ms of history-buffer work used to be 3.5 ms. Two thirds of it was one
+`uint8 → float16` cast: numpy has no vectorised float16 *store* loop on
+aarch64, so it converts at ~5.2 ns/element. The source is `uint8`, which has
+only 256 possible values, so `queues.py` converts through a lookup table
+instead — same bits, memcpy speed, no new dependency.
 
 Numerics: **corr 0.999994** against an onnxruntime CPU reference.
 Per frame the link carries 459 KB up and 74 KB down — 85 Mbit/s at 20 Hz.

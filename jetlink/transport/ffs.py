@@ -6,27 +6,24 @@ See the LICENSE file in the root directory for more details.
 
 USB gadget side of the link: a FunctionFS vendor-specific bulk function.
 
-This is the Jetson end. The comma end is `transport.usbbulk`, which talks to it
-with libusb and needs no kernel driver on the host.
+On a comma this is the *comma* end. The roles look backwards and are not:
+AGNOS has CONFIG_USB_F_FS and libcomposite built in, while a USB host needs no
+kernel driver at all, which matters because L4T rootfs images are often
+stripped of the gadget modules. See docs/transport.md.
 
-Why raw bulk rather than a USB ethernet gadget: AGNOS's kernel has no host-side
-CDC-NCM, CDC-ECM or RNDIS driver, so an ethernet gadget simply will not
-enumerate on a comma. Raw bulk also removes the IP stack, DHCP and NCM's
-aggregation timer from the latency path, and openpilot already speaks to both
-the panda and chestnut this way.
-
-Bring-up (see scripts/setup_gadget.sh, which does all of this):
+Bring-up (scripts/setup_gadget.sh does all of this):
     configfs gadget -> functions/ffs.jetlink -> mount -t functionfs
     write descriptors + strings to ep0 -> ep1 (OUT) and ep2 (IN) appear
     echo <udc> > UDC
 """
 from __future__ import annotations
 
+import fcntl
 import os
 import struct
+import time
 
-from jetlink import protocol as P
-from jetlink.transport.base import FramedBuffer, LinkError, LinkTimeout, Message, Transport, now_ns
+from jetlink.transport.base import LinkError, StreamTransport
 
 # --- FunctionFS ABI -------------------------------------------------------
 
@@ -42,13 +39,12 @@ USB_DT_ENDPOINT = 0x05
 USB_DT_SS_ENDPOINT_COMP = 0x30
 
 USB_ENDPOINT_XFER_BULK = 0x02
-EP_OUT = 0x01  # host -> device, we read()
-EP_IN = 0x82   # device -> host, we write()
+EP_OUT = 0x01  # host -> device
+EP_IN = 0x82   # device -> host
 
-# libusb/xHCI will split anything larger; must stay a multiple of the SS max
-# packet size (1024) so FunctionFS accepts OUT reads.
 SS_MAX_PACKET = 1024
 READ_CHUNK = 256 * SS_MAX_PACKET  # 256 KB
+EAGAIN_FALLBACK = 2000  # consecutive EAGAINs before giving up on O_NONBLOCK
 
 
 def _interface_desc(n_endpoints: int = 2, i_interface: int = 1) -> bytes:
@@ -74,41 +70,48 @@ def build_descriptors() -> bytes:
   # struct usb_functionfs_descs_head_v2: magic, length, flags, then ALL the
   # per-speed counts together (one __le32 per flag set, in flag order), and only
   # then the descriptor blocks. Interleaving count/block per speed gets EINVAL.
-  counts = struct.pack('<III', 3, 3, 5)   # fs, hs, ss descriptor counts
-  body = counts + fs + hs + ss
+  body = struct.pack('<III', 3, 3, 5) + fs + hs + ss
   flags = FLAG_HAS_FS | FLAG_HAS_HS | FLAG_HAS_SS
-  length = 12 + len(body)
-  return struct.pack('<III', FUNCTIONFS_DESCRIPTORS_MAGIC_V2, length, flags) + body
+  return struct.pack('<III', FUNCTIONFS_DESCRIPTORS_MAGIC_V2, 12 + len(body), flags) + body
 
 
 def build_strings(name: str = 'jetlink') -> bytes:
   s = name.encode() + b'\0'
-  length = 16 + 2 + len(s)
-  return (struct.pack('<IIII', FUNCTIONFS_STRINGS_MAGIC, length, 1, 1)
+  return (struct.pack('<IIII', FUNCTIONFS_STRINGS_MAGIC, 16 + 2 + len(s), 1, 1)
           + struct.pack('<H', 0x0409) + s)
 
 
-class FfsTransport(Transport):
-  """Server-side transport over a mounted FunctionFS instance."""
+class FfsTransport(StreamTransport):
+  # FunctionFS rejects an OUT read whose buffer is not a multiple of the max
+  # packet size, so always keep a full chunk of room available.
+  read_slack = READ_CHUNK
 
   def __init__(self, mount: str = '/dev/ffs-jetlink', gadget: str | None = None,
                udc: str | None = None):
+    super().__init__(rx_size=2 << 20)
     self.mount = mount
     self.gadget = gadget
     self.bound_udc: str | None = None
-    self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
-    os.write(self.ep0, build_descriptors())
-    os.write(self.ep0, build_strings())
-    # The endpoint files only exist once ep0 has accepted the descriptors.
-    self.ep_out = os.open(os.path.join(mount, 'ep1'), os.O_RDWR)
-    self.ep_in = os.open(os.path.join(mount, 'ep2'), os.O_RDWR)
-    self.fb = FramedBuffer()
-    self._pending = bytearray()
-    if gadget is not None:
-      # Bind last. A FunctionFS gadget cannot be attached to a UDC until its
-      # descriptors have been written, so the setup script deliberately leaves
-      # UDC empty and we finish the job here.
-      self.bind(udc)
+    self.ep0 = self.ep_out = self.ep_in = -1
+    self._blocking_reads = False
+    self._eagain_streak = 0
+    try:
+      self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
+      os.write(self.ep0, build_descriptors())
+      os.write(self.ep0, build_strings())
+      # The endpoint files only exist once ep0 has accepted the descriptors.
+      # O_NONBLOCK so a dead host cannot wedge the control path forever; if the
+      # kernel ignores it for FunctionFS the read simply blocks, as before.
+      self.ep_out = os.open(os.path.join(mount, 'ep1'), os.O_RDWR | os.O_NONBLOCK)
+      self.ep_in = os.open(os.path.join(mount, 'ep2'), os.O_RDWR)
+      if gadget is not None:
+        # Bind last: a FunctionFS gadget cannot attach to a controller until its
+        # descriptors have been written, which is why setup_gadget.sh leaves UDC
+        # empty and we finish the job here.
+        self.bind(udc)
+    except BaseException:
+      self.close()   # otherwise a failed bring-up leaks the descriptors it did open
+      raise
 
   def bind(self, udc: str | None = None) -> None:
     if self.gadget is None:
@@ -132,74 +135,56 @@ class FfsTransport(Transport):
       pass
     self.bound_udc = None
 
-  @classmethod
-  def attach(cls, mount: str = '/dev/ffs-jetlink') -> FfsTransport:
-    """Attach to an instance whose descriptors another process already wrote."""
-    self = cls.__new__(cls)
-    self.mount = mount
-    self.gadget = None
-    self.bound_udc = None
-    self.ep0 = -1
-    self.ep_out = os.open(os.path.join(mount, 'ep1'), os.O_RDWR)
-    self.ep_in = os.open(os.path.join(mount, 'ep2'), os.O_RDWR)
-    self.fb = FramedBuffer()
-    self._pending = bytearray()
-    return self
-
-  def send(self, msg_type: int, seq: int, parts=(), flags: int = 0) -> None:
-    parts = [memoryview(p).cast('B') for p in parts]
-    length = sum(p.nbytes for p in parts)
-    header = P.pack_header(msg_type, seq, length, flags, now_ns())
-    # os.writev keeps header + payload in one transfer, so the host sees one
-    # bulk stream with no interleaving risk.
-    bufs = [memoryview(header), *parts]
+  def _write(self, bufs: list[memoryview]) -> int:
     try:
-      while bufs:
-        n = os.writev(self.ep_in, bufs)
-        if n <= 0:
-          raise LinkError("gadget write returned 0 (host gone?)")
-        bufs = _advance(bufs, n)
+      return os.writev(self.ep_in, bufs)
     except OSError as e:
       raise LinkError(f"gadget write failed: {e}") from e
 
-  def _fill(self, need: int) -> None:
-    while len(self._pending) < need:
-      try:
-        chunk = os.read(self.ep_out, READ_CHUNK)
-      except OSError as e:
-        raise LinkError(f"gadget read failed: {e}") from e
-      if not chunk:
-        raise LinkError("gadget read returned EOF (host disconnected)")
-      self._pending += chunk
+  def _read_into(self, dest: memoryview, timeout: float | None) -> int:
+    n = (min(dest.nbytes, READ_CHUNK) // SS_MAX_PACKET) * SS_MAX_PACKET
+    if n == 0:
+      return 0
+    try:
+      got = os.readv(self.ep_out, [dest[:n]])
+    except BlockingIOError:
+      # Nothing queued yet. Sleeping briefly keeps the deadline enforceable
+      # without spinning a core; _fill decides when to give up.
+      self._eagain_streak += 1
+      if self._eagain_streak > EAGAIN_FALLBACK:
+        self._use_blocking_reads()
+      time.sleep(0.0005)
+      return 0
+    except OSError as e:
+      raise LinkError(f"gadget read failed: {e}") from e
+    if got == 0:
+      raise LinkError("gadget read returned EOF (host disconnected)")
+    self._eagain_streak = 0
+    return got
 
-  def recv(self, timeout: float | None = None) -> Message:
-    # FunctionFS blocking reads have no timeout; the caller supervises liveness.
-    self._fill(P.HEADER_SIZE)
-    _, _, msg_type, seq, flags, length, t_mono_ns = P.unpack_header(self._pending)
-    self._fill(P.HEADER_SIZE + length)
-    view = self.fb.ensure(length)
-    view[:length] = self._pending[P.HEADER_SIZE:P.HEADER_SIZE + length]
-    del self._pending[:P.HEADER_SIZE + length]
-    return Message(msg_type, seq, flags, t_mono_ns, view[:length])
+  def _use_blocking_reads(self) -> None:
+    """Give up on O_NONBLOCK if this kernel never delivers data through it.
+
+    Some FunctionFS builds have no non-blocking read path and return EAGAIN
+    forever, which would spin instead of receiving. Blocking reads cost us the
+    per-frame deadline on this side, but they do work.
+    """
+    if self._blocking_reads:
+      return
+    flags = fcntl.fcntl(self.ep_out, fcntl.F_GETFL)
+    fcntl.fcntl(self.ep_out, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
+    self._blocking_reads = True
+    self._eagain_streak = 0
 
   def close(self) -> None:
     self.unbind()
-    for fd in (self.ep_in, self.ep_out, self.ep0):
+    # Clear each fd as it is closed: a second close() would otherwise shut
+    # whatever those descriptor numbers had been recycled into.
+    for name in ('ep_in', 'ep_out', 'ep0'):
+      fd = getattr(self, name, -1)
+      setattr(self, name, -1)
       if fd is not None and fd >= 0:
         try:
           os.close(fd)
         except OSError:
           pass
-
-
-def _advance(bufs: list[memoryview], n: int) -> list[memoryview]:
-  out: list[memoryview] = []
-  for mv in bufs:
-    if n:
-      if n >= mv.nbytes:
-        n -= mv.nbytes
-        continue
-      mv = mv[n:]
-      n = 0
-    out.append(mv)
-  return out

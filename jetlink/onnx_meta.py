@@ -106,11 +106,13 @@ def parse_file(path: str) -> OnnxMeta:
   for name, fn in (('tinygrad', _parse_tinygrad), ('onnx', _parse_onnx)):
     try:
       return fn(path)
-    except ImportError as e:
-      errors.append(f'{name}: {e}')
-  raise ImportError(
-    "need either tinygrad (with openpilot on the path) or the onnx package to read "
-    "model metadata; tried:\n  " + "\n  ".join(errors))
+    except Exception as e:
+      # Not just ImportError: a parser that is present but chokes on a newer
+      # ModelProto layout should fall through to the other one, not abort.
+      errors.append(f'{name}: {type(e).__name__}: {e}')
+  raise RuntimeError(
+    "could not read model metadata; need tinygrad or the onnx package. Tried:\n  "
+    + "\n  ".join(errors))
 
 
 def describe(meta: OnnxMeta) -> str:

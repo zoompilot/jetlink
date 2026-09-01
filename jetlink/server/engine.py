@@ -139,6 +139,11 @@ class TrtEngine:
     self.load_inputs(values)
     return self.run()
 
+  # Deliberately no __del__. host_input() hands out numpy views over
+  # cudaHostAlloc memory that hold no reference back here, so a GC-driven
+  # close() would free pages another object is still writing into - a segfault
+  # rather than an exception. Ownership is explicit: whoever swaps an engine
+  # out closes it.
   def close(self) -> None:
     for b in self.bindings.values():
       try:
@@ -152,8 +157,3 @@ class TrtEngine:
     except Exception:
       pass
 
-  def __del__(self):
-    try:
-      self.close()
-    except Exception:
-      pass

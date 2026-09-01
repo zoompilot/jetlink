@@ -32,6 +32,12 @@ log = logging.getLogger('jetlink.server')
 
 PROGRESS_MIN_INTERVAL = 0.25  # s; the comma only needs a progress bar, not every step
 
+# Process-wide, not per Session: main.py builds a fresh Session for every
+# connection, so a per-Session guard would let a reconnect start a second
+# concurrent TensorRT build. Two builders each asking for a 4 GB workspace will
+# OOM an Orin, and both would move a plan onto the same path.
+_BUILD_LOCK = threading.Lock()
+
 
 class ModelSlot:
   """A model the server has been asked to run, and how far along it is."""
@@ -56,6 +62,9 @@ class Session:
     self.build_thread: threading.Thread | None = None
     self._last_progress = 0.0
     self.frames = 0
+    # Primed here so the first health publish carries real values. Session
+    # construction is not latency sensitive; on_infer is.
+    self._telemetry_cache = json.dumps(self.telemetry.read()).encode()
 
   # -- plumbing -------------------------------------------------------------
 
@@ -183,8 +192,10 @@ class Session:
       f.seek(offset)
       f.write(data)
     slot.received = offset + data.nbytes
-    frac = slot.received / max(1, slot.spec.nbytes)
-    self._progress('upload', frac, f'{slot.received >> 20} / {slot.spec.nbytes >> 20} MB')
+    # Deliberately silent. The client streams chunks without reading between
+    # them, and over USB a gadget only accepts data while its peer has a read
+    # posted - so a progress write here stalls for the whole transfer timeout
+    # on every attempt. The client reports its own upload progress anyway.
 
   def on_upload_done(self, msg: Message) -> None:
     slot = self.slot
@@ -206,7 +217,11 @@ class Session:
     self._respond_engine(msg.seq)
 
   def _start_worker(self, slot: ModelSlot, load_only: bool) -> None:
-    if self.build_thread is not None and self.build_thread.is_alive():
+    if not _BUILD_LOCK.acquire(blocking=False):
+      # Say so rather than silently reporting this slot as building: the client
+      # would otherwise wait for an engine nobody is making.
+      slot.state = 'building'
+      slot.detail = 'another build is already in progress'
       return
     slot.state = 'building'
     slot.detail = 'loading engine' if load_only else 'building engine'
@@ -238,7 +253,10 @@ class Session:
       engine.run()
       queues.reset()
 
+      previous = slot.engine
       slot.engine, slot.queues, slot.host_inputs = engine, queues, host_inputs
+      if previous is not None and previous is not engine:
+        previous.close()   # only once nothing points at its pinned buffers
       slot.state, slot.detail = 'ready', ''
       self._progress('load', 1.0, 'ready', force=True)
       log.info("engine ready: %s", entry.plan_path)
@@ -247,6 +265,12 @@ class Session:
       slot.state, slot.detail = 'failed', f'{type(e).__name__}: {e}'
       self._progress('failed', 1.0, slot.detail, force=True)
     finally:
+      _BUILD_LOCK.release()
+      if slot is not self.slot:
+        # The client moved to a different model while this was building. The
+        # result is still cached on disk; just do not announce it as current.
+        log.info("build finished for a superseded model %s", slot.spec.sha256[:16])
+        return
       try:
         self._send_json(P.Msg.ENGINE_RESP, 0, {
           'state': slot.state, 'detail': slot.detail,
@@ -279,6 +303,13 @@ class Session:
 
     t0 = time.perf_counter()
     spec = slot.spec
+    if msg.payload.nbytes != spec.infer_req_nbytes:
+      # The offsets below come from our spec, not from the wire. A client with
+      # a different model would otherwise have its scalars read out of the
+      # middle of the image, and the result would look perfectly finite.
+      self._send(P.Msg.INFER_RESP, msg.seq,
+                 (P.pack_infer_resp(0, P.Status.BAD_SHAPE, 0, 0, 0),))
+      return
     frame_id, flags = P.unpack_infer_req(msg.payload)
     if flags & P.Flag.RESET_QUEUES:
       slot.queues.reset()
@@ -306,9 +337,13 @@ class Session:
     parts = [P.pack_infer_resp(frame_id, status, slot.engine.last_gpu_us, queue_us, total_us),
              out32]
     if flags & P.Flag.WANT_STATE:
-      parts.append(json.dumps(self.telemetry.read()).encode())
+      parts.append(self._telemetry_cache)
     self._send(P.Msg.INFER_RESP, msg.seq, parts)
     self.frames += 1
+    if flags & P.Flag.WANT_STATE:
+      # ~30 sysfs reads. Refresh after replying, never between the GPU result
+      # and the wire: health data must not cost a frame.
+      self._telemetry_cache = json.dumps(self.telemetry.read()).encode()
 
   def on_reset(self, msg: Message) -> None:
     if self.slot is not None and self.slot.queues is not None:

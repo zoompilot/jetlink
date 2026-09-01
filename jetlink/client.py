@@ -28,6 +28,14 @@ from jetlink import protocol as P
 from jetlink.spec import CHUNK, ModelSpec, sha256_file, spec_from_onnx
 from jetlink.transport.base import LinkError, LinkTimeout, Message, Transport
 
+
+def _name(enum_cls, value) -> str:
+  """Enum name for a value off the wire, which may be anything."""
+  try:
+    return enum_cls(value).name
+  except ValueError:
+    return f'unknown({value})'
+
 log = logging.getLogger('jetlink.client')
 
 ProgressFn = Callable[[str, float, str], None]
@@ -94,7 +102,15 @@ class JetlinkClient:
       if self.progress_cb:
         self.progress_cb(p.get('stage', ''), float(p.get('frac', 0.0)), p.get('msg', ''))
     elif msg.msg_type == P.Msg.ENGINE_RESP:
-      self._engine_state = json.loads(bytes(msg.payload))
+      state = json.loads(bytes(msg.payload))
+      # The server may finish a build for a model we have since moved off.
+      # Accepting that as our readiness would leave us inferring against a slot
+      # the server will answer NOT_READY for, every frame.
+      if self.spec is not None and state.get('sha256') not in (None, self.spec.sha256):
+        log.warning("ignoring engine state for %s (we want %s)",
+                    str(state.get('sha256'))[:16], self.spec.sha256[:16])
+      else:
+        self._engine_state = state
     elif msg.msg_type == P.Msg.ERROR:
       e = json.loads(bytes(msg.payload))
       raise LinkError(f"server error: {e.get('error')}: {e.get('detail')}")
@@ -113,7 +129,7 @@ class JetlinkClient:
       # A late reply to an earlier request. Drop it and keep looking, otherwise
       # every subsequent frame would read one response behind.
       log.warning("discarding stale %s seq=%d (waiting for %s seq=%d)",
-                  P.Msg(msg.msg_type).name, msg.seq, P.Msg(msg_type).name, seq)
+                  _name(P.Msg, msg.msg_type), msg.seq, _name(P.Msg, msg_type), seq)
 
   # -- handshake ------------------------------------------------------------
 
@@ -220,12 +236,14 @@ class JetlinkClient:
       raise LinkError("ensure_engine() first")
     if self.dead:
       raise LinkError("link previously failed")
+    warped = _as_bytes(warped, self.spec.warped_nbytes, 'warped')
+    packed = _as_bytes(packed, self.spec.packed_nbytes, 'packed')
     seq = self._next_seq()
     flags = (P.Flag.RESET_QUEUES if reset else 0) | (P.Flag.WANT_STATE if want_state else 0)
     try:
-      self.t.send(P.Msg.INFER_REQ, seq,
-                  (P.pack_infer_req(frame_id, flags),
-                   np.ascontiguousarray(warped), np.ascontiguousarray(packed)))
+      self.t.send(P.Msg.INFER_REQ, seq, (P.pack_infer_req(frame_id, flags), warped, packed))
+    except LinkTimeout:
+      raise           # the stream is still in sync; the next frame recovers
     except LinkError:
       self.dead = True
       raise
@@ -234,13 +252,20 @@ class JetlinkClient:
   def infer_end(self, seq: int, deadline: float | None = None) -> np.ndarray:
     try:
       msg = self._expect(P.Msg.INFER_RESP, seq, self.deadline if deadline is None else deadline)
+    except LinkTimeout:
+      # Do NOT latch `dead` here. One frame overrunning a 35 ms deadline is the
+      # single most likely thing to happen on a drive, and the buffer keeps the
+      # stream in sync: the late reply is discarded as stale by the next
+      # _expect. Latching would drop the car to the small model permanently on
+      # the first GC pause.
+      raise
     except LinkError:
       self.dead = True
       raise
     fid, status, gpu_us, queue_us, total_us = P.unpack_infer_resp(msg.payload)
     self.last_timings = (gpu_us, queue_us, total_us)
     if status != P.Status.OK:
-      raise LinkError(f"inference failed: {P.Status(status).name} (frame {fid})")
+      raise LinkError(f"inference failed: {_name(P.Status, status)} (frame {fid})")
     end = P.INFER_RESP_SIZE + self.spec.output_nbytes
     if msg.payload.nbytes > end:  # piggybacked telemetry
       try:
@@ -256,8 +281,9 @@ class JetlinkClient:
     """One frame. Returns the model output as float32, shaped (n,).
 
     `warped` is (2, 6, H, W) uint8 straight off openpilot's warp; `packed` is
-    the float32 packed_npy_inputs buffer. Both are sent as-is - no copy on the
-    TCP path, one on USB.
+    the float32 packed_npy_inputs buffer. Either may be a numpy array or a raw
+    buffer - a tinygrad `Tensor.data()` memoryview goes straight to the wire
+    with no numpy round trip. Sent as-is: no copy on the TCP path, one on USB.
     """
     return self.infer_end(self.infer_begin(warped, packed, frame_id, reset, want_state), deadline)
 
@@ -268,6 +294,22 @@ class JetlinkClient:
 
   def close(self) -> None:
     self.t.close()
+
+
+def _as_bytes(buf, expect: int, name: str) -> memoryview:
+  """Byte view over a numpy array or any buffer, size-checked.
+
+  Checking bytes rather than shape lets the caller hand over whatever it
+  already has, and turns a model/protocol mismatch into a clear error here instead
+  of a misparse on the far end.
+  """
+  mv = memoryview(buf)
+  if not mv.contiguous:
+    raise LinkError(f"{name} must be contiguous")
+  mv = mv.cast('B')
+  if mv.nbytes != expect:
+    raise LinkError(f"{name} is {mv.nbytes} bytes, expected {expect}")
+  return mv
 
 
 def spec_for(onnx_path: str | Path, frame_skip: int | None = None) -> ModelSpec:

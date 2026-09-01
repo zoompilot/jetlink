@@ -16,7 +16,7 @@ import pytest
 
 from jetlink import protocol as P
 from jetlink.spec import ModelSpec
-from jetlink.transport.base import LinkError
+from jetlink.transport.base import LinkError, LinkTimeout
 from jetlink.transport.tcp import TcpTransport
 
 
@@ -90,6 +90,52 @@ def test_large_message_survives_stream_fragmentation():
     a.close(); b.close()
 
 
+def test_timeout_midmessage_does_not_desync():
+  """A missed deadline must cost a frame, not the stream.
+
+  The buffer keeps whatever arrived, so the next recv resumes the same message
+  instead of trying to read a header out of the middle of a payload. Before the
+  framing was shared this was three separate implementations and this bug lived
+  in one of them.
+  """
+  a, b = make_pair()
+  try:
+    body = bytes(range(256)) * 800  # 204 KB, will not arrive in one segment
+    a.send(P.Msg.INFER_RESP, 3, (body,))
+
+    deadline_misses = 0
+    for _ in range(200):
+      try:
+        msg = b.recv(timeout=0.001)
+        break
+      except LinkTimeout:
+        deadline_misses += 1
+    else:
+      pytest.fail("message never completed")
+
+    assert msg.seq == 3
+    assert bytes(msg.payload) == body
+
+    # And the stream is still usable afterwards.
+    a.send(P.Msg.PONG, 4)
+    assert b.recv(timeout=5).seq == 4
+  finally:
+    a.close(); b.close()
+
+
+def test_back_to_back_messages_keep_their_boundaries():
+  a, b = make_pair()
+  try:
+    for i in range(20):
+      a.send(P.Msg.PING, i, (bytes([i]) * (i * 1000 + 1),))
+    for i in range(20):
+      msg = b.recv(timeout=5)
+      assert msg.seq == i
+      assert bytes(msg.payload) == bytes([i]) * (i * 1000 + 1)
+  finally:
+    a.close(); b.close()
+
+
 def test_closed_peer_raises_link_error():
   a, b = make_pair()
   a.close()
@@ -132,3 +178,105 @@ def test_spec_handles_the_older_3d_features_buffer():
                           'action_t': (1, 2), 'features_buffer': (1, 24, 512)})
   assert s.feat_dim == 512
   assert s.packed_nelem == 8 + 2 + 2 + 512
+
+
+def test_rx_buffer_compaction_preserves_a_partial_message():
+  """Force the buffer to slide a partial message over itself.
+
+  Source and destination genuinely overlap here (dest [0:800], src [100:900]),
+  which is the case a memcpy gets wrong and a memmove gets right. Corruption
+  here would deliver a subtly wrong camera frame rather than raising.
+  """
+  from jetlink.transport.base import RxBuffer
+
+  rx = RxBuffer(1024)
+  payload = bytes((i * 7 + 3) % 251 for i in range(900))
+  rx.writable()[:900] = payload
+  rx.committed(900)
+  rx.take(100)                     # start=100, end=900 -> 800 unconsumed
+  assert rx.start == 100 and rx.available == 800
+
+  rx.reserve(950)                  # will not fit after `start`; must slide
+  assert rx.start == 0 and rx.available == 800
+  assert bytes(rx.view[:800]) == payload[100:], "overlapping compaction corrupted the buffer"
+
+
+def test_rx_buffer_grows_for_an_oversized_message():
+  from jetlink.transport.base import RxBuffer
+
+  rx = RxBuffer(64)
+  rx.writable()[:32] = bytes(range(32))
+  rx.committed(32)
+  rx.reserve(4096)
+  assert len(rx.buf) >= 4096
+  assert bytes(rx.view[:32]) == bytes(range(32))
+
+
+def test_desync_is_a_link_error_not_a_process_killer():
+  """Garbage on the wire must surface as LinkError so callers reconnect.
+
+  ProtocolError is not a LinkError, and the server's accept loop only catches
+  LinkError - so letting it escape would unwind out of main() and exit the
+  process instead of dropping one connection.
+  """
+  a, b = make_pair()
+  try:
+    a.sock.sendall(b'\xde\xad\xbe\xef' + bytes(60))
+    with pytest.raises(LinkError):
+      b.recv(timeout=5)
+    # And it stays failed rather than re-reading the same bad bytes forever.
+    with pytest.raises(LinkError):
+      b.recv(timeout=5)
+  finally:
+    a.close(); b.close()
+
+
+def test_absurd_length_is_rejected_before_allocating():
+  """A corrupt length field must not make us allocate gigabytes."""
+  from jetlink.transport.base import MAX_MESSAGE
+
+  a, b = make_pair()
+  try:
+    a.sock.sendall(P.pack_header(P.Msg.INFER_REQ, 1, 0xFFFFFFF0))
+    with pytest.raises(LinkError):
+      b.recv(timeout=5)
+    assert len(b.rx.buf) <= MAX_MESSAGE, "buffer grew to fit a bogus length"
+  finally:
+    a.close(); b.close()
+
+
+def test_timeout_does_not_disable_the_link():
+  """A missed deadline is a late frame, not a dead link.
+
+  Latching here would drop the car to the small model for the rest of the drive
+  on one GC pause, which is the most likely failure of the whole system.
+  """
+  from jetlink.client import JetlinkClient
+
+  a, b = make_pair()
+  spec = _spec()
+  client = JetlinkClient(a, deadline=0.02)
+  client.spec = spec
+  try:
+    with pytest.raises(LinkTimeout):   # nothing is serving b, so no reply comes
+      client.infer(np.zeros(spec.warped_shape, np.uint8),
+                   np.zeros(spec.packed_nelem, np.float32))
+    assert not client.dead, "a timeout must not latch the link as dead"
+  finally:
+    client.close(); b.close()
+
+
+def test_send_rejects_a_wrongly_sized_buffer():
+  """Catch a model/spec skew here, not as a misparse on the far end."""
+  from jetlink.client import JetlinkClient
+
+  a, b = make_pair()
+  spec = _spec()
+  client = JetlinkClient(a, deadline=0.05)
+  client.spec = spec
+  try:
+    with pytest.raises(LinkError, match='bytes'):
+      client.infer_begin(np.zeros((2, 6, 128, 128), np.uint8),   # half-sized
+                         np.zeros(spec.packed_nelem, np.float32))
+  finally:
+    client.close(); b.close()

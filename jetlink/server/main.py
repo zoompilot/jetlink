@@ -80,7 +80,14 @@ def _serve_ffs(args, cache: EngineCache) -> None:
     time.sleep(2.0)
   while True:
     log.info("opening functionfs at %s", mount)
-    transport = FfsTransport(str(mount), gadget=args.gadget, udc=args.udc)
+    try:
+      transport = FfsTransport(str(mount), gadget=args.gadget, udc=args.udc)
+    except OSError as e:
+      # Constructing it writes descriptors and binds the UDC, either of which
+      # can fail transiently. Retry; exiting here would defeat this loop.
+      log.warning("could not open the gadget: %s", e)
+      time.sleep(2.0)
+      continue
     try:
       Session(transport, cache, Telemetry()).serve_forever()
     except LinkError as e:

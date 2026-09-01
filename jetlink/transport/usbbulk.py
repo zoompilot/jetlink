@@ -4,39 +4,41 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-USB host side of the link: libusb bulk transfers to the Jetson's FunctionFS
-gadget. This is the comma end.
+USB host side of the link: libusb bulk transfers to a FunctionFS gadget.
 
-No kernel driver is involved on either side. openpilot already carries `usb1`
-and already drives the panda and chestnut through usbfs the same way, so this
-adds no dependency and needs no AGNOS kernel change - which is the point, since
-AGNOS has no host-side USB-ethernet driver to fall back on.
+On a comma+Jetson pair this is the *Jetson* end. A host needs no kernel driver
+at all - libusb goes through usbfs - which is what lets this work on a stripped
+L4T rootfs with no gadget modules. openpilot already drives the panda and
+chestnut the same way, so `usb1` is not a new dependency.
 """
 from __future__ import annotations
 
-from jetlink import protocol as P
-from jetlink.transport.base import FramedBuffer, LinkError, LinkTimeout, Message, Transport, now_ns
+from pathlib import Path
 
-# pid.codes test allocation. Get a real PID before shipping this widely.
+from jetlink.transport.base import LinkError, StreamTransport
+
+# pid.codes test allocation. Get a real PID before distributing this.
 JETLINK_VID = 0x1209
 JETLINK_PID = 0x0001
-JETLINK_PRODUCT = 'jetlink'
 
 EP_OUT = 0x01
 EP_IN = 0x82
-READ_CHUNK = 256 * 1024
+MAX_PACKET = 1024   # SuperSpeed bulk
+READ_CHUNK = 256 * MAX_PACKET
+DEFAULT_TIMEOUT_MS = 2000
 
-DEFAULT_TIMEOUT_MS = 100
 
-
-class UsbBulkTransport(Transport):
-  def __init__(self, handle, context=None, timeout_ms: int = DEFAULT_TIMEOUT_MS):
+class UsbBulkTransport(StreamTransport):
+  def __init__(self, handle, context=None, timeout_ms: int = DEFAULT_TIMEOUT_MS,
+               interface: int = 0):
+    super().__init__(rx_size=2 << 20)
     self.handle = handle
     self.context = context
     self.timeout_ms = timeout_ms
-    self.fb = FramedBuffer()
-    self._pending = bytearray()
-    self._read_buf = bytearray(READ_CHUNK)
+    self.interface = interface
+    # libusb has no vectored bulk write, so messages are gathered here. Reused
+    # so the steady state does not allocate half a megabyte per frame.
+    self._tx = bytearray(1 << 20)
 
   @classmethod
   def open(cls, vid: int = JETLINK_VID, pid: int = JETLINK_PID,
@@ -54,12 +56,11 @@ class UsbBulkTransport(Transport):
       handle.close()
       context.close()
       raise LinkError(f"could not claim interface {interface}: {e}") from e
-    return cls(handle, context, timeout_ms)
+    return cls(handle, context, timeout_ms, interface)
 
   @staticmethod
   def present(vid: int = JETLINK_VID, pid: int = JETLINK_PID) -> bool:
     """Cheap presence check that does not open the device."""
-    from pathlib import Path
     for d in Path('/sys/bus/usb/devices').glob('*'):
       try:
         if (int((d / 'idVendor').read_text(), 16) == vid
@@ -69,63 +70,56 @@ class UsbBulkTransport(Transport):
         pass
     return False
 
-  def send(self, msg_type: int, seq: int, parts=(), flags: int = 0) -> None:
+  def _ms(self, timeout: float | None) -> int:
+    return self.timeout_ms if timeout is None else max(1, int(timeout * 1000))
+
+  def _write(self, bufs: list[memoryview]) -> int:
     import usb1
-    parts = [memoryview(p).cast('B') for p in parts]
-    length = sum(p.nbytes for p in parts)
-    header = P.pack_header(msg_type, seq, length, flags, now_ns())
-    # libusb has no vectored bulk write, so build one contiguous buffer. The
-    # copy costs ~0.1 ms for a 460 KB request and buys a single transfer, which
-    # matters more: several transfers would let the host scheduler interleave.
-    out = bytearray(P.HEADER_SIZE + length)
-    out[:P.HEADER_SIZE] = header
-    off = P.HEADER_SIZE
-    for p in parts:
-      out[off:off + p.nbytes] = p
-      off += p.nbytes
+    total = sum(b.nbytes for b in bufs)
+    if len(self._tx) < total:
+      self._tx = bytearray(max(total, len(self._tx) * 2))
+    off = 0
+    for b in bufs:
+      self._tx[off:off + b.nbytes] = b
+      off += b.nbytes
     try:
-      written = self.handle.bulkWrite(EP_OUT, out, timeout=self.timeout_ms)
+      # One transfer, not several: multiple writes would let the host scheduler
+      # interleave and show up as jitter.
+      return self.handle.bulkWrite(EP_OUT, memoryview(self._tx)[:total],
+                                   timeout=self.timeout_ms)
     except usb1.USBErrorTimeout as e:
-      raise LinkTimeout("usb bulk write timed out") from e
+      # Report what actually went out so the caller resends only the remainder;
+      # claiming zero would duplicate bytes the device already has.
+      return getattr(e, 'transferred', 0)
     except usb1.USBError as e:
       raise LinkError(f"usb bulk write failed: {e}") from e
-    if written != len(out):
-      raise LinkError(f"short usb write: {written}/{len(out)}")
 
-  def _fill(self, need: int, timeout_ms: int) -> None:
+  def _read_into(self, dest: memoryview, timeout: float | None) -> int:
     import usb1
-    while len(self._pending) < need:
-      try:
-        chunk = self.handle.bulkRead(EP_IN, READ_CHUNK, timeout=timeout_ms)
-      except usb1.USBErrorTimeout as e:
-        raise LinkTimeout("usb bulk read timed out") from e
-      except usb1.USBError as e:
-        raise LinkError(f"usb bulk read failed: {e}") from e
-      if not chunk:
-        continue  # zero-length packet: a transfer terminator, not an error
-      self._pending += chunk
-
-  def recv(self, timeout: float | None = None) -> Message:
-    timeout_ms = self.timeout_ms if timeout is None else max(1, int(timeout * 1000))
-    self._fill(P.HEADER_SIZE, timeout_ms)
-    _, _, msg_type, seq, flags, length, t_mono_ns = P.unpack_header(self._pending)
-    self._fill(P.HEADER_SIZE + length, timeout_ms)
-    view = self.fb.ensure(length)
-    view[:length] = self._pending[P.HEADER_SIZE:P.HEADER_SIZE + length]
-    del self._pending[:P.HEADER_SIZE + length]
-    return Message(msg_type, seq, flags, t_mono_ns, view[:length])
+    # Round down to a whole number of packets: a bulk IN whose buffer is not a
+    # packet multiple can overflow when the device delivers a full final packet.
+    n = (min(dest.nbytes, READ_CHUNK) // MAX_PACKET) * MAX_PACKET
+    if n == 0:
+      return 0
+    try:
+      data = self.handle.bulkRead(EP_IN, n, timeout=self._ms(timeout))
+    except usb1.USBErrorTimeout as e:
+      # libusb attaches whatever did arrive to the exception. Dropping it would
+      # desync the stream, which is far worse than a late frame.
+      data = getattr(e, 'received', b'')
+    except usb1.USBError as e:
+      raise LinkError(f"usb bulk read failed: {e}") from e
+    if not data:
+      return 0  # zero-length packet: a transfer terminator, not an error
+    dest[:len(data)] = data
+    return len(data)
 
   def close(self) -> None:
-    try:
-      self.handle.releaseInterface(0)
-    except Exception:
-      pass
-    try:
-      self.handle.close()
-    except Exception:
-      pass
-    if self.context is not None:
+    for fn in (lambda: self.handle.releaseInterface(self.interface), self.handle.close,
+               (self.context.close if self.context is not None else None)):
+      if fn is None:
+        continue
       try:
-        self.context.close()
+        fn()
       except Exception:
         pass
