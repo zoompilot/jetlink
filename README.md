@@ -22,13 +22,13 @@ Measured on an Orin Nano Super 8 GB, JetPack 6.1, TensorRT 10.3 FP16:
 | | |
 |---|---|
 | Frame budget (`MODEL_RUN_FREQ = 20`) | **50 ms** |
-| Model, GPU | 21.9 ms |
+| Model, GPU (CUDA graph) | 19.8 ms |
 | History buffers, CPU | 1.4 ms |
 | Transport, over the USB cable | 4.7 ms |
-| **Round trip, comma to Jetson and back** | **28.1 ms** |
-| p99 / max | 30.8 / 39.9 ms |
-| Jitter (p99−p50) | **2.8 ms** |
-| Frames over budget, 190 sampled | **0** |
+| **Round trip, comma to Jetson and back** | **26.0 ms** |
+| p99 / max | 27.3 / 28.3 ms |
+| Jitter (p99−p50) | **1.4 ms** |
+| Frames over budget, 290 sampled | **0** |
 | Reading `warped` off the comma's GPU | 4.4 ms |
 | **On-car total** | **~32.5 ms** |
 
