@@ -166,3 +166,20 @@ class TestTinygradPassthrough:
     strip_tinygrad_ops(model)
     patch_uint8_inputs(model)
     onnx.checker.check_model(model, full_check=False)
+
+
+def test_a_passthrough_feeding_a_graph_output_keeps_the_output_name():
+  """The output name is what openpilot's output_slices and the parity tools
+  address, so the producer has to take it over. An earlier version renamed both
+  ends and left the graph output with no producer, which the checker catches."""
+  x = helper.make_tensor_value_info('x', TensorProto.FLOAT, [2])
+  y = helper.make_tensor_value_info('y', TensorProto.FLOAT, [2])
+  relu = helper.make_node('Relu', ['x'], ['r'])
+  hint = helper.make_node('Contiguous', ['r'], ['y'], domain=TINYGRAD_DOMAIN)
+  model = helper.make_model(helper.make_graph([relu, hint], 'g', [x], [y]),
+                            opset_imports=[helper.make_opsetid('', 17),
+                                           helper.make_opsetid(TINYGRAD_DOMAIN, 1)])
+  assert strip_tinygrad_ops(model) == 1
+  assert [o.name for o in model.graph.output] == ['y']
+  assert [list(n.output) for n in model.graph.node] == [['y']]
+  onnx.checker.check_model(model, full_check=True)

@@ -58,19 +58,24 @@ def strip_tinygrad_ops(model: onnx.ModelProto) -> int:
       raise ValueError(f"{node.op_type} is not a plain one-in one-out passthrough")
 
     source, produced = node.input[0], node.output[0]
-    for n in g.node:
-      for i, name in enumerate(n.input):
-        if name == produced:
-          n.input[i] = source
-    for o in g.output:
-      if o.name == produced:
-        # It fed a graph output directly, so the producer has to take that name.
-        o.name = source
     if produced in graph_outputs:
+      # It fed a graph output directly. The output keeps its name, because
+      # that is what openpilot's output_slices and the parity tools address,
+      # so the producer takes over the name instead. Renaming both ends, as an
+      # earlier version did, left the output dangling with no producer.
       for n in g.node:
         for i, name in enumerate(n.output):
           if name == source:
             n.output[i] = produced
+      for n in g.node:
+        for i, name in enumerate(n.input):
+          if name == source:
+            n.input[i] = produced
+    else:
+      for n in g.node:
+        for i, name in enumerate(n.input):
+          if name == produced:
+            n.input[i] = source
     g.node.remove(node)
     removed += 1
 
