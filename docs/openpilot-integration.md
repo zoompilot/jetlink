@@ -141,8 +141,12 @@ request without racing a frame.
 
 Every link error raises. modeld already wraps the model call in `try/except`,
 sets `ChestnutActive=False` and swaps to the already-warmed small model, so a
-dead link inherits that path for free. The per-frame deadline is
-`client.DEFAULT_DEADLINE = 0.035`: a stall is worse than the small model.
+dead link inherits that path for free. There is no per-frame deadline: a frame
+blocks the way a chestnut frame does, a long one is a dropped camera frame that
+modeld counts, and only a stall past `client.FRAME_TIMEOUT` (3 s, chestnut's
+HCQ wait) is a failure. On the comma that timeout is only enforceable because
+the FunctionFS read runs on a thread; the kernel ignores `O_NONBLOCK` once the
+host has enabled the endpoint.
 
 `make_health_publisher()` takes `getattr(model, 'client', None)`, because when
 the large model failed to load there is no client to report on. The publisher

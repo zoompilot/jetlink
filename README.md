@@ -53,7 +53,7 @@ into `modelV2`. modeld pinned to core 7 as it is onroad. 0.00% frame drop.
 | headroom vs 50 ms | 17.3 | 16.5 | **0.5** |
 | engine build | 166 s | 166 s | 290 s |
 
-Lebowski runs and is numerically correct, but 49.5 ms against a 50 ms deadline
+Lebowski runs and is numerically correct, but 49.5 ms against a 50 ms budget
 is coincidence rather than margin: the GPU is already at its 1020 MHz ceiling
 at 83% duty with no boost left, and none of this was measured hot. The 766 MB
 models are the ones to drive.
