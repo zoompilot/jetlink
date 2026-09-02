@@ -9,7 +9,6 @@ Framing and transport tests. No Jetson, no CUDA - these run anywhere.
 from __future__ import annotations
 
 import errno
-import socket
 import threading
 
 import numpy as np
@@ -58,7 +57,8 @@ def test_payload_alignment_allows_zero_copy_views():
     got = np.frombuffer(msg.payload, np.float32, packed.size, off)
     assert np.array_equal(got, packed)
   finally:
-    a.close(); b.close()
+    a.close()
+    b.close()
 
 
 def test_multipart_message_is_one_message():
@@ -70,7 +70,8 @@ def test_multipart_message_is_one_message():
     assert msg.seq == 5
     assert bytes(msg.payload) == b''.join(parts)
   finally:
-    a.close(); b.close()
+    a.close()
+    b.close()
 
 
 def test_large_message_survives_stream_fragmentation():
@@ -89,7 +90,8 @@ def test_large_message_survives_stream_fragmentation():
     t.join(15)
     assert got and got[0] == payload.tobytes()
   finally:
-    a.close(); b.close()
+    a.close()
+    b.close()
 
 
 def test_timeout_midmessage_does_not_desync():
@@ -122,7 +124,8 @@ def test_timeout_midmessage_does_not_desync():
     a.send(P.Msg.PONG, 4)
     assert b.recv(timeout=5).seq == 4
   finally:
-    a.close(); b.close()
+    a.close()
+    b.close()
 
 
 def test_back_to_back_messages_keep_their_boundaries():
@@ -135,7 +138,8 @@ def test_back_to_back_messages_keep_their_boundaries():
       assert msg.seq == i
       assert bytes(msg.payload) == bytes([i]) * (i * 1000 + 1)
   finally:
-    a.close(); b.close()
+    a.close()
+    b.close()
 
 
 def test_closed_peer_raises_link_error():
@@ -230,7 +234,8 @@ def test_desync_is_a_link_error_not_a_process_killer():
     with pytest.raises(LinkError):
       b.recv(timeout=5)
   finally:
-    a.close(); b.close()
+    a.close()
+    b.close()
 
 
 def test_absurd_length_is_rejected_before_allocating():
@@ -244,14 +249,15 @@ def test_absurd_length_is_rejected_before_allocating():
       b.recv(timeout=5)
     assert len(b.rx.buf) <= MAX_MESSAGE, "buffer grew to fit a bogus length"
   finally:
-    a.close(); b.close()
+    a.close()
+    b.close()
 
 
-def test_timeout_does_not_disable_the_link():
-  """A missed deadline is a late frame, not a dead link.
-
-  Latching here would drop the car to the small model for the rest of the drive
-  on one GC pause, which is the most likely failure of the whole system.
+def test_frame_timeout_is_a_link_failure():
+  """A frame that does not come back inside FRAME_TIMEOUT means the far end is
+  gone, and modeld must fall back the way it does when a chestnut stops
+  answering. It is a LinkError, not a LinkTimeout: nothing upstream should be
+  tempted to treat it as recoverable, and the client says so by latching.
   """
   from jetlink.client import JetlinkClient
 
@@ -260,12 +266,13 @@ def test_timeout_does_not_disable_the_link():
   client = JetlinkClient(a, deadline=0.02)
   client.spec = spec
   try:
-    with pytest.raises(LinkTimeout):   # nothing is serving b, so no reply comes
+    with pytest.raises(LinkError, match='abandoned'):   # nothing is serving b
       client.infer(np.zeros(spec.warped_shape, np.uint8),
                    np.zeros(spec.packed_nelem, np.float32))
-    assert not client.dead, "a timeout must not latch the link as dead"
+    assert client.dead
   finally:
-    client.close(); b.close()
+    client.close()
+    b.close()
 
 
 def test_send_rejects_a_wrongly_sized_buffer():
@@ -281,7 +288,8 @@ def test_send_rejects_a_wrongly_sized_buffer():
       client.infer_begin(np.zeros((2, 6, 128, 128), np.uint8),   # half-sized
                          np.zeros(spec.packed_nelem, np.float32))
   finally:
-    client.close(); b.close()
+    client.close()
+    b.close()
 
 
 class _CappedTransport(StreamTransport):

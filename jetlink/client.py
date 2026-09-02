@@ -10,9 +10,12 @@ Deliberately knows nothing about openpilot: it takes the warped frame and the
 packed scalars, and returns the model output. The openpilot glue lives in the
 fork (sunnypilot/jetlink/), so this package stays importable by any fork.
 
-Failure policy: every error is raised as LinkError/LinkTimeout. openpilot's
-modeld already wraps the model call in try/except and falls back to the small
-model, so a link that raises inherits that path for free.
+Failure policy: every error is raised as LinkError. openpilot's modeld already
+wraps the model call in try/except and falls back to the small model, so a
+link that raises inherits that path for free. A frame is treated the way a
+chestnut frame is: the call blocks until the answer is there, and only a stall
+long enough to mean the far end is gone (FRAME_TIMEOUT, chestnut's HCQ wait)
+becomes a failure.
 """
 from __future__ import annotations
 
@@ -25,7 +28,7 @@ from pathlib import Path
 import numpy as np
 
 from jetlink import protocol as P
-from jetlink.spec import CHUNK, ModelSpec, spec_from_onnx
+from jetlink.spec import CHUNK, DEFAULT_FRAME_SKIP, ModelSpec
 from jetlink.transport.base import LinkError, LinkTimeout, Message, Transport
 
 
@@ -40,20 +43,33 @@ log = logging.getLogger('jetlink.client')
 
 ProgressFn = Callable[[str, float, str], None]
 
-# The model must be back well inside modeld's 50 ms frame. 19.5 ms of compute
-# plus transport leaves plenty of room; anything past this is a stall, and a
-# stall is worse than the small model.
-DEFAULT_DEADLINE = 0.035
+# How long one frame may take before the link is declared dead. Not a frame
+# budget: a frame past 50 ms is a dropped camera frame and modeld already
+# accounts for those, exactly as it does when a chestnut runs long. This is the
+# analogue of chestnut's HCQDEV_WAIT_TIMEOUT_MS (3000): past it the far end is
+# not slow, it is gone, and modeld falls back to the small model.
+FRAME_TIMEOUT = 3.0
+
+StopFn = Callable[[], bool]
+
+
+class EngineMissing(LinkError):
+  """The server has no engine for this model and we have nothing to upload.
+
+  Raised in modeld, which never carries the ONNX: the Jetson's cache was
+  pruned, re-flashed or swapped since jetlinkd recorded it as ready.
+  """
 
 
 class JetlinkClient:
-  def __init__(self, transport: Transport, deadline: float = DEFAULT_DEADLINE):
+  def __init__(self, transport: Transport, deadline: float = FRAME_TIMEOUT):
     self.t = transport
     self.deadline = deadline
     self.seq = 0
     self.spec: ModelSpec | None = None
     self.progress_cb: ProgressFn | None = None
     self._engine_state: dict | None = None
+    self._should_stop: StopFn = lambda: False
     self.dead = False
     self.last_timings = (0, 0, 0)  # gpu_us, queue_us, total_us as measured server-side
     self.last_state: dict | None = None  # most recent piggybacked telemetry
@@ -99,11 +115,12 @@ class JetlinkClient:
     elif msg.msg_type == P.Msg.ENGINE_RESP:
       state = json.loads(bytes(msg.payload))
       # The server may finish a build for a model we have since moved off.
-      # Accepting that as our readiness would leave us inferring against a slot
-      # the server will answer NOT_READY for, every frame.
-      if self.spec is not None and state.get('sha256') not in (None, self.spec.sha256):
+      # Accepting that as our readiness would leave us inferring against an
+      # engine the server will answer NOT_READY for, every frame.
+      wanted = (self._engine_state or {}).get('sha256')
+      if wanted is not None and state.get('sha256') not in (None, wanted):
         log.warning("ignoring engine state for %s (we want %s)",
-                    str(state.get('sha256'))[:16], self.spec.sha256[:16])
+                    str(state.get('sha256'))[:16], wanted[:16])
       else:
         self._engine_state = state
     elif msg.msg_type == P.Msg.ERROR:
@@ -121,8 +138,9 @@ class JetlinkClient:
       if msg.msg_type in (P.Msg.PROGRESS, P.Msg.ENGINE_RESP, P.Msg.ERROR):
         self._dispatch(msg)
         continue
-      # A late reply to an earlier request. Drop it and keep looking, otherwise
-      # every subsequent frame would read one response behind.
+      # A reply to an earlier request, which only happens after a caller gave up
+      # on one. Drop it and keep looking, otherwise every subsequent frame would
+      # read one response behind.
       log.warning("discarding stale %s seq=%d (waiting for %s seq=%d)",
                   _name(P.Msg, msg.msg_type), msg.seq, _name(P.Msg, msg_type), seq)
 
@@ -147,47 +165,66 @@ class JetlinkClient:
 
   # -- model provisioning ---------------------------------------------------
 
-  def ensure_engine(self, onnx_path: str | Path, spec: ModelSpec | None = None,
+  def ensure_engine(self, sha256: str, nbytes: int, onnx_path: str | Path | None = None,
+                    frame_skip: int = DEFAULT_FRAME_SKIP,
                     progress: ProgressFn | None = None,
-                    build_timeout: float = 900.0) -> ModelSpec:
+                    build_timeout: float = 900.0,
+                    should_stop: StopFn | None = None) -> ModelSpec:
     """Make the server ready to run this model, uploading and building if needed.
 
-    Blocks until the engine is ready or the build fails. Progress is reported
-    through `progress(stage, frac, msg)` with stage in
-    upload/patch/parse/build/load, so the caller can surface it the same way a
-    model download is surfaced.
+    Blocks until the engine is ready or the build fails, and returns the spec
+    the server derived from the ONNX. The comma never parses the model: the
+    server has the onnx package and the file, so it is the one source of truth
+    for shapes, and a device without a parser for a given export (tinygrad
+    rejects the org.tinygrad domain) is no longer stuck.
+
+    `onnx_path` is what gets uploaded if the server asks; None means the
+    caller cannot upload (modeld) and a missing engine is EngineMissing.
+    Progress is reported through `progress(stage, frac, msg)` with stage in
+    upload/patch/parse/build/load. `should_stop` is polled during the long
+    waits so a daemon told to exit can let go of the link promptly.
     """
-    onnx_path = Path(onnx_path)
     self.progress_cb = progress
-    if spec is None:
-      spec = spec_from_onnx(str(onnx_path))
-    self.spec = spec
+    self._should_stop = should_stop or (lambda: False)
+    self.spec = None
+    self._engine_state = None
 
     seq = self._next_seq()
-    self.t.send_json(P.Msg.ENGINE_REQ, seq, spec.to_dict())
+    self.t.send_json(P.Msg.ENGINE_REQ, seq, {'sha256': sha256, 'nbytes': nbytes, 'frame_skip': frame_skip})
     resp = json.loads(bytes(self._expect(P.Msg.ENGINE_RESP, seq, 60.0).payload))
     self._engine_state = resp
     log.info("server engine state: %s (%s)", resp['state'], resp.get('detail', ''))
 
     if resp['state'] == 'need_upload':
-      self._upload(onnx_path, spec, int(resp.get('chunk') or CHUNK))
+      if onnx_path is None:
+        raise EngineMissing(f"server has no engine for {sha256[:16]} ({resp.get('detail', '')})")
+      self._upload(Path(onnx_path), nbytes, int(resp.get('chunk') or CHUNK))
 
     self._await_ready(build_timeout)
+    spec = ModelSpec.from_dict(self._engine_state['spec'])
+    if spec.sha256 != sha256:
+      raise LinkError(f"server answered for {spec.sha256[:16]}, we asked for {sha256[:16]}")
+    self.spec = spec
     return spec
 
-  def _upload(self, onnx_path: Path, spec: ModelSpec, chunk: int) -> None:
-    log.info("uploading %s (%d MB)", onnx_path.name, spec.nbytes >> 20)
+  def _stopped(self) -> None:
+    if self._should_stop():
+      raise LinkError("stopped while waiting for the engine")
+
+  def _upload(self, onnx_path: Path, nbytes: int, chunk: int) -> None:
+    log.info("uploading %s (%d MB)", onnx_path.name, nbytes >> 20)
     t0 = time.time()
     sent = 0
     with open(onnx_path, 'rb') as f:
       while data := f.read(chunk):
+        self._stopped()
         self.t.send(P.Msg.UPLOAD_CHUNK, self._next_seq(),
                     (sent.to_bytes(8, 'little'), data))
         sent += len(data)
         if self.progress_cb:
-          self.progress_cb('upload', sent / spec.nbytes, f'{sent >> 20}/{spec.nbytes >> 20} MB')
+          self.progress_cb('upload', sent / nbytes, f'{sent >> 20}/{nbytes >> 20} MB')
     seq = self._next_seq()
-    self.t.send_json(P.Msg.UPLOAD_DONE, seq, {'sha256': spec.sha256})
+    self.t.send_json(P.Msg.UPLOAD_DONE, seq, {})
     resp = json.loads(bytes(self._expect(P.Msg.ENGINE_RESP, seq, 300.0).payload))
     self._engine_state = resp
     rate = sent / max(1e-6, time.time() - t0) / 1e6
@@ -200,13 +237,16 @@ class JetlinkClient:
     while True:
       st = (self._engine_state or {}).get('state')
       if st == 'ready':
+        if 'spec' not in (self._engine_state or {}):
+          raise LinkError("server reported ready without a model spec")
         return
       if st == 'failed':
         raise LinkError(f"engine build failed: {self._engine_state.get('detail')}")
       if time.monotonic() > end:
         raise LinkTimeout(f"engine not ready after {timeout:.0f}s (state={st})")
+      self._stopped()
       try:
-        self._dispatch(self.t.recv(timeout=min(5.0, max(0.1, end - time.monotonic()))))
+        self._dispatch(self.t.recv(timeout=min(1.0, max(0.1, end - time.monotonic()))))
       except LinkTimeout:
         continue
 
@@ -229,23 +269,24 @@ class JetlinkClient:
     flags = (P.Flag.RESET_QUEUES if reset else 0) | (P.Flag.WANT_STATE if want_state else 0)
     try:
       self.t.send(P.Msg.INFER_REQ, seq, (P.pack_infer_req(frame_id, flags), warped, packed))
-    except LinkTimeout:
-      raise           # the stream is still in sync; the next frame recovers
     except LinkError:
       self.dead = True
       raise
     return seq
 
   def infer_end(self, seq: int, deadline: float | None = None) -> np.ndarray:
+    """Block for the frame's output, as modeld blocks on a chestnut.
+
+    A frame that runs long is a dropped camera frame, which modeld counts and
+    tolerates. Only a stall past `deadline` (FRAME_TIMEOUT by default) is a
+    failure, and then the link is done: the far end has stopped answering, and
+    the small model is the right place to be.
+    """
     try:
       msg = self._expect(P.Msg.INFER_RESP, seq, self.deadline if deadline is None else deadline)
-    except LinkTimeout:
-      # Do NOT latch `dead` here. One frame overrunning a 35 ms deadline is the
-      # single most likely thing to happen on a drive, and the buffer keeps the
-      # stream in sync: the late reply is discarded as stale by the next
-      # _expect. Latching would drop the car to the small model permanently on
-      # the first GC pause.
-      raise
+    except LinkTimeout as e:
+      self.dead = True
+      raise LinkError(f"no answer for frame in {self.deadline:.1f}s; link abandoned") from e
     except LinkError:
       self.dead = True
       raise
