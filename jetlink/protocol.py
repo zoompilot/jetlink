@@ -24,6 +24,15 @@ from enum import IntEnum
 MAGIC = 0x4B4E4C4A  # b'JLNK'
 VERSION = 1
 
+# USB bulk streams have no length: a transfer ends at a packet shorter than the
+# endpoint's maximum, so a message whose total length is an exact multiple of
+# the packet size never terminates the read on the far side and sits there
+# until the next message pushes it out - one frame late, every frame. The
+# sender appends one byte and says so in the header instead. SuperSpeed bulk
+# packets are 1024 bytes and every smaller size divides it, so one constant
+# covers full and high speed too; TCP does not need it and loses one byte.
+PACKET_MULTIPLE = 1024
+
 # magic, version, msg_type, seq, flags, length, reserved, 4 pad
 HEADER_FMT = '<IHHIIIQ4x'
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
@@ -35,8 +44,8 @@ _header = struct.Struct(HEADER_FMT)
 class Msg(IntEnum):
   HELLO_REQ = 1        # {} -> server describes itself
   HELLO_RESP = 2       # json: server caps, loaded engine, shapes
-  ENGINE_REQ = 3       # json: {sha256, size, frame_skip} -> does the server have this engine?
-  ENGINE_RESP = 4      # json: {state: ready|need_upload|building, ...}
+  ENGINE_REQ = 3       # json: {sha256, nbytes, frame_skip} -> make this model ready
+  ENGINE_RESP = 4      # json: {state: ready|need_upload|building|failed, spec when ready, ...}
   UPLOAD_CHUNK = 5     # u64 offset + bytes
   UPLOAD_DONE = 6      # json: {sha256}
   PROGRESS = 7         # json: {stage, frac, msg} - unsolicited, server -> client
@@ -56,6 +65,7 @@ class Flag(IntEnum):
                           # Piggybacked because at 20 Hz there is no gap in which
                           # to run a separate request/response without racing a
                           # frame, and health data must not cost a frame.
+  PADDED = 1 << 7         # one pad byte follows the payload; see PACKET_MULTIPLE
 
 
 # INFER_REQ: frame_id, flags. Sizes of the two arrays come from the handshake.

@@ -19,12 +19,12 @@ Bring-up (scripts/setup_gadget.sh does all of this):
 from __future__ import annotations
 
 import errno
-import fcntl
+import logging
 import os
 import struct
+import threading
 import time
-
-import logging
+from collections import deque
 
 from jetlink.transport.base import LinkError, StreamTransport, take
 
@@ -47,11 +47,10 @@ EP_IN = 0x82   # device -> host
 
 SS_MAX_PACKET = 1024
 READ_CHUNK = 256 * SS_MAX_PACKET  # 256 KB
-# Consecutive EAGAINs *before a single successful read* that mean this kernel
-# has no working non-blocking path. Only counted before the first success:
-# an idle link produces EAGAIN exactly like a broken one, so a running counter
-# would trip on any quiet second and lose the deadline for good.
-EAGAIN_FALLBACK = 2000
+# How much the reader thread may queue before it stops reading. The inference
+# path never needs more than one response; the cap only bounds memory if the
+# consumer stalls.
+MAX_QUEUED = 8 << 20
 
 # A host enumerating us is not the same as a host being ready to talk: it still
 # has to open the device and claim the interface, and until it does the gadget's
@@ -61,6 +60,9 @@ EAGAIN_FALLBACK = 2000
 log = logging.getLogger('jetlink')
 
 EP_READY_TIMEOUT = 10.0
+# How long close() waits for the reader thread after unbinding, which is what
+# wakes it. A read the kernel will not complete is left to die with the process.
+READER_JOIN_TIMEOUT = 1.0
 _NOT_READY = (errno.EIO, errno.ESHUTDOWN, errno.ENODEV)
 
 
@@ -106,10 +108,18 @@ def build_strings(name: str = 'jetlink') -> bytes:
 
 
 class FfsTransport(StreamTransport):
-  # FunctionFS rejects an OUT read whose buffer is not a multiple of the max
-  # packet size, so always keep a full chunk of room available.
-  read_slack = READ_CHUNK
-  packet_size = SS_MAX_PACKET
+  """
+  Reads run on their own thread. FunctionFS ignores O_NONBLOCK once the host
+  has enabled the endpoint: a synchronous read always waits for the USB
+  request to complete, so a read on the caller's thread cannot honour any
+  deadline and a Jetson that stops answering blocks modeld for as long as it
+  stays silent (measured on a comma: a 0.5 s timeout returned after 14 s, when
+  the server was resumed). The thread absorbs the blocking read and hands
+  whole chunks over under a condition variable, which the caller waits on with
+  a real timeout. Writes stay on the caller's thread: a write only blocks until
+  the host has read it, and a host that is not reading is a dead link either
+  way.
+  """
   read_chunk = READ_CHUNK
   write_chunk = READ_CHUNK
 
@@ -120,24 +130,28 @@ class FfsTransport(StreamTransport):
     self.gadget = gadget
     self.bound_udc: str | None = None
     self.ep0 = self.ep_out = self.ep_in = -1
-    self._blocking_reads = False
-    self._eagain_streak = 0
-    self._ever_read = False
     self._ready_deadline: float | None = None
+    self._read_size = READ_CHUNK
+    self._cv = threading.Condition()
+    self._chunks: deque[memoryview] = deque()
+    self._queued = 0
+    self._reader_error: str | None = None
+    self._closing = False
+    self._reader: threading.Thread | None = None
     try:
       self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
       os.write(self.ep0, build_descriptors())
       os.write(self.ep0, build_strings())
       # The endpoint files only exist once ep0 has accepted the descriptors.
-      # O_NONBLOCK so a dead host cannot wedge the control path forever; if the
-      # kernel ignores it for FunctionFS the read simply blocks, as before.
-      self.ep_out = os.open(os.path.join(mount, 'ep1'), os.O_RDWR | os.O_NONBLOCK)
+      self.ep_out = os.open(os.path.join(mount, 'ep1'), os.O_RDWR)
       self.ep_in = os.open(os.path.join(mount, 'ep2'), os.O_RDWR)
       if gadget is not None:
         # Bind last: a FunctionFS gadget cannot attach to a controller until its
         # descriptors have been written, which is why setup_gadget.sh leaves UDC
         # empty and we finish the job here.
         self.bind(udc)
+      self._reader = threading.Thread(target=self._read_loop, name='jetlink-ffs-read', daemon=True)
+      self._reader.start()
     except BaseException:
       self.close()   # otherwise a failed bring-up leaks the descriptors it did open
       raise
@@ -174,7 +188,7 @@ class FfsTransport(StreamTransport):
     broken. Both directions need it: reads hit this after a big upload just as
     writes hit it during one.
     """
-    floor = self.packet_size * 16
+    floor = (self.packet_size or SS_MAX_PACKET) * 16
     current = getattr(self, attr)
     if current <= floor:
       return False
@@ -201,33 +215,64 @@ class FfsTransport(StreamTransport):
           continue
         raise LinkError(f"gadget write failed: {e}") from e
 
+  # -- the reader thread ---------------------------------------------------
+
+  def _read_loop(self) -> None:
+    while not self._closing:
+      with self._cv:
+        while self._queued >= MAX_QUEUED and not self._closing:
+          self._cv.wait(0.1)
+      if self._closing:
+        return
+      # A fresh buffer per read: the chunk is handed to the consumer as is, so
+      # reusing one would overwrite bytes it has not copied out yet. 256 KB at
+      # 20 Hz is nothing next to the frame itself.
+      buf = bytearray(self._read_size)
+      try:
+        # Multiples of the packet size only: the OUT endpoint rejects anything
+        # else, and _read_size is only ever halved from one.
+        got = os.readv(self.ep_out, [buf])
+      except OSError as e:
+        if self._closing:
+          return
+        if e.errno in _NOT_READY and self._wait_for_host_ready():
+          continue
+        if e.errno == errno.ENOMEM and self._shrink('_read_size'):
+          continue
+        self._fail(f"gadget read failed: {e}")
+        return
+      if got == 0:
+        self._fail("gadget read returned EOF (host disconnected)")
+        return
+      self._ready_deadline = None
+      with self._cv:
+        self._chunks.append(memoryview(buf)[:got])
+        self._queued += got
+        self._cv.notify_all()
+
+  def _fail(self, why: str) -> None:
+    with self._cv:
+      self._reader_error = why
+      self._cv.notify_all()
+
   def _read_into(self, dest: memoryview, timeout: float | None) -> int:
-    n = self._clamp_read(dest)
-    if n == 0:
-      return 0
-    try:
-      got = os.readv(self.ep_out, [dest[:n]])
-    except BlockingIOError:
-      # Nothing queued yet. A short sleep keeps the deadline enforceable
-      # without spinning a core; _fill decides when to give up.
-      if not self._ever_read:
-        self._eagain_streak += 1
-        if self._eagain_streak > EAGAIN_FALLBACK:
-          self._use_blocking_reads()
-      time.sleep(0.0005)
-      return 0
-    except OSError as e:
-      # NB BlockingIOError subclasses OSError and is handled above.
-      if e.errno in _NOT_READY and self._wait_for_host_ready():
-        return 0
-      if e.errno == errno.ENOMEM and self._shrink('read_chunk'):
-        return 0   # _fill loops; the next read asks for half as much
-      raise LinkError(f"gadget read failed: {e}") from e
-    if got == 0:
-      raise LinkError("gadget read returned EOF (host disconnected)")
-    self._ever_read = True
-    self._ready_deadline = None
-    return got
+    with self._cv:
+      if not self._chunks and self._reader_error is None:
+        self._cv.wait(timeout)
+      if self._chunks:
+        chunk = self._chunks[0]
+        n = min(chunk.nbytes, dest.nbytes)
+        dest[:n] = chunk[:n]
+        if n < chunk.nbytes:
+          self._chunks[0] = chunk[n:]
+        else:
+          self._chunks.popleft()
+        self._queued -= n
+        self._cv.notify_all()
+        return n
+      if self._reader_error is not None:
+        raise LinkError(self._reader_error)
+      return 0   # timed out with nothing new; _fill owns the deadline
 
   def _wait_for_host_ready(self) -> bool:
     """True while we are still inside the grace period for the host to claim us.
@@ -245,29 +290,34 @@ class FfsTransport(StreamTransport):
       return True
     return False
 
-  def _use_blocking_reads(self) -> None:
-    """Give up on O_NONBLOCK if this kernel never delivers data through it.
-
-    Some FunctionFS builds have no non-blocking read path and return EAGAIN
-    forever, which would spin instead of receiving. Blocking reads cost us the
-    per-frame deadline on this side, but they do work.
-    """
-    if self._blocking_reads:
-      return
-    flags = fcntl.fcntl(self.ep_out, fcntl.F_GETFL)
-    fcntl.fcntl(self.ep_out, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
-    self._blocking_reads = True
-    self._eagain_streak = 0
-
   def close(self) -> None:
+    self._closing = True
+    # Unbinding disables the endpoints, which completes the reader's pending
+    # request with ESHUTDOWN and lets the thread exit before its fd goes away.
     self.unbind()
+    reader, self._reader = self._reader, None
+    if reader is not None and reader is not threading.current_thread():
+      reader.join(READER_JOIN_TIMEOUT)
+    with self._cv:
+      self._cv.notify_all()
     # Clear each fd as it is closed: a second close() would otherwise shut
     # whatever those descriptor numbers had been recycled into.
     for name in ('ep_in', 'ep_out', 'ep0'):
       fd = getattr(self, name, -1)
       setattr(self, name, -1)
-      if fd is not None and fd >= 0:
-        try:
-          os.close(fd)
-        except OSError:
-          pass
+      if fd is None or fd < 0:
+        continue
+      if name == 'ep_out' and reader is not None and reader.is_alive():
+        # The read did not come back (no gadget to unbind, or a kernel that
+        # will not complete it). Linux lets close() return regardless, but
+        # not every kernel does, so do not risk the caller on it.
+        threading.Thread(target=_close_quietly, args=(fd,), daemon=True).start()
+        continue
+      _close_quietly(fd)
+
+
+def _close_quietly(fd: int) -> None:
+  try:
+    os.close(fd)
+  except OSError:
+    pass

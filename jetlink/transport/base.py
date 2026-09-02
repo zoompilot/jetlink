@@ -15,6 +15,7 @@ from jetlink import protocol as P
 # One frame is ~460 KB. The cap is what stops a corrupt length field making
 # RxBuffer allocate gigabytes before a single byte of it has been read.
 MAX_MESSAGE = 16 << 20
+_PAD = b'\0'
 
 
 class LinkError(IOError):
@@ -160,6 +161,10 @@ class StreamTransport(Transport):
     # would step by elements, not bytes.
     bufs = [memoryview(p).cast('B') for p in parts]
     length = sum(b.nbytes for b in bufs)
+    if (P.HEADER_SIZE + length) % P.PACKET_MULTIPLE == 0:
+      # A bulk transfer only ends on a short packet; see protocol.PACKET_MULTIPLE.
+      flags |= P.Flag.PADDED
+      bufs.append(memoryview(_PAD))
     header = P.pack_header(msg_type, seq, length, flags)
     bufs.insert(0, memoryview(header))
     while bufs:
@@ -217,12 +222,14 @@ class StreamTransport(Transport):
       # unwinds out of the server's accept loop and kills the process.
       self._desynced = True
       raise LinkError(f"protocol error, link unusable: {e}") from e
-    # The remainder of the caller's budget, not a second full one: otherwise a
-    # recv(0.035) could block 70 ms, past the whole frame.
-    self._fill(P.HEADER_SIZE + length,
+    # The remainder of the caller's budget, not a second full one, so one recv
+    # can never block for twice what it was given.
+    pad = 1 if flags & P.Flag.PADDED else 0
+    self._fill(P.HEADER_SIZE + length + pad,
                None if end is None else max(0.0, end - time.monotonic()))
     self.rx.take(P.HEADER_SIZE)
     payload = self.rx.take(length)
+    self.rx.take(pad)
     self.rx.consumed()
     return Message(msg_type, seq, flags, payload)
 
