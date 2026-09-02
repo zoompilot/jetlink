@@ -51,7 +51,7 @@ small and dull is the whole reason another fork can lift this. Count it, do not
 guess it:
 
 ```bash
-git diff --numstat $(git merge-base HEAD danger-unstable)..HEAD -- . ':!tools' ':!release/ci' \
+git diff --numstat $(git merge-base HEAD zoom/develop)..HEAD -- . ':!tools' ':!release/ci' \
   ':!openpilot/sunnypilot/accelerators' ':!*/tests/*'
 ```
 
