@@ -50,11 +50,41 @@ ls /sys/class/udc/                 # the device controller, e.g. 3550000.usb
 cat /sys/class/udc/*/maximum_speed # want: super-speed
 ```
 
-If they are missing, restore them (matching L4T kernel package, or build the two
-modules out-of-tree — they can be `insmod`ed from `/mnt/data`, so a full `/` is
-not a blocker) or use ethernet.
+If they are missing, assume they stay missing. On the Orin Nano Super devkit
+(L4T r36.4.3, kernel `5.15.148-l4t-r36.4-1012.12+g8dc079d5c8c4`) there is no
+`/usr/src`, no `/lib/modules/$(uname -r)/build` symlink, no `linux-headers`
+package, and `CONFIG_MODVERSIONS=y`, so an out-of-tree build needs the exact
+`Module.symvers` from that kernel build. Getting there means pulling NVIDIA's
+`public_sources` for the matching L4T, reproducing the `+g<sha>` vermagic and
+building the tree: a few hours, and a custom kernel to maintain afterwards.
+
+This is why the comma is the gadget and the Jetson is the host, and why it
+cannot be swapped over. jetlink supports the inversion in software already
+(`JetlinkClient.open_usb` on the comma, server `--transport ffs`); the blocker
+is only ever the Jetson's kernel.
 
 ## The two supported transports
+
+### Do not use the Jetson's Type-C port
+
+It looks like the right port and the device tree agrees: `usb2-0` is `mode=otg`
+with a `usb-role-switch` and a `vbus-supply`, and `usb3-1` is its SuperSpeed
+lane. It still does not work.
+
+The devkit has no Type-C port controller (no `typec` class, no extcon), so the
+CC lines are hardwired Rd. Plug a comma into it and the comma sees a sink,
+becomes the DFP and sources VBUS, while the Jetson becomes the device: exactly
+backwards, and the Jetson cannot be a gadget for the reason above. Writing
+`host` to `/sys/class/usb_role/usb2-0-role-switch/role` flips the data role but
+not the CC resistors, so you get two hosts and both ends driving VBUS.
+
+The port also carries VBUS from the board's 5 V rail whether or not anything is
+hosting, so a comma plugged into it reports `real_type=USB_DCP`: power with no
+data host behind it, which is indistinguishable from a charge-only cable.
+
+Use one of the Type-A ports. They hang off the onboard Realtek hub, so the
+gadget appears one hop down at `2-1.2`.
+
 
 ### Direct USB — preferred, and needs no kernel changes on either side
 

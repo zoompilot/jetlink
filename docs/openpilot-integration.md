@@ -1,42 +1,112 @@
 # Integrating with openpilot
 
 Design rule: **minimise the diff against upstream.** Everything jetlink-specific
-is a new module; the patch to openpilot's own files is 37 lines across three,
+is a new module, and the patch to openpilot's own files is a few dozen lines,
 small enough to survive an upstream sync and to lift into another fork.
+
+jetlink is not wired into modeld directly. It is one backend behind an
+accelerator layer, so core openpilot never mentions it by name.
+
+## The accelerator layer
+
+openpilot already had an accelerator abstraction with one implementation and no
+name: `ChestnutState` is pure AMD telemetry yet publishes the generic
+`chestnutState` message, and `chestnut_present()` was being asked to mean "some
+accelerator is attached". Naming the axis is what keeps this backend out of
+upstream's files.
+
+`sources/` and `runners/` were already taken in the fork (`source` = which model
+catalog, `runner` = snpe/tinygrad/stock), so the layer is `accelerators/`.
+
+```
+openpilot/sunnypilot/accelerators/
+  base.py       the Accelerator protocol, and Daemon
+  __init__.py   discovery, per-question guards, the progress param
+  chestnut.py   comma's AMD board (ChestnutState moved here, unchanged)
+  jetlink/      this project's backend
+  setup.sh      runs each backend's setup.sh at boot
+```
+
+A backend answers seven questions: `present()`, `ready()`,
+`unavailable_reason()`, `prepare()`, `make_model_state()`,
+`make_health_publisher()`, `daemon()`. Backends are imported on the first
+`backends()` call; `ImportError` is skipped silently (a fork that does not ship
+one), anything else is logged. Every call goes through `_ask()`, so a broken
+backend cannot take down hardwared or the UI.
+
+`Daemon` is a description, not a `PythonProcess`, so a backend never imports
+manager, which imports backends.
 
 ## The patch
 
-`selfdrive/modeld/modeld.py` — an import and three edits:
+`selfdrive/modeld/modeld.py` — an import and three edits, and it comes out **75
+lines shorter** because `ChestnutState` moved to `accelerators/chestnut.py`:
 
 ```python
-from openpilot.sunnypilot.jetlink import hook as jetlink
+from openpilot.sunnypilot import accelerators
 
-JETLINK = jetlink.available()
-CHESTNUT = JETLINK or (chestnut_present() and chestnut_compiled())
+# Whatever runs the large model here: comma's chestnut board, an attached
+# Jetson, nothing. See sunnypilot/accelerators/.
+accel = accelerators.active()
+CHESTNUT = accel is not None
+if CHESTNUT:
+  accel.prepare()
 
-m = (jetlink.make_model_state(w, h) if JETLINK else ModelState(w, h, True))
+m = accel.make_model_state(vipc_client_main.width, vipc_client_main.height)
 
-chestnut_state = (jetlink.make_state_publisher(pm, model)
-                  if getattr(model, 'is_jetlink', False)
-                  else ChestnutState(pm, model.chestnut))
+chestnut_state = accel.make_health_publisher(pm, model) if CHESTNUT else None
 ```
 
-`selfdrive/modeld/helpers.py` — `chestnut_present()` also returns True for an
-attached Jetson. That single line is what makes the model manager offer the
-large-model bundles, so downloading and selecting one behaves exactly as it does
-with a real chestnut.
+`common/hardware/usb.py` — `deviceState.chestnutPresent` is true for any
+accelerator, not just a board with comma's USB ids. That field, not
+`modeld.helpers.chestnut_present()`, is what the model manager, the UI and
+selfdrived gate on, so this one line is what makes the large-model bundles
+appear. The import is function-local because `modeld.helpers` imports this
+module and a top-level import would close the cycle.
 
-`system/manager/process_config.py` — one line adding `jetlinkd` (offroad only).
+`selfdrive/modeld/helpers.py` — `chestnut_present()` stays strictly "is chestnut
+hardware attached". Do not widen it: SConscript and modeld_v2 use it to decide
+whether to build and load a tinygrad pkl against the AMD GPU, which another
+accelerator does not have.
 
-## The new modules (in the fork, `sunnypilot/jetlink/`)
+`system/manager/process_config.py` — one line, and no mention of jetlink:
+
+```python
+*[PythonProcess(d.name, d.module, and_(only_offroad, d.should_run)) for d in accelerators.daemons()],
+```
+
+`system/hardware/hardwared.py` — surfaces `accelerators.unavailable_reason()` as
+`Offroad_AcceleratorUnavailable`, so a kernel without the gadget drivers is not
+silently absent.
+
+`launch_chffrplus.sh` — 31 lines of gadget setup became two:
+
+```sh
+# accelerator backends: USB gadgets, symlinks, anything needing root at boot
+./openpilot/sunnypilot/accelerators/setup.sh
+```
+
+which iterates `*/setup.sh` and never fails the launch.
+
+The UI (`ui_state.py`, `model_info.py`, the mici layouts) is backend-agnostic and
+contains zero jetlink references.
+
+## The modules (in the fork, `sunnypilot/accelerators/jetlink/`)
 
 | | |
 |---|---|
-| `helpers.py` | where the model is, whether the link is up, progress params |
+| `backend.py` | the only class core openpilot touches |
+| `helpers.py` | where the model is, whether a Jetson is attached, gadget state |
 | `model_state.py` | a `ModelState` whose policy is a link round trip |
 | `state.py` | publishes the Jetson's health as `chestnutState` |
-| `hook.py` | the three functions modeld calls |
-| `jetlinkd.py` | offroad: uploads the model, builds the engine, caches it |
+| `spec_cache.py` | the parsed model spec, cached in a param |
+| `lfs.py` | fetching a model out of comma's git-lfs history |
+| `models.json` | the large models known to run here |
+| `jetlinkd.py` | offroad: fetches the model, builds the engine, caches it |
+| `setup.sh` | boot-time gadget setup, called by `accelerators/setup.sh` |
+
+Hold the seam at `backend.py`. Anything only `jetlinkd` needs belongs in
+`helpers` or `spec_cache`, never in the backend.
 
 ## Why provisioning is a separate daemon
 
@@ -51,11 +121,17 @@ modeld onroad.
 
 ## Reusing chestnut's surfaces
 
-Nothing in cereal, the UI or the alerts changed. The Jetson sets
-`ChestnutActive`/`ChestnutLoading` and publishes `chestnutState`, with Tegra
-sysfs mapped onto chestnut's fields (`tempC` ← tj-thermal, `powerDrawW` ←
+Nothing in cereal, the UI or the alerts changed. modeld sets
+`ChestnutLoading`/`ChestnutActive` for whichever accelerator is active, and this
+backend publishes `chestnutState`, with Tegra sysfs mapped onto chestnut's fields (`tempC` ← tj-thermal, `powerDrawW` ←
 INA3221 VDD_IN, `pcieLtssm` ← `0x78` when the link is up, so existing "link
-down" logic keeps working). The mapping is in `jetlink/server/telemetry.py`.
+down" logic keeps working). The Jetson reports neutral field names; the openpilot
+schema is known only to `state.py`, and the sysfs side only to
+`jetlink/server/telemetry.py`.
+
+Renaming the cereal fields was considered and rejected: it breaks log
+compatibility with every existing tool. On the wire, "chestnut" means "whatever
+accelerator is active".
 
 Health arrives piggybacked on the previous inference response, so publishing it
 costs no round trip: at 20 Hz there is no gap in which to run a separate
@@ -65,8 +141,12 @@ request without racing a frame.
 
 Every link error raises. modeld already wraps the model call in `try/except`,
 sets `ChestnutActive=False` and swaps to the already-warmed small model, so a
-dead link inherits that path for free. The per-frame deadline is 35 ms — a stall
-is worse than the small model.
+dead link inherits that path for free. The per-frame deadline is
+`client.DEFAULT_DEADLINE = 0.035`: a stall is worse than the small model.
+
+`make_health_publisher()` takes `getattr(model, 'client', None)`, because when
+the large model failed to load there is no client to report on. The publisher
+then sends an invalid message, which is what chestnut does in the same state.
 
 The server additionally checks the output is finite and reports `NOT_FINITE`
 rather than returning it, matching openpilot's own guard on big-model output.
@@ -86,19 +166,35 @@ git submodule add <url> jetlink
 ```
 
 Until that repo exists, `scripts/deploy_to_comma.sh <user@host>` rsyncs it to
-`/data/openpilot/jetlink` and configures the gadget. Set `DisableUpdates=1`
-while testing that way: the updater does `fetch` + `reset --hard` + `clean` and
-will delete untracked files.
+`/data/jetlink_repo` and configures the gadget. Set `DisableUpdates=1` while
+testing that way: the updater does `fetch` + `reset --hard` + `clean` and will
+delete untracked files.
+
+`accelerators/jetlink/setup.sh` looks for `$BASEDIR/jetlink_repo` first and
+falls back to `/data/jetlink_repo`, symlinks it onto the interpreter path, and
+runs `sudo -n bash $REPO/scripts/setup_gadget.sh`. Once the submodule exists the
+fallback becomes dead code and should go.
 
 ## Params
 
-| param | meaning |
-|---|---|
-| `JetlinkEnabled` | user toggle; absent means "auto: on if a link is present" |
-| `JetlinkEndpoint` | `host:port` to use TCP instead of USB |
-| `JetlinkEngineReady` | sha256 of the model the Jetson has an engine for |
-| `JetlinkSpec` | cached model spec, so modeld never re-reads a 766 MB ONNX |
-| `JetlinkProgress` | `{stage, frac, msg}` while provisioning |
+| param | kind | meaning |
+|---|---|---|
+| `AcceleratorProgress` | CLEAR_ON_MANAGER_START, JSON | `{stage, frac, msg}` while provisioning; generic, not jetlink-specific |
+| `Offroad_AcceleratorUnavailable` | CLEAR_ON_MANAGER_START, JSON | the offroad alert |
+| `JetlinkEnabled` | PERSISTENT, BOOL | user toggle; absent means "auto: on if a link is present" |
+| `JetlinkEndpoint` | PERSISTENT, STRING | `host:port` to use TCP instead of USB |
+| `JetlinkModel` | PERSISTENT, STRING | which entry in `models.json` to run |
+| `JetlinkEngineReady` | PERSISTENT, STRING | sha256 of the model the Jetson has an engine for |
+| `JetlinkSpec` | PERSISTENT, JSON | cached model spec, so modeld never re-reads a 766 MB ONNX |
+
+`JetlinkEngineReady` and `JetlinkSpec` are deliberately not cleared on manager
+start: readiness has to survive a reboot, or every ignition cycle rebuilds a
+three minute engine.
+
+New keys are compiled into `libparams_c` from `params_keys.h`, so adding one
+needs a scons rebuild. `helpers._get()` swallows `UnknownKeyName`, because
+several of these are read from hardwared and the UI's param thread and a raise
+there takes down a process that has nothing to do with jetlink.
 
 ## Safety framing
 

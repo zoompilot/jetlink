@@ -24,19 +24,54 @@ Measured on an Orin Nano Super 8 GB, JetPack 6.1, TensorRT 10.3 FP16:
 | Frame budget (`MODEL_RUN_FREQ = 20`) | **50 ms** |
 | Model, GPU (CUDA graph) | 19.8 ms |
 | History buffers, CPU | 1.4 ms |
-| Transport, over the USB cable | 4.7 ms |
-| **Round trip, comma to Jetson and back** | **26.0 ms** |
-| p99 / max | 27.3 / 28.3 ms |
-| Jitter (p99−p50) | **1.4 ms** |
-| Frames over budget, 290 sampled | **0** |
-| Reading `warped` off the comma's GPU | 4.4 ms |
-| **On-car total** | **~32.5 ms** |
+| Transport, over the USB cable | 4.8 ms |
+| **Round trip, comma to Jetson and back** | **26.1 ms** |
+| p90 / p99 / max | 26.4 / 27.7 / 30.4 ms |
+| Jitter (p99−p50) | **1.6 ms** |
+| Frames over budget, 590 sampled | **0** |
+| **End to end through modeld** | **31.0 ms mean, 32.7 max** |
 
-Measured comma-to-Jetson over the real USB 3 link, not a loopback: a comma 3X
-as the FunctionFS gadget, an Orin Nano as the libusb host, SuperSpeed. Of the
-4.7 ms transport, 2.9 ms is the 459 KB request and the rest is the 74 KB reply.
+Measured comma-to-Jetson over the real USB 3 link, not a loopback: the comma as
+the FunctionFS gadget, an Orin Nano Super as the libusb host, SuperSpeed. Of the
+4.8 ms transport, 3.0 ms is the 459 KB request and the rest is the 74 KB reply.
 Over TCP loopback the same benchmark runs at 24.2 ms, so the cable costs about
 4 ms.
+
+The last row is the one that matters and it is a measurement, not a sum: a
+recorded segment replayed through openpilot's own `process_replay` into the
+shipped modeld, so it includes the warp, the read-back of `warped` off the
+comma's write-combined GPU memory, the round trip, and parsing 18452 floats
+into `modelV2`. modeld pinned to core 7 as it is onroad. 0.00% frame drop.
+
+### Which model
+
+| | BMRLNAP 766 MB | TGC v2 766 MB | Lebowski 1757 MB |
+|---|---|---|---|
+| GPU, server-side | 19.8 ms | ~20 ms | 36.2 ms |
+| round trip, mean | 26.1 | - | 41.5 |
+| end to end, mean / max | 31.0 / 32.7 | 31.1 / 33.5 | 46.3 / **49.5** |
+| headroom vs 50 ms | 17.3 | 16.5 | **0.5** |
+| engine build | 166 s | 166 s | 290 s |
+
+Lebowski runs and is numerically correct, but 49.5 ms against a 50 ms deadline
+is coincidence rather than margin: the GPU is already at its 1020 MHz ceiling
+at 83% duty with no boost left, and none of this was measured hot. The 766 MB
+models are the ones to drive.
+
+### "Under 50 ms" is necessary, not sufficient
+
+Three separate limits, only the first of which is a 50 ms question:
+
+1. **Frame drops.** `frameDropPerc > 1` raises `modeldLagging`, which is a
+   soft disable. Drops appear when a run overruns the frame period.
+2. **comma's own regression gate is 28 ms mean** (`EXEC_TIMINGS` in
+   `model_replay.py`, asserted in CI). Probably calibrated for the small model
+   on tici, so a reference point rather than a verdict.
+3. **Latency compensation is a constant.** modeld uses
+   `frame_delay = DT_MDL`, commented "current_time - timestamp_eof is 50ms on
+   average". It is never derived from `modelExecutionTime`. A pipeline slower
+   than the one that constant was tuned against is uncompensated by the
+   difference.
 
 That last row matters and is easy to miss: the benchmark hands the client a
 numpy array, but on the car the warped frame has to be read back from the
@@ -101,12 +136,14 @@ jetlink/
   spec.py              every size on the wire, derived from the model's ONNX
   queues.py            the history buffers, in numpy
   onnx_meta.py         model metadata, via tinygrad's or onnx's parser
-  onnx_patch.py        uint8 -> fp16 graph surgery TensorRT needs
+  onnx_patch.py        graph surgery TensorRT needs: uint8 -> fp16 inputs,
+                       and stripping org.tinygrad passthrough ops
   client.py            the comma side
   transport/           tcp.py | usbbulk.py (host) | ffs.py (gadget)
   server/              engine.py, builder.py, session.py, telemetry.py
 docker/                the Jetson image (l4t-jetpack r36.4.0)
-scripts/               gadget setup, engine verify, link benchmark
+scripts/               gadget setup, engine verify, link benchmark,
+                       numerical parity against onnxruntime
 ```
 
 ## Quick start
@@ -131,8 +168,10 @@ across none of the three.
 
 ## Using it with openpilot
 
-See [`docs/openpilot-integration.md`](docs/openpilot-integration.md). The patch
-to upstream is 37 lines across three files; everything else is new modules.
+See [`docs/openpilot-integration.md`](docs/openpilot-integration.md). jetlink is
+one backend behind an accelerator layer, so core openpilot never names it: the
+patch to upstream is a few dozen lines across eight files, and `modeld.py` comes
+out 75 lines shorter than it went in.
 
 ## Licence
 
