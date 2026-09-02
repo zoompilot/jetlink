@@ -7,6 +7,9 @@
 Description=jetlink inference server
 After=docker.service
 Requires=docker.service
+# The engine cache lives on /mnt/data. If docker starts before that mount is
+# up, -v creates the directory on the 3.7 GB rootfs and the first plan fills it.
+RequiresMountsFor=/mnt/data/jetlink
 
 [Service]
 Type=simple

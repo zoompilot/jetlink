@@ -10,9 +10,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
+# libusb-1.0-0 explicitly: pip's libusb1 is a ctypes wrapper and brings no
+# library of its own. The base image happens to carry the .so today; without
+# it the server logs "could not open the gadget" every 2 s forever, which
+# reads as a cable fault.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-pip \
       python3-dev \
+      libusb-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # --ignore-installed: apt's python3-numpy 1.21.5 is in /usr/lib/python3/dist-packages

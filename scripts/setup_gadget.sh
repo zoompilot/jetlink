@@ -66,6 +66,12 @@ fi
 
 [[ $EUID -eq 0 ]] || fail "setup_gadget.sh must run as root"
 
+# set -e alone leaves a stale "ok" behind: a plain command that fails (the cd,
+# a descriptor write, the mount dir) exits the script without going through
+# fail, and the openpilot side keeps reading last boot's status. Route every
+# unguarded failure through the same path the explicit checks use.
+trap 'fail "line $LINENO: $BASH_COMMAND failed"' ERR
+
 # Only worth trying where a module tree exists at all. AGNOS builds the gadget
 # drivers into the kernel and ships no /lib/modules, so an unconditional
 # modprobe here fails on every comma and teaches you nothing - which is exactly
@@ -136,7 +142,13 @@ echo 8    > configs/c.1/MaxPower
 # the functionfs filesystem, so a kernel genuinely without it fails here.
 mkdir -p "functions/ffs.$FFS_NAME" ||
   fail "kernel has no ffs gadget function (CONFIG_USB_CONFIGFS_F_FS); jetlink cannot present its endpoints"
-ln -sf "$GADGET/functions/ffs.$FFS_NAME" "configs/c.1/ffs.$FFS_NAME" 2>/dev/null || true
+# Only link the function into the config once. This script is re-run on every
+# deploy, and in configfs removing a function from a config while the gadget is
+# bound force-unbinds the UDC (config_usb_cfg_unlink), so an unconditional
+# ln -sf drops a live link every time.
+[[ -L "configs/c.1/ffs.$FFS_NAME" ]] ||
+  ln -s "$GADGET/functions/ffs.$FFS_NAME" "configs/c.1/ffs.$FFS_NAME" ||
+  fail "could not link ffs.$FFS_NAME into configs/c.1"
 
 mkdir -p "$FFS_MOUNT"
 # Mount owned by the user openpilot runs as. launch_chffrplus.sh runs as

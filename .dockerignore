@@ -1,0 +1,8 @@
+# Keep host-side clutter out of the build context so a stale __pycache__ does
+# not invalidate the COPY layer, and the image carries only what runs.
+__pycache__
+*.pyc
+.git
+tests
+docs
+.venv

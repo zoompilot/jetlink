@@ -46,6 +46,13 @@ cat <<'NEXT'
 ==> done. On the comma the gadget is configured but not bound; jetlinkd or
     modeld binds it when it opens ep0.
 
+    A jetlinkd or modeld that was already running still has the OLD package
+    imported, and manager never respawns a process that exited on its own.
+    Restart the daemon yourself (get the pid first: pkill -f over ssh matches
+    your own ssh command line and kills the session):
+
+      pgrep -f "^/usr/local/venv/bin/python3 -m openpilot.sunnypilot.accelerators.jetlink.jetlinkd$"
+
     Sanity check with the Jetson cabled up and its server running
     (docker/run.sh --transport usb):
 

@@ -15,7 +15,9 @@ This sends real-sized payloads at the real rate and reports the tail.
     # against a Jetson on the LAN
     python3 scripts/bench_link.py --host 192.168.1.87 --onnx big_model.onnx --n 400
 
-    # over the cable, from the comma (the comma is the gadget)
+    # over the cable, from the comma (the comma is the gadget). the server
+    # returns the spec of a model it already has, so its identity is enough
+    python3 scripts/bench_link.py --ffs --sha256 <hex> --nbytes <n>
     python3 scripts/bench_link.py --ffs --spec spec.json
 """
 from __future__ import annotations
@@ -31,13 +33,18 @@ import numpy as np
 from jetlink.client import JetlinkClient
 from jetlink.spec import ModelSpec, spec_from_onnx
 
-def load_spec(args) -> ModelSpec:
-  """Take the spec from a file, or from the model itself."""
+# modeld's per-frame budget (MODEL_RUN_FREQ = 20). A frame past it is a frame
+# modeld counts as dropped, and frameDropPerc > 1 soft-disables.
+FRAME_BUDGET_MS = 50.0
+
+
+def load_spec(args) -> ModelSpec | None:
+  """Take the spec from a file or the model itself; None leaves it to the server."""
   if args.spec:
     return ModelSpec.from_dict(json.loads(Path(args.spec).read_text()))
   if args.onnx:
     return spec_from_onnx(args.onnx)
-  raise SystemExit("need --spec or --onnx (the shapes come from the model)")
+  return None
 
 
 def _wait_for_host(timeout: float) -> None:
@@ -85,20 +92,20 @@ def main() -> int:
                  help='gadget mode: wait for a host to enumerate us before starting')
   p.add_argument('--spec', help='json spec file, as written by --dump-spec')
   p.add_argument('--onnx', help='read the spec from this model, uploading it if the server lacks it')
+  p.add_argument('--sha256', help='model identity, for a model the server already has')
+  p.add_argument('--nbytes', type=int, help='ONNX size in bytes, with --sha256')
   p.add_argument('--n', type=int, default=400)
   p.add_argument('--rate', type=float, default=20.0, help='Hz; 0 = as fast as possible')
-  p.add_argument('--deadline', type=float, default=0.2, help='per-frame timeout, seconds')
   args = p.parse_args()
 
   if args.usb:
-    client = JetlinkClient.open_usb(deadline=args.deadline)
+    client = JetlinkClient.open_usb()
   elif args.ffs:
     # On a comma the comma is the gadget: opening this writes the descriptors
     # and binds the UDC, so the Jetson can enumerate us.
-    client = JetlinkClient.open_ffs(args.ffs_mount, gadget=args.gadget,
-                                    deadline=args.deadline)
+    client = JetlinkClient.open_ffs(args.ffs_mount, gadget=args.gadget)
   else:
-    client = JetlinkClient.open_tcp(args.host, args.port, deadline=args.deadline)
+    client = JetlinkClient.open_tcp(args.host, args.port)
   try:
     return _run(args, client)
   finally:
@@ -117,9 +124,15 @@ def _run(args, client) -> int:
         f"engine {hello['engine_state']}")
 
   spec = load_spec(args)
+  if spec is not None:
+    sha256, nbytes = spec.sha256, spec.nbytes
+  elif args.sha256 and args.nbytes:
+    sha256, nbytes = args.sha256, args.nbytes
+  else:
+    raise SystemExit("need --spec, --onnx, or --sha256 and --nbytes of a model the server already has")
   t0 = time.time()
-  client.ensure_engine(args.onnx or '/nonexistent', spec=spec,
-                       progress=lambda s, f, m: print(f"  {s:<7} {f*100:5.1f}%  {m}"))
+  spec = client.ensure_engine(sha256, nbytes, onnx_path=args.onnx,
+                              progress=lambda s, f, m: print(f"  {s:<7} {f*100:5.1f}%  {m}"))
   print(f"engine ready in {time.time() - t0:.1f}s")
 
   rng = np.random.default_rng(0)
@@ -140,7 +153,7 @@ def _run(args, client) -> int:
     t = time.perf_counter()
     seq = client.infer_begin(warped, packed, frame_id=i, reset=(i == 0))
     t_sent = time.perf_counter()
-    out = client.infer_end(seq, deadline=args.deadline)
+    out = client.infer_end(seq)
     t_done = time.perf_counter()
     lat.append((t_done - t) * 1e3)
     send_ms.append((t_sent - t) * 1e3)
@@ -161,15 +174,25 @@ def _run(args, client) -> int:
   print(f"  mean {a.mean():6.2f}  min {a.min():6.2f}  p50 {pct(a,50):6.2f}  "
         f"p90 {pct(a,90):6.2f}  p99 {pct(a,99):6.2f}  max {a.max():6.2f}")
   print(f"  jitter: p99-p50 {pct(a,99)-pct(a,50):5.2f}  stdev {a.std():5.2f}")
+  # What the split means depends on the transport. A FunctionFS write, and a
+  # libusb bulk write, return once the host has taken the data, so on USB
+  # "send" is the request on the wire and "recv" is the server plus the reply.
+  # A TCP send is a copy into the socket buffer and returns at once, so there
+  # "send" is a memcpy and the whole wire cost lands in "recv".
   snd, rcv = np.array(send_ms[10:]), np.array(recv_ms[10:])
+  if args.host:
+    print("  split (TCP): send is the copy into the socket buffer; both directions of wire time are in recv")
+  else:
+    print("  split (USB): the write blocks until the host has read, so send is request wire time, "
+          "recv is server + reply")
   print(f"  send ({spec.infer_req_nbytes/1e3:.0f} KB up):   mean {snd.mean():6.2f}  p50 {pct(snd,50):6.2f}  max {snd.max():6.2f}")
   print(f"  recv ({spec.infer_resp_nbytes/1e3:.0f} KB down): mean {rcv.mean():6.2f}  p50 {pct(rcv,50):6.2f}  max {rcv.max():6.2f}")
   s = np.array(srv[10:])
   print(f"server-side total {np.mean(s):6.2f} ms  (gpu {np.mean(gpu[10:]):5.2f}, "
         f"queues {np.mean(queue[10:]):5.2f})")
   print(f"transport overhead: {a.mean() - s.mean():.2f} ms mean")
-  over = int((a > 50).sum())
-  print(f"frames over the 50 ms budget: {over}/{len(a)} ({100*over/len(a):.1f}%)")
+  over = int((a > FRAME_BUDGET_MS).sum())
+  print(f"frames over the {FRAME_BUDGET_MS:.0f} ms budget: {over}/{len(a)} ({100*over/len(a):.1f}%)")
   return 0
 
 

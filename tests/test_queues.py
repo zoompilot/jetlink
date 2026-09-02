@@ -21,7 +21,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from jetlink.queues import PolicyQueues, sample_desire, sample_skip
+from jetlink.queues import PolicyQueues
 from jetlink.spec import ModelSpec
 
 tinygrad = pytest.importorskip('tinygrad', reason='needs tinygrad + openpilot on PYTHONPATH')
