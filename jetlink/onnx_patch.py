@@ -25,10 +25,65 @@ from onnx import TensorProto
 
 IMG_INPUTS = ('img', 'big_img')
 
+# tinygrad's exporter can leave a layout hint in the graph as a node in its own
+# domain. Contiguous means "materialise this tensor", which is a statement about
+# tinygrad's internal buffers and nothing about the arithmetic, so it is safe to
+# bypass - and it has to be, because TensorRT's parser rejects any op outside a
+# domain it knows. comma's 2026-09-01 model carries exactly one; the model a day
+# earlier carries none, so this comes and goes with how a model was exported.
+TINYGRAD_DOMAIN = 'org.tinygrad'
+PASSTHROUGH_OPS = ('Contiguous',)
+
 
 def needs_patch(model: onnx.ModelProto) -> bool:
   return any(vi.name in IMG_INPUTS and vi.type.tensor_type.elem_type == TensorProto.UINT8
              for vi in model.graph.input)
+
+
+def strip_tinygrad_ops(model: onnx.ModelProto) -> int:
+  """Bypass tinygrad's layout-hint nodes. In place, returns how many went.
+
+  Refuses anything it has not been told is a passthrough rather than guessing:
+  silently dropping an op that did something would change what the car sees.
+  """
+  g = model.graph
+  graph_outputs = {o.name for o in g.output}
+  removed = 0
+
+  for node in [n for n in g.node if n.domain == TINYGRAD_DOMAIN]:
+    if node.op_type not in PASSTHROUGH_OPS:
+      raise ValueError(f"unknown {TINYGRAD_DOMAIN} op {node.op_type!r}; it may not "
+                       "be a no-op, so dropping it is not safe")
+    if len(node.input) != 1 or len(node.output) != 1 or node.attribute:
+      raise ValueError(f"{node.op_type} is not a plain one-in one-out passthrough")
+
+    source, produced = node.input[0], node.output[0]
+    for n in g.node:
+      for i, name in enumerate(n.input):
+        if name == produced:
+          n.input[i] = source
+    for o in g.output:
+      if o.name == produced:
+        # It fed a graph output directly, so the producer has to take that name.
+        o.name = source
+    if produced in graph_outputs:
+      for n in g.node:
+        for i, name in enumerate(n.output):
+          if name == source:
+            n.output[i] = produced
+    g.node.remove(node)
+    removed += 1
+
+  if removed:
+    for i, opset in enumerate(model.opset_import):
+      if opset.domain == TINYGRAD_DOMAIN:
+        del model.opset_import[i]
+        break
+    live = {n for node in g.node for n in list(node.input) + list(node.output)}
+    for i in reversed(range(len(g.value_info))):
+      if g.value_info[i].name not in live:
+        del g.value_info[i]
+  return removed
 
 
 def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
@@ -100,6 +155,7 @@ def _head_casts(g) -> list:
 
 def patch_file(src: str, dst: str, check: bool = True) -> str:
   model = onnx.load(src)
+  strip_tinygrad_ops(model)
   if needs_patch(model):
     patch_uint8_inputs(model)
   if check:

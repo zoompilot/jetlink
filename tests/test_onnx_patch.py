@@ -16,7 +16,12 @@ onnx = pytest.importorskip('onnx')
 
 from onnx import TensorProto, helper  # noqa: E402
 
-from jetlink.onnx_patch import needs_patch, patch_uint8_inputs  # noqa: E402
+from jetlink.onnx_patch import (  # noqa: E402
+  TINYGRAD_DOMAIN,
+  needs_patch,
+  patch_uint8_inputs,
+  strip_tinygrad_ops,
+)
 
 SHAPE = [1, 12, 128, 256]
 
@@ -103,3 +108,61 @@ def test_a_cast_to_the_wrong_type_is_refused():
   ])
   with pytest.raises(ValueError, match="expected FLOAT16"):
     patch_uint8_inputs(model)
+
+
+class TestTinygradPassthrough:
+  """comma's 2026-09-01 export carries one org.tinygrad Contiguous node, which
+  TensorRT's parser rejects outright. It is a layout hint, so it comes out."""
+
+  def _with_contiguous(self, op='Contiguous', **kw):
+    node = helper.make_node(op, ['cast_out'], ['hint'], domain=TINYGRAD_DOMAIN, **kw)
+    graph = helper.make_graph([
+      helper.make_node('Concat', ['img', 'big_img'], ['cat'], axis=1),
+      helper.make_node('Cast', ['cat'], ['cast_out'], to=TensorProto.FLOAT16),
+      node,
+      helper.make_node('Identity', ['hint'], ['out']),
+    ], 'test', _image_inputs(),
+      [helper.make_tensor_value_info('out', TensorProto.FLOAT16, SHAPE)],
+      value_info=[helper.make_tensor_value_info('hint', TensorProto.FLOAT16, SHAPE)])
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid('', 20),
+                                                   helper.make_opsetid(TINYGRAD_DOMAIN, 1)])
+
+  def test_the_node_goes_and_its_consumer_reads_the_source(self):
+    model = self._with_contiguous()
+    assert strip_tinygrad_ops(model) == 1
+    ops = [(n.domain, n.op_type) for n in model.graph.node]
+    assert (TINYGRAD_DOMAIN, 'Contiguous') not in ops
+    identity = next(n for n in model.graph.node if n.op_type == 'Identity')
+    assert list(identity.input) == ['cast_out']
+
+  def test_the_opset_import_goes_with_it(self):
+    # Left behind, it tells TensorRT the graph still needs a domain it has
+    # never heard of, which is the failure we are removing.
+    model = self._with_contiguous()
+    strip_tinygrad_ops(model)
+    assert all(o.domain != TINYGRAD_DOMAIN for o in model.opset_import)
+    assert 'hint' not in [vi.name for vi in model.graph.value_info]
+
+  def test_a_clean_model_is_untouched(self):
+    model = _cast_after_concat()
+    before = len(model.graph.node)
+    assert strip_tinygrad_ops(model) == 0
+    assert len(model.graph.node) == before
+
+  def test_an_unknown_tinygrad_op_is_refused(self):
+    # Dropping something that actually did work would change what the car sees,
+    # so anything not known to be a passthrough has to stop the build.
+    model = self._with_contiguous(op='SomethingElse')
+    with pytest.raises(ValueError, match='unknown'):
+      strip_tinygrad_ops(model)
+
+  def test_an_op_carrying_attributes_is_refused(self):
+    model = self._with_contiguous(axis=1)
+    with pytest.raises(ValueError, match='passthrough'):
+      strip_tinygrad_ops(model)
+
+  def test_it_survives_the_checker_and_the_uint8_patch(self):
+    model = self._with_contiguous()
+    strip_tinygrad_ops(model)
+    patch_uint8_inputs(model)
+    onnx.checker.check_model(model, full_check=False)
