@@ -30,8 +30,6 @@ from pathlib import Path
 
 import tensorrt as trt
 
-from jetlink.onnx_patch import patch_file
-
 log = logging.getLogger('jetlink.builder')
 
 ProgressFn = Callable[[str, float, str], None]
@@ -47,20 +45,23 @@ WORKSPACE_FRACTION = 0.4
 
 
 def available_bytes() -> int:
-  """Free memory as the kernel sees it, swap included.
+  """Memory a TensorRT workspace can actually live in.
 
-  MemAvailable is the honest number - free plus what the kernel would reclaim -
-  and swap counts because a build that swaps is slow, not dead.
+  MemAvailable is the honest number - free plus what the kernel would reclaim.
+  Swap deliberately does not count: on Tegra the GPU shares system RAM and its
+  allocations are pinned, so they cannot page out. Counting the 25 GB of swap
+  this Jetson happens to have would hand back the old flat 4 GB every time and
+  walk the builder into the same OOM the sizing exists to avoid.
   """
-  fields = {}
   try:
     with open('/proc/meminfo') as f:
       for line in f:
         key, _, rest = line.partition(':')
-        fields[key] = int(rest.split()[0]) * 1024
+        if key == 'MemAvailable':
+          return int(rest.split()[0]) * 1024
   except OSError:
-    return 0
-  return fields.get('MemAvailable', 0) + max(0, fields.get('SwapFree', 0))
+    pass
+  return 0
 
 
 def workspace_bytes() -> int:
@@ -101,6 +102,9 @@ class CacheEntry:
 
   def meta(self) -> dict:
     return json.loads(self.meta_path.read_text())
+
+  def write_meta(self, meta: dict) -> None:
+    self.meta_path.write_text(json.dumps(meta, indent=2))
 
 
 class EngineCache:
@@ -165,8 +169,13 @@ class _Monitor(trt.IProgressMonitor):
 def build_engine(onnx_path: str | Path, out_path: str | Path,
                  report: ProgressFn | None = None,
                  fp16: bool = True, optimization_level: int = 3,
-                 workspace: int | None = None) -> Path:
-  """Patch, parse and build. Writes the plan atomically."""
+                 workspace: int | None = None,
+                 meta_extra: dict | None = None) -> Path:
+  """Patch, parse and build. Writes the plan atomically.
+
+  `meta_extra` lands in the sidecar json next to the plan; the server keeps
+  the model spec there so a later load needs neither the ONNX nor a parser.
+  """
   onnx_path, out_path = Path(onnx_path), Path(out_path)
   report = report or (lambda *_: None)
   workspace = workspace_bytes() if workspace is None else workspace
@@ -176,6 +185,10 @@ def build_engine(onnx_path: str | Path, out_path: str | Path,
 
   logger = trt.Logger(trt.Logger.WARNING)
   trt.init_libnvinfer_plugins(logger, '')
+
+  # Imported here, not at module scope: it pulls in the onnx package, which the
+  # server needs to build and a comma running the tests does not have.
+  from jetlink.onnx_patch import patch_file
 
   with tempfile.TemporaryDirectory(dir=str(out_path.parent)) as tmp:
     report('patch', 0.0, 'retyping uint8 image inputs to fp16')
@@ -218,6 +231,7 @@ def build_engine(onnx_path: str | Path, out_path: str | Path,
     'build_seconds': round(time.time() - t0, 1),
     'onnx': onnx_path.name,
     'built_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+    **(meta_extra or {}),
   }
   out_path.with_suffix('.json').write_text(json.dumps(meta, indent=2))
   report('build', 1.0, f"done in {meta['build_seconds']}s")

@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 from jetlink.server.builder import DEFAULT_CACHE, EngineCache, build_engine
-from jetlink.server.session import Session
+from jetlink.server.session import EngineHost, Session
 from jetlink.server.telemetry import Telemetry
 from jetlink.transport.base import LinkError
 
@@ -37,15 +37,17 @@ def _serve(cache: EngineCache, open_transport) -> None:
 
   `open_transport()` returns a transport, or None to wait and retry. The three
   transports differ only in how they are opened, so the session lifecycle lives
-  here once.
+  here once. The engine host is shared across sessions on purpose: the comma
+  reconnects at every jetlinkd/modeld handover and the engine must not be
+  reloaded each time.
   """
-  telemetry = Telemetry()
+  host = EngineHost(cache, Telemetry())
   while True:
     transport = open_transport()
     if transport is None:
       time.sleep(2.0)
       continue
-    session = Session(transport, cache, telemetry)
+    session = Session(transport, host)
     try:
       session.serve_forever()
     except LinkError as e:

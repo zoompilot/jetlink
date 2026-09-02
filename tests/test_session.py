@@ -26,7 +26,7 @@ from jetlink import protocol as P                          # noqa: E402
 from jetlink.client import JetlinkClient                   # noqa: E402
 from jetlink.queues import PolicyQueues                    # noqa: E402
 from jetlink.server.builder import EngineCache             # noqa: E402
-from jetlink.server.session import ModelSlot, Session      # noqa: E402
+from jetlink.server.session import EngineHost, Loaded, Request, Session  # noqa: E402
 from jetlink.spec import ModelSpec                         # noqa: E402
 from jetlink.transport.base import LinkError               # noqa: E402
 from jetlink.transport.tcp import TcpTransport             # noqa: E402
@@ -76,15 +76,13 @@ class FakeEngine:
     return {'outputs': self._out}
 
 
-def ready_session(spec, transport, engine=None):
-  session = Session(transport, EngineCache('/tmp/jetlink-test-cache'))
+def ready_session(spec, transport, engine=None, cache='/tmp/jetlink-test-cache'):
+  host = EngineHost(EngineCache(cache))
+  session = Session(transport, host)
   engine = engine or FakeEngine(spec)
-  slot = ModelSlot(spec)
-  slot.state = 'ready'
-  slot.engine = engine
-  slot.queues = PolicyQueues(spec)
-  slot.host_inputs = {n: engine.host_input(n) for n in spec.input_shapes}
-  session.slot = slot
+  host.loaded = Loaded(spec.sha256, spec, engine, PolicyQueues(spec),
+                       {n: engine.host_input(n) for n in spec.input_shapes})
+  session.request = Request(spec.sha256, spec.nbytes, spec.frame_skip)
   return session, engine
 
 
@@ -151,9 +149,9 @@ def test_queues_reset_flag_clears_history(link):
   packed = np.zeros(spec.packed_nelem, np.float32)
   for i in range(6):
     client.infer(warped, packed, frame_id=i)
-  assert session.slot.queues.img_q.buf.any()
+  assert session.host.loaded.queues.img_q.buf.any()
   client.infer(np.zeros(spec.warped_shape, np.uint8), packed, frame_id=99, reset=True)
-  assert not session.slot.queues.img_q.buf.any()
+  assert not session.host.loaded.queues.img_q.buf.any()
 
 
 def test_nonfinite_output_is_reported_not_returned(link):
@@ -184,7 +182,7 @@ def test_not_ready_is_reported_rather_than_crashing():
   client_t = TcpTransport.connect('127.0.0.1', port)
   server_t, _ = TcpTransport.accept(srv)
   srv.close()
-  session = Session(server_t, EngineCache('/tmp/jetlink-test-cache'))  # no slot
+  session = Session(server_t, EngineHost(EngineCache('/tmp/jetlink-test-cache')))  # nothing loaded
   threading.Thread(target=session.serve_forever, daemon=True).start()
 
   client = JetlinkClient(client_t, deadline=10.0)
