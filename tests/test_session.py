@@ -13,7 +13,10 @@ that covers the paths the car would otherwise be the first to execute.
 """
 from __future__ import annotations
 
+import os
 import threading
+import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -220,3 +223,55 @@ def test_wrong_sized_request_is_rejected(link):
   _, status, _, _, _ = P.unpack_infer_resp(msg.payload)
   assert status == P.Status.BAD_SHAPE
   assert engine.calls == 0, "the engine must not have run on a malformed request"
+
+
+# -- the engine cache -------------------------------------------------------
+
+def _plan(cache: EngineCache, name: str, mtime: float) -> Path:
+  """A plan and its sidecar, stamped at `mtime`."""
+  plan = cache.engines / f"{name}.plan"
+  plan.write_bytes(b'plan')
+  plan.with_suffix('.json').write_text('{}')
+  os.utime(plan, (mtime, mtime))
+  return plan
+
+
+def test_prune_keeps_the_newest_plans(tmp_path):
+  cache = EngineCache(tmp_path)
+  for i in range(4):
+    _plan(cache, f"m{i}", 1_000_000 + i)
+  cache.prune(keep=2)
+  left = sorted(p.stem for p in cache.engines.glob('*.plan'))
+  assert left == ['m2', 'm3']
+  assert not (cache.engines / 'm0.json').exists()
+
+
+def test_prune_never_drops_the_plan_just_built(tmp_path):
+  """The Jetson boots at 1970 with no network, so a fresh plan can be the
+  oldest file on disk. Pruning by mtime would delete the build that just
+  finished and leave the caller reading a sidecar that no longer exists."""
+  cache = EngineCache(tmp_path)
+  _plan(cache, 'old_a', 2_000_000)
+  _plan(cache, 'old_b', 2_000_001)
+  fresh = _plan(cache, 'fresh', 1)          # 1970, but it is the new one
+
+  cache.prune(keep=2, protect=fresh)
+
+  assert fresh.is_file()
+  assert fresh.with_suffix('.json').is_file()
+  assert len(list(cache.engines.glob('*.plan'))) == 2
+
+
+def test_sweep_temp_drops_only_stale_build_dirs(tmp_path):
+  cache = EngineCache(tmp_path)
+  stale = cache.engines / 'tmpstale'
+  fresh = cache.engines / 'tmpfresh'
+  for d in (stale, fresh):
+    d.mkdir()
+    (d / 'engine.plan').write_bytes(b'x')
+  os.utime(stale, (time.time() - 7 * 3600, time.time() - 7 * 3600))
+
+  cache.sweep_temp()
+
+  assert not stale.exists()
+  assert fresh.exists()

@@ -42,6 +42,10 @@ DEFAULT_CACHE = Path(os.environ.get('JETLINK_CACHE', '/mnt/data/jetlink'))
 MAX_WORKSPACE_BYTES = 4 << 30
 MIN_WORKSPACE_BYTES = 256 << 20
 WORKSPACE_FRACTION = 0.4
+# Every model in the registry gets to keep its plan. Rebuilding one costs
+# minutes and a plan costs under 2 GB against a 900 GB disk, so the old cap of
+# two turned an A/B between three models into a rebuild every switch.
+KEEP_PLANS = 6
 
 
 def available_bytes() -> int:
@@ -125,12 +129,38 @@ class EngineCache:
   def model_path(self, model_sha256: str) -> Path:
     return self.models / f"{model_sha256[:16]}.onnx"
 
-  def prune(self, keep: int = 2) -> None:
-    """Keep only the newest few plans; each is ~770 MB."""
-    plans = sorted(self.engines.glob('*.plan'), key=lambda p: p.stat().st_mtime, reverse=True)
-    for p in plans[keep:]:
+  def prune(self, keep: int = KEEP_PLANS, protect: Path | None = None) -> None:
+    """Keep the newest few plans; each is ~770 MB.
+
+    `protect` is never pruned, whatever its timestamp says. A Jetson with no
+    network and no RTC battery boots at 1970, so a plan built offroad carries
+    an mtime older than every plan built before it. Sorted by mtime that makes
+    the build that just finished the first one deleted, and the caller's next
+    read of its sidecar dies on FileNotFoundError.
+    """
+    plans = [p for p in self.engines.glob('*.plan') if protect is None or p != protect]
+    plans.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for p in plans[max(keep - (protect is not None), 0):]:
       p.unlink(missing_ok=True)
       p.with_suffix('.json').unlink(missing_ok=True)
+
+  def sweep_temp(self, max_age: float = 6 * 3600) -> None:
+    """Drop build directories a crashed or killed build left behind.
+
+    build_engine stages the plan in a TemporaryDirectory inside engines/, so a
+    build the link tears down mid-flight leaks one. They are invisible to
+    prune(), which only globs *.plan.
+    """
+    now = time.time()
+    for d in self.engines.glob('tmp*'):
+      if not d.is_dir():
+        continue
+      try:
+        if now - d.stat().st_mtime < max_age:
+          continue
+        shutil.rmtree(d, ignore_errors=True)
+      except OSError:
+        pass
 
 
 class _Monitor(trt.IProgressMonitor):

@@ -145,7 +145,7 @@ def main(argv=None) -> int:
   cache = EngineCache(Path(args.cache))
 
   if args.build:
-    from jetlink.spec import sha256_file
+    from jetlink.spec import sha256_file, spec_from_onnx
     sha, nbytes = sha256_file(args.build)
     entry = cache.entry(sha)
     log.info("model %s (%d MB) -> %s", sha[:16], nbytes >> 20, entry.plan_path)
@@ -160,7 +160,10 @@ def main(argv=None) -> int:
         last[0] = frac
         log.info("%-6s %5.1f%%  %s", stage, frac * 100, msg)
 
-    build_engine(args.build, entry.plan_path, report=report)
+    # Carry the spec into the sidecar like a served build does, so the first
+    # client to connect loads the plan instead of reparsing the ONNX for it.
+    build_engine(args.build, entry.plan_path, report=report,
+                 meta_extra={'spec': spec_from_onnx(args.build).to_dict()})
     log.info("built: %s", entry.meta())
     return 0
 

@@ -183,12 +183,19 @@ class EngineHost:
           self._progress('parse', 0.0, 'reading model metadata', force=True)
           spec = self._derive_spec(model_path, req.frame_skip)
         self._build(model_path, entry.plan_path, {'spec': spec.to_dict()})
-        self.cache.prune()
+        # Never let the sweep take the plan we just wrote: offroad the clock
+        # can be behind every plan already on disk.
+        self.cache.prune(protect=entry.plan_path)
+        self.cache.sweep_temp()
       assert spec is not None
-      if 'spec' not in entry.meta():
-        # A plan from before sidecars carried specs: record it now so the next
-        # load needs neither the ONNX nor a parser.
-        entry.write_meta({**entry.meta(), 'spec': spec.to_dict()})
+      try:
+        meta = entry.meta()
+      except (OSError, ValueError):
+        # A plan from before sidecars carried specs, or one whose sidecar went
+        # missing. Rewrite it rather than failing a build that already ran.
+        meta = {}
+      if 'spec' not in meta:
+        entry.write_meta({**meta, 'spec': spec.to_dict()})
 
       self._progress('load', 0.0, 'deserializing engine', force=True)
       engine = self._load_engine(entry.plan_path)
