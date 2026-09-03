@@ -24,6 +24,7 @@ openpilot/sunnypilot/accelerators/
     helpers.py     where the model is, whether a Jetson is attached
     jetlinkd.py    the offroad daemon
     model_state.py what modeld drives per frame
+    warp_cache.py  the comma-side warp JIT, compiled offroad
     state.py       publishes chestnutState
     spec_cache.py  the model spec, cached in a param
     lfs.py         fetching a model out of comma's LFS
@@ -68,9 +69,41 @@ openpilot/system/manager/process_config.py  builds daemons from accelerators.dae
 
 modeld loads the small model on the main thread *before* starting the big
 model's loader thread, and hands it to `make_model_state(cam_w, cam_h, small)`.
-The jetlink backend borrows its warp instead of loading the same pkl again from
-a thread the main thread is racing on the same tinygrad device. A big model
-that finishes loading after `BIG_MODEL_TIMEOUT` is closed, not kept.
+That used to be so the backend could borrow its warp; upstream has since fused
+warp and policy into one `run_model` JIT, so there is no warp in the pkl to
+borrow and `small` is only a geometry cross-check now. A big model that
+finishes loading after `BIG_MODEL_TIMEOUT` is closed, not kept.
+
+`prepare()` returns a bool and may veto. `active()` has to stay cheap because
+the UI polls it, so the checks that block - upstream waits a few deviceState
+ticks for a chestnutState saying the board's PCIe link is actually trained -
+live in `prepare()`, which only modeld calls.
+
+### The warp is a build product now
+
+jetlink runs `warp` on the comma and `run_policy` on the Jetson. Upstream used
+to ship the warp as its own JIT inside the small model's pkl, so borrowing it
+cost nothing. `commaai/openpilot#38684` fused the two into a single `run_model`
+graph with no seam, and `WARP_INPUTS`, `POLICY_INPUTS`, `make_warp_input_queues`
+and the `WARP_DEV`/`QUEUE_DEV` split went with it.
+
+`make_warp` still exists and still builds the same closure, so the wire format
+did not move. It just has to be JIT-compiled somewhere, and that somewhere is
+not modeld: the compile would land on the loader thread inside the 60 s
+`BIG_MODEL_TIMEOUT`, on the one GPU the main thread is already using, every
+ignition. `jetlinkd` does it parked and pickles the result to
+`<comma_home>/jetlink/warp_<camWxcamH>_<modelWxmodelH>_tinygrad.pkl`, which is
+the shape of upstream's own `compile_dm_warp.py`.
+
+The cache is keyed on the openpilot git commit, because tinygrad is a submodule
+that commit pins and a pickled TinyJit only loads under the tinygrad that made
+it. Coarse on purpose: being wrong here is a silent wrong warp reaching the
+car, being conservative is one parked rebuild per update.
+
+**So the large model needs jetlinkd to have run offroad at least once since the
+last update.** `backend.prepare()` checks for the warp and stays on the small
+model without one, rather than opening the link and waiting out
+`CONNECT_TIMEOUT` before failing on something local.
 
 ### What core openpilot asks
 
