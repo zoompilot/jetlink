@@ -537,6 +537,65 @@ sufficient. Three separate limits:
 Making `frame_delay` reflect measured latency would help chestnut too, and is the
 right upstream-shaped fix. Not done.
 
+### Where the comma-side frame time goes, and the two upstream fixes worth making
+
+Measured 2026-09-04 on the car, warp output 393,216 bytes:
+
+```
+call_warp (enqueue)    1.19 ms
+device.synchronize     0.49 ms      <- the GPU is barely the cost
+warped.data()          2.36 ms      <- 165 MB/s
+```
+
+The GPU is done in half a millisecond. `.data()` is a copy out of a
+write-combined mapping, which is fast for the GPU to write and slow for anyone
+to read; a plain CPU read of the same memory is 1.49 ms, so ~0.9 ms on top of
+that is tinygrad building the result. Nothing on the comma reads those bytes -
+they go straight to `writev`.
+
+**Zero-copy was tried and reverted.** `Buffer.as_memoryview(allow_zero_copy=True)`
+returns a view in 0.045 ms with byte-identical contents, and on the live bench
+`data` fell 2.6 -> 0.5 ms. But `send` rose 3.6 -> 5.0 ms: the gadget write pays
+the write-combined read itself rather than DMAing past it. Net was 31.3 -> 30.7
+ms, 0.6 ms, and all of it was tinygrad's overhead rather than the read. Not
+worth reaching through `warped.uop.base.realized` - private structure a
+submodule bump rearranges - in the one code path with a history of silent
+corruption. The arithmetic to keep in mind is that **someone pays the
+write-combined read**; moving it is not removing it.
+
+Two fixes that would remove it, both upstream rather than here:
+
+1. **tinygrad: let `Tensor.data()` pass `zero_copy` through.** `Buffer.as_memoryview`
+   already takes `allow_zero_copy`; `Tensor.data()` simply does not forward it, so
+   the only way to reach it is private API. A one-argument change upstream makes
+   this a public call. Worth ~0.6 ms here on its own.
+2. **tinygrad: stop mapping the output write-combined, or offer a cached
+   alternative.** This is the real one: it removes the 1.5 ms instead of moving
+   it, and it helps every tinygrad user on a QCOM device, not just this fork.
+   `QCOMAllocator.default_buffer_spec` is where the mapping is chosen.
+
+### A libusb thread inherits modeld's realtime priority
+
+Threads created after `config_realtime_process(7, 54)` inherit SCHED_FIFO 54
+*and* the core-7 pin, which is the documented way to lose frames here. Sampled
+on a live bench, every Python thread is SCHED_OTHER on 0-7 as intended, and one
+is not:
+
+```
+121565  python3        SCHED_FIFO  54   cpu 7     <- the frame loop
+121614  libusb_event   SCHED_FIFO  54   cpu 7     <- same core, same priority
+```
+
+It costs nothing today: over 10 s it ran **0.0 ms across 0 timeslices**, because
+libusb has no device to service on a comma that is the gadget, and the frame
+loop waited 0.6 ms total over the same window. So this is a latent hazard, not a
+live one - anything that starts using libusb in that process would preempt the
+frame loop. The creator was not identified: the only modeld-reachable importer
+of `usb1` is `accelerators/chestnut.py`, but `accelerators.active()` runs before
+`config_realtime_process`, which would give a SCHED_OTHER thread. Find the
+creator before fixing it; the fix is to make the context before modeld goes
+realtime, not to re-nice a thread afterwards.
+
 ### Measured, Orin Nano Super 8 GB, TensorRT 10.3 FP16, SuperSpeed
 
 modeld execution time is end to end with cores pinned as onroad.
