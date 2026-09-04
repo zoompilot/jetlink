@@ -24,7 +24,8 @@ openpilot/sunnypilot/accelerators/
     helpers.py     where the model is, whether a Jetson is attached
     jetlinkd.py    the offroad daemon
     model_state.py what modeld drives per frame
-    warp_cache.py  the comma-side warp JIT, compiled offroad
+    warp_cache.py  the comma-side warp JIT: capture, load, warm
+    compile_warp.py  its CLI, invoked by accelerators/SConscript
     state.py       publishes chestnutState
     spec_cache.py  the model spec, cached in a param
     lfs.py         fetching a model out of comma's LFS
@@ -79,7 +80,7 @@ the UI polls it, so the checks that block - upstream waits a few deviceState
 ticks for a chestnutState saying the board's PCIe link is actually trained -
 live in `prepare()`, which only modeld calls.
 
-### The warp is a build product now
+### The warp is a build product, and scons builds it
 
 jetlink runs `warp` on the comma and `run_policy` on the Jetson. Upstream used
 to ship the warp as its own JIT inside the small model's pkl, so borrowing it
@@ -91,25 +92,52 @@ and the `WARP_DEV`/`QUEUE_DEV` split went with it.
 did not move. It just has to be JIT-compiled somewhere, and that somewhere is
 not modeld: the compile would land on the loader thread inside the 60 s
 `BIG_MODEL_TIMEOUT`, on the one GPU the main thread is already using, every
-ignition. `jetlinkd` does it parked and pickles the result to
-`/data/jetlink/warp_<camWxcamH>_<modelWxmodelH>_tinygrad.pkl` on the device
-(`<comma_home>/jetlink/` on a PC), which is the shape of upstream's own
-`compile_dm_warp.py`. Not `Paths.comma_home()` on the device: that is
-`/home/comma/.comma`, and AGNOS mounts `/home` as an overlay whose upper layer
-is in `/rwtmp`, a tmpfs. A warp cached there is gone at the next boot, and
-with the car and the comma powering up together jetlinkd then loses the ~9 s
-compile race to ignition on every cold boot. That was the "no warp compiled
-yet, staying on the small model" of the 2026-09-04 drive.
+ignition.
 
-The cache is keyed on the openpilot git commit, because tinygrad is a submodule
-that commit pins and a pickled TinyJit only loads under the tinygrad that made
-it. Coarse on purpose: being wrong here is a silent wrong warp reaching the
-car, being conservative is one parked rebuild per update.
+So it is a scons target, `openpilot/sunnypilot/accelerators/SConscript`, wired
+in through the one-line `sunnypilot/SConscript` dispatcher and gated on
+`arch == comma_arm64` and the jetlink package being installed. That is what
+upstream does with `dm_warp_*.pkl` a few lines away in `modeld/SConscript`, and
+it is the whole point: `launch_chffrplus.sh` runs `setup.sh` (line 83, which
+makes the `jetlink` symlink) and then `build.py` (line 96), so an update that
+moves tinygrad has a rebuilt warp before manager starts, never mind before
+ignition. The whole `tinygrad_repo` glob is in the dependency list, so a
+submodule bump rebuilds it.
 
-**So the large model needs jetlinkd to have run offroad at least once since the
-last update.** `backend.prepare()` checks for the warp and stays on the small
-model without one, rather than opening the link and waiting out
-`CONNECT_TIMEOUT` before failing on something local.
+The target is
+`openpilot/sunnypilot/accelerators/jetlink/models/warp_<camWxcamH>_<modelWxmodelH>_tinygrad.pkl`,
+covered by the repo-wide `*.pkl` ignore. In the tree on purpose: scons has to
+write it, and the updater's `reset --hard` + `clean` deletes it exactly as it
+deletes upstream's pkls, with the build that follows putting it back. It used
+to live under `Paths.comma_home()`, which on AGNOS resolves under `/home`, an
+overlay whose upper layer is in `/rwtmp`, a tmpfs. A warp cached there is gone
+at the next boot, and with the car and the comma powering up together jetlinkd
+then loses the ~9 s compile race to ignition on every cold boot. That was the
+"no warp compiled yet, staying on the small model" of the 2026-09-04 drive.
+
+There is no staleness key any more, and `_build_key`, `_tinygrad_pin` and the
+json sidecar are gone with it. `warp_cache.is_cached` asks whether the file
+exists and nothing else, because scons owns invalidation and a stale warp
+cannot outlive a build that succeeded. What presence cannot catch - a pickle
+written by an incompatible tinygrad - fails to unpickle, and `load_warp` turns
+that into the small model, which is where it was always going to end up.
+
+`jetlinkd.build_warp` survives only to build a warp that is missing outright,
+which in practice means a prebuilt image made without the target. It checks
+`is_cached` before reporting anything, so on a device that ran a build it does
+nothing at all; reporting first used to flash "compiling the camera warp"
+through the UI on every start.
+
+No tinygrad flags on the compile, unlike the `dm_warp` target next door.
+jetlinkd built this with a bare environment and that is the artifact the parity
+and timing numbers were measured against; adding `DEV`/`IMAGE`/`FLOAT16` would
+change the generated kernels and put those behind a fresh bench run. Moving the
+build was this change; changing what it builds is a separate one.
+
+`backend.prepare()` still checks for the warp and stays on the small model
+without one, rather than opening the link and waiting out `CONNECT_TIMEOUT`
+before failing on something local. On a device that completed a build it should
+never fire.
 
 ### What core openpilot asks
 
@@ -510,11 +538,12 @@ tools/jetlink_live_bench.sh 180
 `jetlinkd` owns the link offroad, so stop it first or all four time out waiting
 for a gadget that is already held.
 
-The replay tool runs modeld under a fresh `OPENPILOT_PREFIX`, which moves
-`Paths.comma_home()` and with it the warp cache, and it never delivered
-`selfdriveState`, so the joining state assumed engaged forever. Both are
-handled in the tool now; if it reports every frame on the small model, check
-those first.
+The replay tool never delivered `selfdriveState`, so the joining state assumed
+engaged forever and never swapped. Handled in the tool now; if it reports every
+frame on the small model, check that first. It used to need the warp cache
+imported before `process_replay` set `OPENPILOT_PREFIX`, because the prefix
+moved `Paths.comma_home()` out from under it - that hack is gone with the cache
+into the source tree.
 
 `--spec spec.json` still works everywhere as an override; dump one from the
 device param with `json.dumps(Params().get("JetlinkSpec"))`.

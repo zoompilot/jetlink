@@ -103,6 +103,8 @@ contains zero jetlink references.
 | `lfs.py` | fetching a model out of comma's git-lfs history |
 | `models.json` | the large models known to run here |
 | `jetlinkd.py` | offroad: fetches the model, builds the engine, caches it |
+| `warp_cache.py` | the comma-side warp JIT: capture, load, warm |
+| `compile_warp.py` | its CLI, run by `accelerators/SConscript` at build time |
 | `setup.sh` | boot-time gadget setup, called by `accelerators/setup.sh` |
 
 Hold the seam at `backend.py`. Anything only `jetlinkd` needs belongs in
@@ -190,8 +192,17 @@ then sends an invalid message, which is what chestnut does in the same state.
 The server additionally checks the output is finite and reports `NOT_FINITE`
 rather than returning it, matching openpilot's own guard on big-model output.
 
-Note upstream's fallback is one-way: once it drops to the small model it stays
-there for the drive. jetlink does not change that.
+Upstream's own fallback is one-way: modeld sets `model = small_model` in the
+frame loop's `except` and stays there for the drive. jetlink does change that.
+`JoiningModelState.run` catches the failure before modeld sees it, demotes to
+the small model, and rejoins after `REJOIN_DELAY`, swapping back at the next
+disengaged frame - so a Jetson that reboots, a nudged cable or a transport
+desync costs some frames rather than the rest of the drive. modeld's one-way
+path is still underneath, for anything the joining state does not catch.
+
+What that does not cover is `chestnutPresent`: selfdrived soft-disables on it
+dropping while the big model is active, so the driver is still disengaged once
+per dropout even though the model layer recovers on its own.
 
 ## Getting the package onto the comma
 
