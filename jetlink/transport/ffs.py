@@ -62,6 +62,7 @@ MAX_QUEUED = 8 << 20
 log = logging.getLogger('jetlink')
 
 EP_READY_TIMEOUT = 10.0
+UDC_SYSFS = '/sys/class/udc'
 # How long close() waits for the reader thread after unbinding, which is what
 # wakes it. A read the kernel will not complete is left to die with the process.
 READER_JOIN_TIMEOUT = 1.0
@@ -166,6 +167,7 @@ class FfsTransport(StreamTransport):
     self._queued = 0
     self._reader_error: str | None = None
     self._closing = False
+    self._had_host = False
     self._reader: threading.Thread | None = None
     try:
       self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
@@ -189,7 +191,7 @@ class FfsTransport(StreamTransport):
     if self.gadget is None:
       raise LinkError("no gadget path given")
     if udc is None:
-      udcs = sorted(os.listdir('/sys/class/udc'))
+      udcs = sorted(os.listdir(UDC_SYSFS))
       if not udcs:
         raise LinkError("no USB device controller found")
       udc = udcs[0]
@@ -235,7 +237,9 @@ class FfsTransport(StreamTransport):
     try:
       while True:
         try:
-          return os.writev(self.ep_in, bufs)
+          n = os.writev(self.ep_in, bufs)
+          self._had_host = True
+          return n
         except OSError as e:
           # FunctionFS submits a write as one request, so a failed writev put
           # nothing on the wire and is safe to retry.
@@ -283,6 +287,7 @@ class FfsTransport(StreamTransport):
         self._fail("gadget read returned EOF (host disconnected)")
         return
       self._ready_deadline = None
+      self._had_host = True
       with self._cv:
         self._chunks.append(memoryview(buf)[:got])
         self._queued += got
@@ -320,6 +325,8 @@ class FfsTransport(StreamTransport):
     they return EIO. Starting the clock on the first such error rather than at
     open means the wait covers a re-enumeration too.
     """
+    if self._host_gone():
+      return False
     now = time.monotonic()
     if self._ready_deadline is None:
       self._ready_deadline = now + EP_READY_TIMEOUT
@@ -327,6 +334,27 @@ class FfsTransport(StreamTransport):
       time.sleep(0.005)
       return True
     return False
+
+  def _host_gone(self) -> bool:
+    """A host had us configured and no longer does.
+
+    The endpoints answer ENODEV both before a host has configured us and after
+    it disconnects, and only the first deserves the grace period above. The
+    second used to get it too: on the 2026-09-04 drive a USB disconnect landed
+    mid-write, the kernel disabled the endpoints at once, and modeld then sat
+    here for the full EP_READY_TIMEOUT retrying a link the UDC already said
+    was gone, 10 s and 201 frames before modeld fell back. Both errors look
+    the same at the endpoint; the UDC state is what tells them apart, and it
+    is set in the same interrupt that disabled the endpoint, so it is already
+    current by the time the failed call returns.
+    """
+    if not self._had_host or self.bound_udc is None:
+      return False
+    try:
+      with open(os.path.join(UDC_SYSFS, self.bound_udc, 'state')) as f:
+        return f.read().strip() != 'configured'
+    except OSError:
+      return False
 
   def close(self) -> None:
     self._closing = True

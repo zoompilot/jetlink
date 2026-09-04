@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from jetlink import protocol as P
+from jetlink.transport import ffs
 from jetlink.transport.base import LinkTimeout
 from jetlink.transport.ffs import FfsTransport
 
@@ -83,3 +84,42 @@ def test_padded_messages_survive_the_chunked_reader(mount):
     assert (b.seq, bytes(b.payload)) == (2, second)
   finally:
     t.close()
+
+
+def _bare_transport(**attrs):
+  """An FfsTransport with no gadget behind it, for the pure-Python paths."""
+  t = FfsTransport.__new__(FfsTransport)
+  t._ready_deadline = None
+  t._had_host = False
+  t.bound_udc = None
+  t.gadget = None
+  for k, v in attrs.items():
+    setattr(t, k, v)
+  return t
+
+
+def test_a_host_that_has_not_configured_us_yet_gets_the_grace_period(tmp_path, monkeypatch):
+  monkeypatch.setattr(ffs, 'EP_READY_TIMEOUT', 0.05)
+  t = _bare_transport(bound_udc='udc0')
+  monkeypatch.setattr(ffs, 'UDC_SYSFS', str(tmp_path))
+  state = tmp_path / 'udc0' / 'state'
+  state.parent.mkdir()
+  state.write_text('powered\n')
+  # Never talked to a host: ENODEV means "not yet", and we wait for it.
+  assert t._wait_for_host_ready() is True
+
+
+def test_a_host_that_disconnects_mid_session_ends_the_link_at_once(tmp_path, monkeypatch):
+  monkeypatch.setattr(ffs, 'EP_READY_TIMEOUT', 10.0)
+  t = _bare_transport(bound_udc='udc0', _had_host=True)
+  monkeypatch.setattr(ffs, 'UDC_SYSFS', str(tmp_path))
+  state = tmp_path / 'udc0' / 'state'
+  state.parent.mkdir()
+  state.write_text('not attached\n')
+  # No 10 s of retries against a link the UDC already reports as gone.
+  assert t._wait_for_host_ready() is False
+  # But a host that is still configured (endpoints being re-enabled after a
+  # reset, or the server not reading yet) keeps the grace period.
+  state.write_text('configured\n')
+  t._ready_deadline = None
+  assert t._wait_for_host_ready() is True
