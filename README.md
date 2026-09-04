@@ -128,6 +128,11 @@ USB *ethernet gadgets* are not an option: AGNOS has no host-side CDC-NCM,
 CDC-ECM or RNDIS driver. And wifi is not an option either — measured
 comma→Jetson it runs at 164 ms with 40 ms of jitter, missing every frame.
 
+Power the Jetson from an always-on feed and let the server suspend it
+(`--sleep-after`): the loaded engine survives a deep suspend and a USB edge
+wakes it in seconds, where a crank-switched feed costs a cold boot at every
+ignition. `docs/transport.md` has the measurements and the caveats.
+
 ## Layout
 
 ```

@@ -3,6 +3,11 @@
 #
 # The Jetson is the USB host, so there is no gadget to set up on this side -
 # it just needs /dev/bus/usb. The comma runs the gadget (see docs/transport.md).
+#
+# --sleep-after assumes the Jetson is on an always-on supply: with no gadget
+# for that long it deep-suspends and the next USB edge wakes it, engine still
+# loaded. That needs /sys/power writable, hence the second /sys mount. On a
+# switched supply the flag is harmless (power goes before the timeout does).
 [Unit]
 Description=jetlink inference server
 After=docker.service
@@ -22,7 +27,8 @@ ExecStart=/usr/bin/docker run --rm --name jetlink \
   -v /mnt/data/jetlink:/mnt/data/jetlink \
   -v /dev/bus/usb:/dev/bus/usb \
   -v /sys:/sys:ro \
-  jetlink:latest --transport usb
+  -v /sys/power:/sys/power \
+  jetlink:latest --transport usb --sleep-after 120
 ExecStop=/usr/bin/docker stop jetlink
 
 [Install]

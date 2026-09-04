@@ -26,6 +26,7 @@ from pathlib import Path
 
 from jetlink.server.builder import DEFAULT_CACHE, EngineCache, build_engine
 from jetlink.server.session import EngineHost, Session
+from jetlink.server.sleep import SLEEP_AFTER, Sleeper
 from jetlink.server.telemetry import Telemetry
 from jetlink.transport.base import LinkError
 
@@ -35,7 +36,7 @@ log = logging.getLogger('jetlink.server')
 DRAIN_TIMEOUT = 5.0
 
 
-def _serve(cache: EngineCache, open_transport) -> None:
+def _serve(cache: EngineCache, open_transport, sleeper: Sleeper | None = None) -> None:
   """Serve one client at a time forever.
 
   `open_transport()` returns a transport, or None to wait and retry. The three
@@ -43,13 +44,19 @@ def _serve(cache: EngineCache, open_transport) -> None:
   here once. The engine host is shared across sessions on purpose: the comma
   reconnects at every jetlinkd/modeld handover and the engine must not be
   reloaded each time.
+
+  With a `sleeper`, a long enough run of None suspends the box; see sleep.py.
   """
   host = EngineHost(cache, Telemetry())
   while True:
     transport = open_transport()
     if transport is None:
+      if sleeper is not None and sleeper.idle():
+        continue  # just woke up; look for the gadget right away
       time.sleep(2.0)
       continue
+    if sleeper is not None:
+      sleeper.touch()
     session = Session(transport, host)
     try:
       session.serve_forever()
@@ -62,6 +69,8 @@ def _serve(cache: EngineCache, open_transport) -> None:
         # than reopening under it; see StreamTransport.drain.
         transport.drain(DRAIN_TIMEOUT)
       transport.close()
+      if sleeper is not None:
+        sleeper.touch()
       log.info("client disconnected")
 
 
@@ -77,7 +86,7 @@ def _tcp_opener(args):
   return open_transport
 
 
-def _usb_opener(args):
+def _usb_opener(args, sleeper: Sleeper | None = None):
   """This end is the USB host. Needs no kernel driver: libusb uses usbfs."""
   from jetlink.transport.usbbulk import UsbBulkTransport
 
@@ -85,8 +94,14 @@ def _usb_opener(args):
     if not UsbBulkTransport.present(args.vid, args.pid):
       log.warning("waiting for a jetlink gadget at %04x:%04x", args.vid, args.pid)
       return None
+    if sleeper is not None:
+      # Present but not (yet) openable still means the comma is there. Do
+      # not sleep on it: nothing would wake us until it bounces the gadget.
+      sleeper.touch()
     try:
-      return UsbBulkTransport.open(args.vid, args.pid, timeout_ms=args.usb_timeout_ms)
+      transport = UsbBulkTransport.open(args.vid, args.pid, timeout_ms=args.usb_timeout_ms)
+      log.info("client connected over usb")
+      return transport
     except Exception as e:
       # Broad on purpose: this loop is the server's only supervisor. Anything
       # that escapes here exits the process, and under a restart policy that is
@@ -132,6 +147,10 @@ def main(argv=None) -> int:
   p.add_argument('--vid', type=lambda x: int(x, 0), default=0x1209)
   p.add_argument('--pid', type=lambda x: int(x, 0), default=0x0001)
   p.add_argument('--usb-timeout-ms', type=int, default=2000)
+  p.add_argument('--sleep-after', type=float, default=0.0, metavar='SECONDS',
+                 help='suspend the box (deep, USB wakes it) after this long with no '
+                      f'gadget; 0 = never. In the car use {SLEEP_AFTER:.0f}. '
+                      'Needs /sys/power writable in the container.')
   p.add_argument('--cache', default=str(DEFAULT_CACHE))
   p.add_argument('--build', metavar='ONNX', help='build an engine and exit')
   p.add_argument('--dump-spec', metavar='ONNX',
@@ -174,7 +193,19 @@ def main(argv=None) -> int:
     log.info("built: %s", entry.meta())
     return 0
 
-  _serve(cache, OPENERS[args.transport](args))
+  from jetlink.server.power import clear_stale_flag
+  clear_stale_flag(cache.root)
+
+  sleeper = None
+  if args.sleep_after > 0:
+    if args.transport != 'usb':
+      # tcp blocks in accept and never sees an absent client; ffs is the
+      # Jetson-as-gadget inversion, where the host end is the one that sleeps.
+      p.error('--sleep-after only makes sense with --transport usb')
+    sleeper = Sleeper(args.sleep_after)
+    log.info("will suspend after %.0f s without a gadget", args.sleep_after)
+  opener = _usb_opener(args, sleeper) if args.transport == 'usb' else OPENERS[args.transport](args)
+  _serve(cache, opener, sleeper)
   return 0
 
 
