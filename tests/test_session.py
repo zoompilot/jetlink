@@ -298,3 +298,74 @@ def test_sweep_temp_drops_only_stale_build_dirs(tmp_path):
 
   assert not stale.exists()
   assert fresh.exists()
+
+
+class TestPreload:
+  """A fresh server process has no engine loaded, and the first client pays the
+  deserialize. Offroad jetlinkd absorbs that, but at an ignition-on cold start
+  manager runs no jetlinkd, so it lands on modeld's join - at the end, after
+  the comma has already waited out the Jetson's boot."""
+
+  def _cache(self, tmp_path, spec, with_spec=True):
+    cache = EngineCache(tmp_path)
+    entry = cache.entry(spec.sha256)
+    entry.plan_path.write_bytes(b'plan')
+    meta = {'spec': spec.to_dict()} if with_spec else {'trt_version': 'x'}
+    entry.write_meta(meta)
+    cache.remember_loaded(spec.sha256, spec.frame_skip)
+    return cache
+
+  def test_the_last_loaded_engine_is_remembered_and_preloaded(self, tmp_path):
+    spec = make_spec()
+    cache = self._cache(tmp_path, spec)
+    assert cache.last_loaded() == (spec.sha256, spec.frame_skip)
+
+    host = EngineHost(cache)
+    started = []
+    host._start = lambda job, req, entry, mp, sp: started.append((job.sha256, job.load_only, sp.frame_skip))
+    host.preload()
+    assert started == [(spec.sha256, True, spec.frame_skip)]
+
+  def test_nothing_is_preloaded_without_a_marker(self, tmp_path):
+    host = EngineHost(EngineCache(tmp_path))
+    started = []
+    host._start = lambda *a: started.append(a)
+    host.preload()
+    assert started == []
+
+  def test_a_plan_whose_sidecar_has_no_spec_is_left_alone(self, tmp_path):
+    # Deriving one means parsing the ONNX, which is real work to do on a guess.
+    spec = make_spec()
+    cache = self._cache(tmp_path, spec, with_spec=False)
+    host = EngineHost(cache)
+    started = []
+    host._start = lambda *a: started.append(a)
+    host.preload()
+    assert started == []
+
+  def test_a_loaded_engine_is_not_preloaded_over(self, tmp_path):
+    spec = make_spec()
+    cache = self._cache(tmp_path, spec)
+    host = EngineHost(cache)
+    host.loaded = Loaded(spec.sha256, spec, object(), None, {})
+    started = []
+    host._start = lambda *a: started.append(a)
+    host.preload()
+    assert started == []
+
+  def test_a_different_frame_skip_is_not_served_from_the_loaded_engine(self, tmp_path):
+    """request() matched on sha alone, so a client asking for a different
+    frame_skip got the spec the previous one asked for. A preload guesses the
+    frame_skip from the marker, which makes that mismatch reachable."""
+    spec = make_spec()
+    host = EngineHost(EngineCache(tmp_path))
+    engine = FakeEngine(spec)
+    host.loaded = Loaded(spec.sha256, spec, engine, PolicyQueues(spec),
+                         {n: engine.host_input(n) for n in spec.input_shapes})
+    same = host.request(Request(spec.sha256, spec.nbytes, spec.frame_skip), None)
+    assert same['state'] == 'ready'
+
+    started = []
+    host._start = lambda *a: started.append(a)
+    other = host.request(Request(spec.sha256, spec.nbytes, spec.frame_skip + 1), None)
+    assert other['state'] != 'ready' or started, "served a spec the client did not ask for"

@@ -92,13 +92,20 @@ class EngineHost:
 
   # -- what a client sees ---------------------------------------------------
 
-  def status(self, sha256: str | None) -> dict:
-    """The engine state for one model, in the shape ENGINE_RESP carries."""
+  def status(self, sha256: str | None, frame_skip: int | None = None) -> dict:
+    """The engine state for one model, in the shape ENGINE_RESP carries.
+
+    frame_skip is part of the identity, not decoration: the spec handed back
+    is stamped with the value the client asked for, so an engine loaded under
+    a different one is not the engine this client wants. Matching on the sha
+    alone would answer "ready" and serve it the other client's spec.
+    """
     with self.lock:
       loaded, job = self.loaded, self.job
     if sha256 is None:
       return {'state': 'none', 'detail': '', 'sha256': None, 'chunk': CHUNK}
-    if loaded is not None and loaded.sha256 == sha256:
+    if (loaded is not None and loaded.sha256 == sha256
+        and (frame_skip is None or loaded.spec.frame_skip == frame_skip)):
       return {'state': 'ready', 'detail': '', 'sha256': sha256, 'chunk': CHUNK,
               'spec': loaded.spec.to_dict()}
     if job is not None and job.sha256 == sha256 and job.state != 'ready':
@@ -120,12 +127,13 @@ class EngineHost:
     """Make `req` the model being served, starting whatever that takes."""
     with self.lock:
       self.session = session
-      if self.loaded is not None and self.loaded.sha256 == req.sha256:
+      if (self.loaded is not None and self.loaded.sha256 == req.sha256
+          and self.loaded.spec.frame_skip == req.frame_skip):
         return self._ready(self.loaded)
       if self.job is not None and self.job.state == 'building':
         # Either it is this model, and the client simply attaches to the build
         # that is already running, or another build owns the GPU right now.
-        return self.status(req.sha256)
+        return self.status(req.sha256, req.frame_skip)
     entry = self.cache.entry(req.sha256)
     model_path = self.cache.model_path(req.sha256)
     spec = self._spec_on_disk(entry, model_path, req.frame_skip)
@@ -133,7 +141,7 @@ class EngineHost:
       self._start(Job(req.sha256, load_only=True), req, entry, model_path, spec)
     elif model_path.is_file() and model_path.stat().st_size == req.nbytes:
       self._start(Job(req.sha256, load_only=False), req, entry, model_path, spec)
-    return self.status(req.sha256)
+    return self.status(req.sha256, req.frame_skip)
 
   def _ready(self, loaded: Loaded) -> dict:
     return {'state': 'ready', 'detail': '', 'sha256': loaded.sha256, 'chunk': CHUNK,
@@ -142,6 +150,47 @@ class EngineHost:
   def _model_bytes(self, sha256: str) -> int:
     path = self.cache.model_path(sha256)
     return path.stat().st_size if path.exists() else 0
+
+  def preload(self) -> None:
+    """Start loading whatever was loaded last, before a client asks for it.
+
+    The engine survives a reconnect and a suspend, so the common paths never
+    pay for a load. A fresh process does: the server comes up, waits for a
+    gadget, and only deserializes the plan when the first client calls
+    ensure_engine. At an ignition-on cold start that is jetlinkd's slot minus
+    jetlinkd - manager runs it offroad only - so the wait lands on modeld's
+    join, at the end, after the comma has already been waiting out the
+    Jetson's boot. 6 s for a 766 MB plan, more for a larger one.
+
+    Started from the poll loop while it has no gadget, so the deserialize
+    overlaps the boot rather than following it. Guessing wrong costs idle
+    memory and one unload: `request` swaps to the model actually asked for,
+    exactly as it does for any other change.
+
+    Only a plan whose sidecar carries a spec is preloaded. Deriving one means
+    parsing the ONNX, which is real work to do on a guess, and a plan that old
+    is going to be re-provisioned anyway.
+    """
+    remembered = self.cache.last_loaded()
+    if remembered is None:
+      return
+    sha256, frame_skip = remembered
+    with self.lock:
+      if self.loaded is not None or self.job is not None:
+        return
+    entry = self.cache.entry(sha256)
+    if not entry.exists:
+      return
+    try:
+      d = entry.meta().get('spec')
+    except (OSError, ValueError):
+      return
+    if not d:
+      return
+    spec = ModelSpec.from_dict({**d, 'frame_skip': frame_skip})
+    log.info("preloading the engine loaded last: %s", entry.plan_path.name)
+    self._start(Job(sha256, load_only=True), Request(sha256, 0, frame_skip),
+                entry, self.cache.model_path(sha256), spec)
 
   def _spec_on_disk(self, entry: CacheEntry, model_path: Path, frame_skip: int) -> ModelSpec | None:
     """The spec for a cached plan, from its sidecar or, failing that, the ONNX.
@@ -208,6 +257,7 @@ class EngineHost:
       with self.lock:
         self.loaded = loaded
         job.state, job.detail = 'ready', ''
+      self.cache.remember_loaded(req.sha256, req.frame_skip)
       self._progress('load', 1.0, 'ready', force=True)
       log.info("engine ready: %s", entry.plan_path)
     except Exception as e:
@@ -261,7 +311,8 @@ class EngineHost:
     return spec_from_onnx(str(model_path), frame_skip=frame_skip)
 
   def _build(self, model_path: Path, plan_path: Path, meta_extra: dict) -> None:
-    build_engine(model_path, plan_path, report=self._progress, meta_extra=meta_extra)
+    build_engine(model_path, plan_path, report=self._progress, meta_extra=meta_extra,
+                 timing_cache=self.cache.timing_cache())
 
   # -- talking back ---------------------------------------------------------
 
@@ -381,8 +432,10 @@ class Session:
     else:
       self._error(msg.seq, 'unknown_message', f'type {mt}')
 
-  def _wanted(self) -> str | None:
-    return self.request.sha256 if self.request else None
+  def _wanted(self) -> tuple[str | None, int | None]:
+    """What this session asked for. The frame_skip goes with the sha because
+    the engine's identity includes it; see EngineHost.status."""
+    return (self.request.sha256, self.request.frame_skip) if self.request else (None, None)
 
   def on_hello(self, msg: Message) -> None:
     import tensorrt as trt
@@ -391,7 +444,7 @@ class Session:
       'protocol': P.VERSION,
       'trt_version': trt.__version__,
       'device': device_tag(),
-      'engine_state': self.host.status(self._wanted())['state'],
+      'engine_state': self.host.status(*self._wanted())['state'],
       'loaded': self.host.loaded_sha(),
       'frames_served': self.frames,
       'telemetry': self.telemetry.read(),
@@ -404,7 +457,7 @@ class Session:
     self._send_json(P.Msg.ENGINE_RESP, msg.seq, self.host.request(self.request, self))
 
   def _respond_engine(self, seq: int) -> None:
-    self._send_json(P.Msg.ENGINE_RESP, seq, self.host.status(self._wanted()))
+    self._send_json(P.Msg.ENGINE_RESP, seq, self.host.status(*self._wanted()))
 
   def on_upload_chunk(self, msg: Message) -> None:
     req = self.request
@@ -440,9 +493,11 @@ class Session:
 
   def on_infer(self, msg: Message) -> None:
     host = self.host
+    wanted_sha, wanted_skip = self._wanted()
     with host.lock:
       loaded = host.loaded
-      if loaded is None or loaded.sha256 != self._wanted():
+      if (loaded is None or loaded.sha256 != wanted_sha
+          or loaded.spec.frame_skip != wanted_skip):
         self._send(P.Msg.INFER_RESP, msg.seq,
                    (P.pack_infer_resp(0, P.Status.NOT_READY, 0, 0, 0),))
         return
@@ -515,7 +570,7 @@ class Session:
     request_poweroff(self.host.cache.root, reason)
 
   def on_state(self, msg: Message) -> None:
-    st = self.host.status(self._wanted())
+    st = self.host.status(*self._wanted())
     self._send_json(P.Msg.STATE_RESP, msg.seq, {
       **self.telemetry.read(),
       'engine_state': st['state'],

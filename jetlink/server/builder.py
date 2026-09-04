@@ -111,6 +111,20 @@ class CacheEntry:
     self.meta_path.write_text(json.dumps(meta, indent=2))
 
 
+# What the server loaded last, so a fresh process can start deserializing it
+# before a client asks. Beside the caches rather than in them: it describes the
+# server's history, not a plan.
+LAST_LOADED = 'last-loaded.json'
+
+# TensorRT's tactic timing cache. Every build times candidate kernels for each
+# layer, and most of those timings do not depend on the model: a warm cache cut
+# a Lebowski build from 254 s to 173 s, measured 2026-09-04. Keyed by TensorRT
+# version and GPU arch like the plans are, because a timing from another
+# version or another chip is not a timing at all. Advisory: a corrupt or stale
+# one costs a slow build, never a wrong engine, so every path here fails open.
+TIMING_CACHE = 'timing'
+
+
 class EngineCache:
   def __init__(self, root: Path = DEFAULT_CACHE):
     self.root = Path(root)
@@ -128,6 +142,29 @@ class EngineCache:
 
   def model_path(self, model_sha256: str) -> Path:
     return self.models / f"{model_sha256[:16]}.onnx"
+
+  def remember_loaded(self, sha256: str, frame_skip: int) -> None:
+    """Record what is loaded, for the next process to preload.
+
+    frame_skip goes with it because the spec a client is served is stamped
+    with the one it asked for, so preloading under a different value would
+    hand the next client a spec it did not request.
+    """
+    try:
+      (self.root / LAST_LOADED).write_text(json.dumps({'sha256': sha256, 'frame_skip': frame_skip}))
+    except OSError:
+      pass   # a read-only cache still serves; it just cannot preload next time
+
+  def last_loaded(self) -> tuple[str, int] | None:
+    try:
+      d = json.loads((self.root / LAST_LOADED).read_text())
+      sha, skip = d['sha256'], int(d['frame_skip'])
+    except (OSError, ValueError, KeyError, TypeError):
+      return None
+    return (sha, skip) if re.fullmatch(r'[0-9a-f]{64}', sha) else None
+
+  def timing_cache(self) -> Path:
+    return self.engines / f"{TIMING_CACHE}.trt{_sanitize(trt.__version__)}.{device_tag()}.cache"
 
   def prune(self, keep: int = KEEP_PLANS, protect: Path | None = None) -> None:
     """Keep the newest few plans; each is ~770 MB.
@@ -196,11 +233,51 @@ class _Monitor(trt.IProgressMonitor):
       self.root = None
 
 
+def _load_timing_cache(config, path: str | Path | None):
+  """Seed the builder's tactic timings from a previous build, if we have any.
+
+  Fails open on everything: a cache written by another TensorRT version makes
+  `create_timing_cache` reject it, and a truncated one from a killed build
+  reads as garbage. Either way the build runs, it just runs cold.
+  """
+  if path is None:
+    return None
+  blob = b''
+  try:
+    blob = Path(path).read_bytes()
+  except OSError:
+    pass
+  try:
+    cache = config.create_timing_cache(blob)
+    if cache is not None:
+      config.set_timing_cache(cache, ignore_mismatch=False)
+    return cache
+  except Exception as e:
+    log.warning("timing cache unusable (%s), building cold", e)
+    return None
+
+
+def _save_timing_cache(cache, path: str | Path | None) -> None:
+  if cache is None or path is None:
+    return
+  try:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    # Same atomic dance as the plan: a build killed mid-write would otherwise
+    # leave a truncated cache for the next one to read.
+    tmp = p.with_suffix(p.suffix + '.tmp')
+    tmp.write_bytes(memoryview(cache.serialize()))
+    tmp.replace(p)
+  except (OSError, AttributeError) as e:
+    log.warning("could not write the timing cache: %s", e)
+
+
 def build_engine(onnx_path: str | Path, out_path: str | Path,
                  report: ProgressFn | None = None,
                  fp16: bool = True, optimization_level: int = 3,
                  workspace: int | None = None,
-                 meta_extra: dict | None = None) -> Path:
+                 meta_extra: dict | None = None,
+                 timing_cache: str | Path | None = None) -> Path:
   """Patch, parse and build. Writes the plan atomically.
 
   `meta_extra` lands in the sidecar json next to the plan; the server keeps
@@ -241,11 +318,13 @@ def build_engine(onnx_path: str | Path, out_path: str | Path,
     config.builder_optimization_level = optimization_level
     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace)
     config.progress_monitor = _Monitor(report)
+    cache = _load_timing_cache(config, timing_cache)
 
     report('build', 0.0, 'building engine')
     plan = builder.build_serialized_network(network, config)
     if plan is None:
       raise RuntimeError("TensorRT returned no engine; see the build log")
+    _save_timing_cache(cache, timing_cache)
 
     staged = Path(tmp) / 'engine.plan'
     with open(staged, 'wb') as f:

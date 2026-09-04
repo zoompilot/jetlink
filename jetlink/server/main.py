@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -48,6 +49,10 @@ def _serve(cache: EngineCache, open_transport, sleeper: Sleeper | None = None) -
   With a `sleeper`, a long enough run of None suspends the box; see sleep.py.
   """
   host = EngineHost(cache, Telemetry())
+  # Before the first client, not after it: see EngineHost.preload. Off the
+  # poll thread because deserializing a 1.7 GB plan would otherwise be time
+  # spent not looking for the gadget that is about to arrive.
+  threading.Thread(target=host.preload, daemon=True, name='jetlink-preload').start()
   while True:
     transport = open_transport()
     if transport is None:
@@ -188,7 +193,7 @@ def main(argv=None) -> int:
 
     # Carry the spec into the sidecar like a served build does, so the first
     # client to connect loads the plan instead of reparsing the ONNX for it.
-    build_engine(args.build, entry.plan_path, report=report,
+    build_engine(args.build, entry.plan_path, report=report, timing_cache=cache.timing_cache(),
                  meta_extra={'spec': spec_from_onnx(args.build).to_dict()})
     log.info("built: %s", entry.meta())
     return 0
