@@ -234,11 +234,16 @@ class Sleeper:
         wakeup = dev / 'power' / 'wakeup'
         if wakeup.read_text().strip() != 'disabled':
           continue
+      except OSError:
+        # Not a hub we can judge: this directory also holds interfaces
+        # ("2-1:1.0"), which have bInterfaceClass and no bDeviceClass at all,
+        # so reading it raises. Treating that as a hub we failed to arm named
+        # six interfaces in an error that told the reader to go fix a udev
+        # rule that was already installed and already working.
+        continue
+      try:
         wakeup.write_text('enabled\n')
       except OSError:
-        # Either the write was refused (read-only /sys, the usual case) or the
-        # device went away between the listing and the read. Both mean we
-        # cannot vouch for it.
         disarmed.append(dev.name)
     if disarmed:
       log.error("hub(s) %s are not armed for remote wakeup and could not be armed from "

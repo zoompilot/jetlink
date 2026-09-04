@@ -247,6 +247,25 @@ def test_a_hub_that_cannot_be_armed_is_reported_loudly(tmp_path, clock, caplog):
   assert 'wake this box' in caplog.text
 
 
+def test_usb_interfaces_are_not_mistaken_for_unarmable_hubs(tmp_path, clock, caplog):
+    """/sys/bus/usb/devices holds interfaces ("2-1:1.0") next to devices. They
+    carry bInterfaceClass and no bDeviceClass, so the read raises, and counting
+    that as a hub we could not arm produced an error naming six interfaces and
+    telling the reader to install a rule that was already working."""
+    import logging
+    u = usb(tmp_path, hubs=(('2-1', 'enabled'),), other=())
+    for iface in ('2-1:1.0', '1-0:1.0'):
+      d = u / iface
+      (d / 'power').mkdir(parents=True)
+      (d / 'bInterfaceClass').write_text('09\n')     # a hub interface, no bDeviceClass
+      (d / 'power' / 'wakeup').write_text('disabled\n')
+    s = Kernel(after=1, power=power(tmp_path), rtc=rtc(tmp_path), usb=u, backstop=0)
+    clock[0] += 10
+    with caplog.at_level(logging.ERROR):
+      assert s.idle() is True
+    assert caplog.text == '', f"interfaces reported as hubs: {caplog.text}"
+
+
 def test_hubs_are_armed_for_remote_wakeup_before_sleeping(tmp_path, clock):
   """The 2026-09-04 failure: the SuperSpeed hub the comma hangs off ships with
   wakeup disabled, so presenting the gadget got a bus reset and no
