@@ -163,6 +163,14 @@ class JetlinkClient:
     self._expect(P.Msg.PONG, seq, timeout)
     return time.perf_counter() - t0
 
+  def shutdown(self, reason: str = '', timeout: float = 5.0) -> dict:
+    """Ask the Jetson to power off. Off, not asleep: only a DC cycle or the
+    power button brings it back, so this is for the comma's own low-battery
+    shutdown and nothing else. The reply comes before the box goes down."""
+    seq = self._next_seq()
+    self.t.send_json(P.Msg.SHUTDOWN_REQ, seq, {'reason': reason})
+    return json.loads(bytes(self._expect(P.Msg.SHUTDOWN_RESP, seq, timeout).payload))
+
   # -- model provisioning ---------------------------------------------------
 
   def ensure_engine(self, sha256: str, nbytes: int, onnx_path: str | Path | None = None,

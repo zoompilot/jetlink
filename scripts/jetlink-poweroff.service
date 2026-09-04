@@ -1,0 +1,6 @@
+[Unit]
+Description=jetlink: power off because the comma asked
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jetlink-poweroff.sh /mnt/data/jetlink/poweroff

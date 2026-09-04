@@ -209,6 +209,29 @@ def test_ping_and_state_requests(link):
   assert hello['protocol'] == P.VERSION
 
 
+def test_shutdown_replies_before_leaving_the_flag(link, tmp_path):
+  from jetlink.server import power
+  client, session, engine, spec = link
+  session.host.cache.root = tmp_path
+  resp = client.shutdown('car battery', timeout=5)
+  assert resp['ok'] is True
+  flag = power.flag_path(tmp_path)
+  deadline = time.monotonic() + 2.0
+  while not flag.exists() and time.monotonic() < deadline:
+    time.sleep(0.01)
+  assert 'car battery' in flag.read_text()
+  # The link is still usable: the host is what goes down, not the session.
+  assert client.ping(timeout=5) < 5.0
+
+
+def test_a_stale_poweroff_flag_is_removed_at_startup(tmp_path):
+  from jetlink.server import power
+  assert power.request_poweroff(tmp_path, 'test')
+  power.clear_stale_flag(tmp_path)
+  assert not power.flag_path(tmp_path).exists()
+  power.clear_stale_flag(tmp_path)  # and nothing to do is not an error
+
+
 def test_wrong_sized_request_is_rejected(link):
   """A client on a different model must be told, not silently fed garbage.
 

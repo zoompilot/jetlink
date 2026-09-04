@@ -1,0 +1,16 @@
+# Watches for the flag the server writes when the comma asks the Jetson to
+# power off (jetlink/server/power.py). Install both units and the script:
+#   sudo install -m 755 scripts/jetlink-poweroff.sh /usr/local/bin/
+#   sudo install -m 644 scripts/jetlink-poweroff.{path,service} /etc/systemd/system/
+#   sudo systemctl enable --now jetlink-poweroff.path
+# touch /mnt/data/jetlink/poweroff-dry-run to disarm it on a bench.
+[Unit]
+Description=jetlink: power off when the comma asks
+RequiresMountsFor=/mnt/data/jetlink
+
+[Path]
+PathExists=/mnt/data/jetlink/poweroff
+Unit=jetlink-poweroff.service
+
+[Install]
+WantedBy=multi-user.target

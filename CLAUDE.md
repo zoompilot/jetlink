@@ -131,6 +131,17 @@ Two import cycles are already avoided on purpose, do not undo them:
 - Backends never import `process_config`. `Daemon` is a description, and manager
   owns the onroad gating.
 
+### The UI identifies a chestnut by USB id; we are the gadget
+
+Upstream's `ui: show usb connection` (#38745) decides `usb_unknown` by looking
+for a chestnut USB id among the devices the comma enumerated as a host. The
+comma is jetlink's gadget and enumerates nothing, so that check showed the
+generic USB icon instead of the accelerator icon. `ui_state.py` now also
+accepts `deviceState.chestnutPresent`. Expect this again: anything upstream
+adds that recognises the board by USB id needs the same `chestnut_present`
+guard. Offroad, an accelerator that is provisioning reads as LOADING from the
+progress param, not UNCOMPILED, and only a `failed` stage reads as FAILED.
+
 ### Cereal keeps comma's names
 
 `deviceState.chestnutPresent` and `chestnutState` are unchanged. Renaming cereal
@@ -624,6 +635,49 @@ minute after Jetson power-on. A re-flash brings it back; check with
 
 `waiting for a jetlink gadget at 1209:0001` in the log means the comma is not
 presenting. That is a comma-side or cable problem, not a server one.
+
+The container is started by hand on the bench Jetson, not by the unit, so a
+`docker rm -f` and `docker run` (needed to change mounts or arguments) has to
+carry the same flags: `--restart unless-stopped --runtime nvidia
+--device-cgroup-rule "c 189:* rmw"`, the three mounts in `run.sh`, and
+`--transport usb --sleep-after 120`. A fresh container is the *image's* code:
+`docker cp` again after recreating it.
+
+### Suspend
+
+With `--sleep-after`, no gadget for that long deep-suspends the Jetson, and
+any USB edge wakes it with the engine still loaded (`server/sleep.py`,
+`docs/transport.md`). On the bench that means: kill jetlinkd on the comma and
+two minutes later the Jetson is asleep and ssh is gone. Starting jetlinkd
+again wakes it in ~6 s. The freezer refuses to freeze an ssh session's
+processes sometimes, so a bench attempt can fail with `EBUSY` where the car
+would not; the server logs `suspend failed` and retries with backoff. The
+proof it slept is `/sys/power/suspend_stats/success` moving, and the server
+logs `resumed after N s asleep`. `sudo rtcwake -m no -s 600` before a bench
+test arms a safety alarm in case the wake path breaks.
+
+jetlinkd releases the gadget a minute after it has nothing to do (the fork's
+`DORMANT_HOLD`), so on the bench a freshly started jetlinkd puts the Jetson
+to sleep about three minutes later without anyone killing anything. It keeps
+`present()` true through `/dev/shm/jetlink-dormant`; if chestnutPresent
+drops while parked, check that marker and the pid in it first.
+
+### Poweroff
+
+`SHUTDOWN_REQ` makes the server write `/mnt/data/jetlink/poweroff`, and
+`jetlink-poweroff.path` on the host acts on it (install lines are in the
+unit file). The bench Jetson has `poweroff-dry-run` touched in the cache
+dir, so the request only logs `jetlink-poweroff: dry run` to the journal;
+remove that file to arm it, and know that a powered-off devkit needs the
+button or a DC cycle. Read the unit's own journal
+(`journalctl -u jetlink-poweroff.service`): `logger` does not reach journald
+on this L4T image, so the script speaks through its stdout. The comma-side trigger is
+`accelerators.shutdown("reason")`, which hardwared calls before DoShutdown.
+
+The rootfs is 3.7 GB and was found full on 2026-09-04: a 2.1 GB inactive
+`/swapfile` (the real swap is on `/mnt/data`) plus a 380 MB journal. The
+swapfile is gone and `SystemMaxUse=150M` is in journald.conf; `df -h /`
+before installing anything.
 
 ## Conventions
 

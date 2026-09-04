@@ -38,6 +38,10 @@ from jetlink.transport.base import LinkError, LinkTimeout, Message, Transport
 
 log = logging.getLogger('jetlink.server')
 
+# Server-side turnaround worth a log line. The comma's own line fires at
+# 80 ms end to end; anything past this here is most of that budget.
+SLOW_FRAME_US = 60_000
+
 PROGRESS_MIN_INTERVAL = 0.25  # s; the comma only needs a progress bar, not every step
 
 
@@ -372,6 +376,8 @@ class Session:
       self.on_upload_done(msg)
     elif mt == P.Msg.STATE_REQ:
       self.on_state(msg)
+    elif mt == P.Msg.SHUTDOWN_REQ:
+      self.on_shutdown(msg)
     else:
       self._error(msg.seq, 'unknown_message', f'type {mt}')
 
@@ -487,10 +493,26 @@ class Session:
       parts.append(self._telemetry_cache)
     self._send(P.Msg.INFER_RESP, msg.seq, parts)
     self.frames += 1
+    if total_us > SLOW_FRAME_US:
+      # After the reply, so the log write never delays it. The comma logs the
+      # same frame split by its own stages; together they say which end, and
+      # which stage of it, a slow frame belongs to.
+      log.warning("slow frame %d: gpu %.1f queue %.1f total %.1f ms", frame_id,
+                  loaded.engine.last_gpu_us / 1e3, queue_us / 1e3, total_us / 1e3)
     if flags & P.Flag.WANT_STATE:
       # ~30 sysfs reads. Refresh after replying, never between the GPU result
       # and the wire: health data must not cost a frame.
       self._telemetry_cache = json.dumps(self.telemetry.read()).encode()
+
+  def on_shutdown(self, msg: Message) -> None:
+    from jetlink.server.power import request_poweroff
+    d = json.loads(bytes(msg.payload) or b'{}')
+    reason = str(d.get('reason', ''))
+    log.warning("shutdown requested by the client: %s", reason or 'no reason given')
+    # Reply first. The host acts on the flag within milliseconds and stops the
+    # container on its way down, and the client is waiting for this.
+    self._send_json(P.Msg.SHUTDOWN_RESP, msg.seq, {'ok': True, 'detail': 'powering off'})
+    request_poweroff(self.host.cache.root, reason)
 
   def on_state(self, msg: Message) -> None:
     st = self.host.status(self._wanted())

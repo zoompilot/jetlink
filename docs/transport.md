@@ -148,3 +148,62 @@ AGNOS) to the Jetson's 1 GbE. Set the `JetlinkEndpoint` param to
 - Boot time means the big model is not ready at engagement. openpilot's existing
   shape already covers it (`BIG_MODEL_TIMEOUT = 60`, start on the small model),
   and jetlinkd provisions offroad so the engine is cached before you drive.
+
+### Always-on supply, and suspend
+
+An ignition-switched feed reboots the Jetson at every crank: ~65 s from power
+to engine ready once dockerd stops waiting for a network, and every shutdown
+is an ungraceful one. An always-on feed avoids both, and deep suspend makes it
+affordable: the loaded engine, the CUDA context and libusb all survive a
+suspend, and a resume is ~6 s to a kernel and ~13 s to a network. Measured on
+the bench 2026-09-04: after a resume the live bench joined with a 6 ms build
+and ran 31.2 ms mean over 90 s with no reload.
+
+USB is the wake source, and *both* edges wake it: the comma presenting the
+gadget and the comma dropping it. So ignition-off, which pulls the gadget,
+wakes the Jetson, and the policy has to be a loop, not a command. The server
+runs it (`--sleep-after`, `jetlink/server/sleep.py`): awake with no gadget for
+120 s means nobody wants us, suspend again. 120 s is longer than the gadget's
+re-enumeration at the jetlinkd/modeld handover (45 to 70 s observed), so a
+handover never sleeps through. The same rule covers a mid-drive disconnect
+longer than that: the next enumeration is a wake.
+
+The comma side does have to let go: a parked comma stays awake for up to 30
+hours holding the gadget, and with the gadget held the Jetson never sleeps.
+jetlinkd releases it once the engine is ready and a minute has passed since
+ignition-off (`DORMANT_HOLD` in the fork), and presents it again only for
+work or for the shutdown below. See docs/openpilot-integration.md.
+
+### Powering off with the comma
+
+Sleep is not off. When the comma's own battery policy shuts it down (11.8 V
+or 30 hours parked) it asks the Jetson to power off too: `SHUTDOWN_REQ` on
+the wire, a flag file on the cache volume from the server, and a host-side
+path unit (`scripts/jetlink-poweroff.path`) that runs `systemctl poweroff`.
+The script deletes the flag before powering off and ignores one older than
+the current boot, so a stale flag cannot loop the box. `touch
+/mnt/data/jetlink/poweroff-dry-run` disarms it on a bench. Off stays off on
+an always-on feed: fit a low-voltage disconnect that reconnects when the
+alternator is running (the devkit auto-powers-on when DC returns), or wire
+ignition to the power button pin on the J14 header.
+
+A suspend attempt can fail without saying so: the freezer gives up on a
+process that will not freeze (a bench ssh session did it) and the write to
+`/sys/power/state` returns `EBUSY` with the box still awake, or a wake edge
+lands during the freeze and the write returns cleanly having slept nothing.
+The server checks `suspend_stats/success` moved, and backs off 10 s doubling
+to 5 min between failed attempts, because each one freezes every process on
+the box for the freezer's 20 s timeout.
+
+The container needs `/sys/power` read-write (`run.sh` and the unit mount it
+over the read-only `/sys`) and `mem_sleep` has to offer `deep`; L4T r36.4
+selects it by default and the server selects it if not. USB wakeup is
+enabled by default on the root hubs and the onboard Realtek hub; the comma's
+gadget does not advertise remote wakeup and does not need to, the hub port's
+connect/disconnect is what wakes the SoC. `tegra-dce` logs a failed resume
+(`-22`) every time; it is the display engine and there is no display.
+
+Unmeasured, and it decides whether this is safe to wire permanently: the
+suspended draw at the barrel jack. Awake and idle is 6.8 W, about 7 Ah over
+a twelve hour park; if suspend lands near 1 W it is a non-issue. Put a meter
+on it first.

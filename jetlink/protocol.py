@@ -74,6 +74,8 @@ class Msg(IntEnum):
   ERROR = 14           # json: {error, detail}
   PING = 15
   PONG = 16
+  SHUTDOWN_REQ = 17    # json: {reason} -> power the Jetson off for good; see server/power.py
+  SHUTDOWN_RESP = 18   # json: {ok, detail}
 
 
 class Flag(IntEnum):

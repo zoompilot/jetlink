@@ -119,6 +119,41 @@ finds an engine already built and only loads it (~1 s).
 It also keeps exactly one process on the link at a time: jetlinkd offroad,
 modeld onroad.
 
+### The parked car
+
+Holding the gadget is the daemon's first job, but not for the whole park. A
+Jetson on an always-on supply sleeps when it has had no gadget for 120 s
+(`jetlink/server/sleep.py`) and wakes on the next USB edge, so once the
+engine is confirmed ready and `DORMANT_HOLD` (60 s from ignition-off, which
+is when manager starts the daemon) has passed, jetlinkd releases the gadget
+on purpose. That is the disconnect that lets the Jetson sleep, about three
+minutes after the car is parked. It writes `/dev/shm/jetlink-dormant` first
+so `present()` keeps answering true and the offroad alert stays quiet: the
+Jetson is there, only unreachable until something presents the gadget again.
+
+It presents it again when there is work the link can do: the readiness
+param cleared (modeld found the engine gone), the selected model changed, or
+hardwared asking for the Jetson to be powered off. At ignition, modeld's own
+bind is the wake; measured on the bench, a server answers about 8 s after
+the bind, inside modeld's 45 s connect timeout.
+
+### Taking the Jetson down with the comma
+
+The comma has a battery policy and the Jetson does not: hardwared shuts the
+device down below 11.8 V or after 30 hours parked, and a Jetson asleep on an
+always-on feed keeps drawing. So hardwared calls `accelerators.shutdown()`
+just before it sets `DoShutdown`. The protocol method is optional, comma's
+board dies with the device and has none. jetlink's backend cannot touch the
+link from hardwared, jetlinkd owns it, so it leaves a request in
+`/dev/shm/jetlink-shutdown` and waits up to 25 s. jetlinkd presents the
+gadget if it was dormant (which wakes the Jetson), sends `SHUTDOWN_REQ`, and
+removes the request; the server drops a flag file on its cache volume and a
+host-side path unit runs the poweroff (`scripts/jetlink-poweroff.*`).
+
+Off is off. On an always-on feed nothing but the power button or a DC cycle
+brings it back, so pair this with a low-voltage disconnect that reconnects
+when the alternator is running, or with ignition wired to the button header.
+
 ## Reusing chestnut's surfaces
 
 Nothing in cereal, the UI or the alerts changed. modeld sets
