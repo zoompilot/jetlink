@@ -34,6 +34,21 @@ def rtc(tmp_path, since_epoch=1_700_000_000):
   return r
 
 
+def usb(tmp_path, hubs=(('2-1', 'disabled'), ('usb2', 'enabled')), other=('1-3',)):
+  u = tmp_path / 'usbdev'
+  for name, wake in hubs:
+    d = u / name
+    (d / 'power').mkdir(parents=True)
+    (d / 'bDeviceClass').write_text('09\n')
+    (d / 'power' / 'wakeup').write_text(wake + '\n')
+  for name in other:
+    d = u / name
+    (d / 'power').mkdir(parents=True)
+    (d / 'bDeviceClass').write_text('e0\n')      # not a hub; a bluetooth radio
+    (d / 'power' / 'wakeup').write_text('disabled\n')
+  return u
+
+
 class Kernel(S.Sleeper):
   """A Sleeper whose write to /sys/power/state behaves like the kernel we tell it to."""
 
@@ -212,6 +227,30 @@ def test_no_rtc_is_not_a_reason_not_to_sleep(tmp_path, clock):
   # A kernel with no alarm support, or a container that cannot write it. The
   # USB edge is still there; only the backstop is gone.
   s = Kernel(after=1, power=power(tmp_path), rtc=tmp_path / 'nope', backstop=1800)
+  clock[0] += 10
+  assert s.idle() is True
+  assert s.slept == 1
+
+
+def test_hubs_are_armed_for_remote_wakeup_before_sleeping(tmp_path, clock):
+  """The 2026-09-04 failure: the SuperSpeed hub the comma hangs off ships with
+  wakeup disabled, so presenting the gadget got a bus reset and no
+  enumeration, the UDC sat at "default" for fifteen minutes, and the box took
+  its button. Which hub carries us depends on the negotiated speed, so arm
+  every one rather than the one we happen to see."""
+  u = usb(tmp_path)
+  s = Kernel(after=1, power=power(tmp_path), rtc=rtc(tmp_path), usb=u, backstop=0)
+  clock[0] += 10
+  assert s.idle() is True
+  assert (u / '2-1' / 'power' / 'wakeup').read_text().strip() == 'enabled'
+  assert (u / 'usb2' / 'power' / 'wakeup').read_text().strip() == 'enabled'
+  # Not a hub, so not ours to touch: a bluetooth radio waking the box on every
+  # stray packet is not what this is for.
+  assert (u / '1-3' / 'power' / 'wakeup').read_text().strip() == 'disabled'
+
+
+def test_missing_usb_tree_is_not_a_reason_not_to_sleep(tmp_path, clock):
+  s = Kernel(after=1, power=power(tmp_path), rtc=rtc(tmp_path), usb=tmp_path / 'nope', backstop=0)
   clock[0] += 10
   assert s.idle() is True
   assert s.slept == 1

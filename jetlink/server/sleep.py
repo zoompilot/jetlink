@@ -66,6 +66,10 @@ FREEZER_TIMEOUT = 20.0
 WAKE_BACKSTOP = 1800.0
 RTC = '/sys/class/rtc/rtc0'
 
+# Where the hubs live, and the class code that says a USB device is one.
+USB_DEVICES = '/sys/bus/usb/devices'
+HUB_CLASS = '09'
+
 
 def _boottime() -> float:
   # Counts through a suspend, unlike CLOCK_MONOTONIC, so the difference across
@@ -83,11 +87,13 @@ class Sleeper:
   """
 
   def __init__(self, after: float = SLEEP_AFTER, power: str | Path = '/sys/power',
-               rtc: str | Path = RTC, backstop: float = WAKE_BACKSTOP):
+               rtc: str | Path = RTC, backstop: float = WAKE_BACKSTOP,
+               usb: str | Path = USB_DEVICES):
     self.after = float(after)
     self.power = Path(power)
     self.rtc = Path(rtc)
     self.backstop = float(backstop)
+    self.usb = Path(usb)
     self.enabled = True
     self._last_seen = time.monotonic()
     self._retry_at = 0.0
@@ -158,6 +164,7 @@ class Sleeper:
     before = self._read_int('suspend_stats/success')
     t0 = _boottime()
     log.info("no gadget for %.0f s, suspending", self.after)
+    self._arm_usb_wakeup()
     armed = self._arm_backstop()
     try:
       self._enter()
@@ -188,6 +195,46 @@ class Sleeper:
     self.slept += 1
     log.info("resumed after %.0f s asleep", asleep)
     return True
+
+  def _arm_usb_wakeup(self) -> list[str]:
+    """Make sure a hub can tell the controller the comma just showed up.
+
+    The comma is the gadget and hangs off the onboard Realtek hub, so a
+    connect on a downstream port has to be signalled up by that hub before
+    the root hub or tegra-xusb ever hear about it. Those three ship with
+    wakeup enabled; the SuperSpeed hub does not, and at SuperSpeed it is the
+    one in our path. Measured 2026-09-04: with it disabled the comma's UDC sat
+    at "default" for fifteen minutes over four connect cycles and the Jetson
+    never woke, and a wake-on-LAN did not reach it either - it took the
+    button. With it enabled the Jetson resumed 4 s after the bind.
+
+    Which hub carries us depends on the negotiated speed - at 480 Mbps it is
+    the USB 2.0 hub, which happens to ship enabled - so arm every hub rather
+    than the one we can see. There is a udev rule that does this at boot; this
+    is here because the rule is on the host filesystem and a re-flash loses
+    it, the same way it loses the masked networkd unit, and the failure is
+    silent and costs a whole drive.
+    """
+    armed = []
+    try:
+      devices = sorted(self.usb.iterdir())
+    except OSError:
+      return armed
+    for dev in devices:
+      try:
+        if (dev / 'bDeviceClass').read_text().strip() != HUB_CLASS:
+          continue
+        wakeup = dev / 'power' / 'wakeup'
+        if wakeup.read_text().strip() != 'disabled':
+          continue
+        wakeup.write_text('enabled\n')
+      except OSError:
+        continue   # gone between the listing and the read, or not ours to set
+      armed.append(dev.name)
+    if armed:
+      log.warning("armed %s for remote wakeup; a sleep now would not have woken on USB",
+                  ', '.join(armed))
+    return armed
 
   def _arm_backstop(self) -> bool:
     """Set an RTC alarm so a wake we do not control still happens.

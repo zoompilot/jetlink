@@ -789,26 +789,48 @@ to sleep about three minutes later without anyone killing anything. It keeps
 `present()` true through `/dev/shm/jetlink-dormant`; if chestnutPresent
 drops while parked, check that marker and the pid in it first.
 
-**The USB wake is not guaranteed.** Observed 2026-09-04: jetlinkd released the
-gadget, the Jetson slept, and presenting it again did not bring it back. The
-comma's UDC went `not attached` to `default` - a bus reset with no
-SET_ADDRESS, which is the Realtek hub holding VBUS up while the Jetson's xHCI
-is still down - and stayed there through four connect cycles, ~10 minutes. No
-LAN, no ssh, and a wake-on-LAN magic packet to its NIC did nothing either,
-though the NIC was answering ARP the whole time. The comma also logged
-`dwc3 a600000.dwc3: failed to stop controller` on one unbind. It needed the
-button.
+**The USB wake needs the hub armed, and the hub ships disarmed.** The comma is
+the gadget and hangs off the onboard Realtek hub, so a connect on a downstream
+port has to be signalled up by that hub before the root hub or tegra-xusb ever
+hear about it:
 
-In the car that is a whole drive small-model with nothing able to recover it,
-because the only thing that could ask is the comma and it is already asking.
-So `Sleeper` arms an RTC alarm (`WAKE_BACKSTOP`, 30 min) before every sleep
-and clears it after, which bounds the outage to one period without depending
-on the path that failed. It is set against `/sys/class/rtc/rtc0/since_epoch`,
-not the wall clock, because this box boots with an unset clock - see below.
+```
+2-1   0bda:0489  speed=10000  wakeup=disabled   <- SuperSpeed hub, our path
+1-2   0bda:5489  speed=480    wakeup=enabled
+usb2  1d6b:0003  speed=10000  wakeup=enabled
+3610000.usb (tegra-xusb)      wakeup=enabled
+```
+
+The controller and both root hubs are enabled out of the box, which is why
+this looks fine at a glance. `2-1` is not, and at SuperSpeed `2-1` is the hub
+we are behind. Measured 2026-09-04 with it disabled: jetlinkd released the
+gadget, the Jetson slept, and presenting it again produced a bus reset with no
+SET_ADDRESS - the comma's UDC sat at `default` through four connect cycles and
+fifteen minutes, no LAN, no ssh, and a wake-on-LAN magic packet did nothing
+either though the NIC answered ARP throughout. It took the button. With `2-1`
+enabled, the same test: `suspend_stats/success` 0 to 1, 46 s asleep, and the
+box resumed **4 s** after the bind.
+
+This is also why the wake looked like it worked before: which hub carries us
+depends on the negotiated speed, and at 480 Mbps it is `1-2`, which happens to
+ship enabled. A cable or port that drops you to USB 2 hides the bug.
+
+Two places keep it armed, because one is not enough:
+`/etc/udev/rules.d/99-jetlink-usb-wakeup.rules` arms every hub at boot, and
+`Sleeper._arm_usb_wakeup` re-checks before every suspend, because the udev
+rule is on the host filesystem and a re-flash loses it exactly as it loses the
+masked networkd unit - silently, and at the cost of a drive.
+
+`Sleeper` also arms an RTC alarm (`WAKE_BACKSTOP`, 30 min) before each sleep
+and clears it after, so a wake path that fails some other way costs one period
+rather than the whole park. It is set against
+`/sys/class/rtc/rtc0/since_epoch`, not the wall clock, because this box boots
+with an unset clock - see below.
 
 If a Jetson is unreachable on both LAN and USB, check `arp -an` for its MAC
 before assuming it is powered off: a NIC answering ARP with no ping means
-suspended, not dead.
+suspended, not dead. `wakediag`-style checks worth keeping: `power/wakeup` on
+every `/sys/bus/usb/devices/*`, and `/sys/power/suspend_stats/success` moving.
 
 ### Poweroff
 
