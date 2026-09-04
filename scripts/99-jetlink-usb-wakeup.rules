@@ -1,0 +1,18 @@
+# jetlink: let a USB hub wake this box when the comma presents its gadget.
+# Install:
+#   sudo install -m 644 scripts/99-jetlink-usb-wakeup.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usb --action=add
+# Check: every /sys/bus/usb/devices/*/power/wakeup on a hub reads "enabled".
+#
+# The comma is the gadget and hangs off the onboard Realtek hub, so a connect
+# on a downstream port has to be signalled up by that hub before the root hub
+# and the controller ever see it. tegra-xusb and both root hubs ship with
+# wakeup enabled; the SuperSpeed hub (2-1, 0bda:0489) ships disabled, and at
+# SuperSpeed that is the one in our path. Measured 2026-09-04: with it
+# disabled the comma's UDC sat at "default" for fifteen minutes and the Jetson
+# never woke; with it enabled the Jetson resumed 4 s after the bind.
+#
+# Every hub, not just that one, because which hub carries us depends on the
+# negotiated speed: at 480 Mbps it is 1-2, which happens to ship enabled, and
+# that is why this looked like it worked before.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{bDeviceClass}=="09", ATTR{power/wakeup}="enabled"

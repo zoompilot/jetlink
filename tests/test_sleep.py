@@ -232,6 +232,21 @@ def test_no_rtc_is_not_a_reason_not_to_sleep(tmp_path, clock):
   assert s.slept == 1
 
 
+def test_a_hub_that_cannot_be_armed_is_reported_loudly(tmp_path, clock, caplog):
+  """/sys is read-only in the shipped container, so the write from in there is
+  a no-op and the host's udev rule is what actually arms these. A silent
+  no-op is how a fifteen minute brick goes unnoticed until a drive."""
+  import logging
+  u = usb(tmp_path)
+  (u / '2-1' / 'power' / 'wakeup').chmod(0o444)
+  s = Kernel(after=1, power=power(tmp_path), rtc=rtc(tmp_path), usb=u, backstop=0)
+  clock[0] += 10
+  with caplog.at_level(logging.ERROR):
+    assert s.idle() is True          # still sleeps; the USB edge may yet work
+  assert '2-1' in caplog.text
+  assert 'wake this box' in caplog.text
+
+
 def test_hubs_are_armed_for_remote_wakeup_before_sleeping(tmp_path, clock):
   """The 2026-09-04 failure: the SuperSpeed hub the comma hangs off ships with
   wakeup disabled, so presenting the gadget got a bus reset and no

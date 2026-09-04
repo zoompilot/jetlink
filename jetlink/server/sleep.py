@@ -164,7 +164,7 @@ class Sleeper:
     before = self._read_int('suspend_stats/success')
     t0 = _boottime()
     log.info("no gadget for %.0f s, suspending", self.after)
-    self._arm_usb_wakeup()
+    self._check_usb_wakeup()
     armed = self._arm_backstop()
     try:
       self._enter()
@@ -196,30 +196,37 @@ class Sleeper:
     log.info("resumed after %.0f s asleep", asleep)
     return True
 
-  def _arm_usb_wakeup(self) -> list[str]:
-    """Make sure a hub can tell the controller the comma just showed up.
+  def _check_usb_wakeup(self) -> list[str]:
+    """Refuse to sleep quietly if nothing can wake us.
 
     The comma is the gadget and hangs off the onboard Realtek hub, so a
-    connect on a downstream port has to be signalled up by that hub before
-    the root hub or tegra-xusb ever hear about it. Those three ship with
-    wakeup enabled; the SuperSpeed hub does not, and at SuperSpeed it is the
-    one in our path. Measured 2026-09-04: with it disabled the comma's UDC sat
-    at "default" for fifteen minutes over four connect cycles and the Jetson
-    never woke, and a wake-on-LAN did not reach it either - it took the
-    button. With it enabled the Jetson resumed 4 s after the bind.
+    connect on a downstream port has to be signalled up by that hub before the
+    root hub or tegra-xusb ever hear about it. Those three ship with wakeup
+    enabled; the SuperSpeed hub does not, and at SuperSpeed it is the one in
+    our path. Measured 2026-09-04 with it disarmed: the comma presented the
+    gadget to a sleeping Jetson and got a bus reset with no SET_ADDRESS, its
+    UDC sat at "default" through four connect cycles and fifteen minutes, a
+    wake-on-LAN did not reach us either, and the box took its button. Armed,
+    the same test resumed 4 s after the bind.
+
+    Arming them is the host's job - `99-jetlink-usb-wakeup.rules` at boot and
+    `jetlink-wake-setup.sh` from the unit's ExecStartPre - because `/sys` is
+    mounted read-only in this container and the write from in here is a no-op
+    under both shipped configurations. So try, because a deployment that
+    mounts it read-write exists, and say so loudly when it fails: a line in
+    the log is the difference between finding this in a minute and finding it
+    after a drive.
 
     Which hub carries us depends on the negotiated speed - at 480 Mbps it is
-    the USB 2.0 hub, which happens to ship enabled - so arm every hub rather
-    than the one we can see. There is a udev rule that does this at boot; this
-    is here because the rule is on the host filesystem and a re-flash loses
-    it, the same way it loses the masked networkd unit, and the failure is
-    silent and costs a whole drive.
+    the USB 2.0 hub, which happens to ship armed - so check every hub rather
+    than the one we can see. That speed dependence is why this looked like it
+    worked before.
     """
-    armed = []
+    disarmed = []
     try:
       devices = sorted(self.usb.iterdir())
     except OSError:
-      return armed
+      return disarmed          # no USB tree visible; nothing to say about it
     for dev in devices:
       try:
         if (dev / 'bDeviceClass').read_text().strip() != HUB_CLASS:
@@ -229,12 +236,16 @@ class Sleeper:
           continue
         wakeup.write_text('enabled\n')
       except OSError:
-        continue   # gone between the listing and the read, or not ours to set
-      armed.append(dev.name)
-    if armed:
-      log.warning("armed %s for remote wakeup; a sleep now would not have woken on USB",
-                  ', '.join(armed))
-    return armed
+        # Either the write was refused (read-only /sys, the usual case) or the
+        # device went away between the listing and the read. Both mean we
+        # cannot vouch for it.
+        disarmed.append(dev.name)
+    if disarmed:
+      log.error("hub(s) %s are not armed for remote wakeup and could not be armed from "
+                "in here (/sys is read-only): the comma presenting its gadget may not "
+                "wake this box. Install 99-jetlink-usb-wakeup.rules on the host.",
+                ', '.join(disarmed))
+    return disarmed
 
   def _arm_backstop(self) -> bool:
     """Set an RTC alarm so a wake we do not control still happens.
