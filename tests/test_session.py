@@ -369,3 +369,74 @@ class TestPreload:
     host._start = lambda *a: started.append(a)
     other = host.request(Request(spec.sha256, spec.nbytes, spec.frame_skip + 1), None)
     assert other['state'] != 'ready' or started, "served a spec the client did not ask for"
+
+
+class TestTimingCache:
+  """TensorRT re-times candidate kernels on every build. Most of those timings
+  do not depend on the model: a warm cache cut a Lebowski build from 254 s to
+  173 s. It is advisory, so every path here has to fail open - a bad cache
+  costs a slow build, never a wrong engine."""
+
+  class FakeCache:
+    def __init__(self, blob=b'timings'):
+      self.blob = blob
+
+    def serialize(self):
+      return self.blob
+
+  class FakeConfig:
+    def __init__(self, raises=None):
+      self.raises = raises
+      self.seeded = None
+      self.set_with = None
+
+    def create_timing_cache(self, blob):
+      if self.raises:
+        raise self.raises
+      self.seeded = blob
+      return TestTimingCache.FakeCache()
+
+    def set_timing_cache(self, cache, ignore_mismatch):
+      self.set_with = (cache, ignore_mismatch)
+
+  def test_a_previous_cache_seeds_the_build(self, tmp_path):
+    from jetlink.server import builder as B
+    p = tmp_path / 'timing.cache'
+    p.write_bytes(b'previous')
+    cfg = self.FakeConfig()
+    cache = B._load_timing_cache(cfg, p)
+    assert cfg.seeded == b'previous'
+    assert cfg.set_with is not None and cache is not None
+
+  def test_a_missing_cache_still_builds(self, tmp_path):
+    from jetlink.server import builder as B
+    cfg = self.FakeConfig()
+    assert B._load_timing_cache(cfg, tmp_path / 'nope.cache') is not None
+    assert cfg.seeded == b''   # empty seed, build runs cold
+
+  def test_a_cache_tensorrt_rejects_does_not_fail_the_build(self, tmp_path):
+    # A cache from another TensorRT version, or truncated by a killed build.
+    from jetlink.server import builder as B
+    p = tmp_path / 'timing.cache'
+    p.write_bytes(b'garbage')
+    cfg = self.FakeConfig(raises=RuntimeError('version mismatch'))
+    assert B._load_timing_cache(cfg, p) is None
+
+  def test_the_cache_is_written_atomically(self, tmp_path):
+    from jetlink.server import builder as B
+    p = tmp_path / 'sub' / 'timing.cache'
+    B._save_timing_cache(self.FakeCache(b'fresh'), p)
+    assert p.read_bytes() == b'fresh'
+    # No .tmp left for the next build to mistake for a cache.
+    assert list(p.parent.glob('*.tmp')) == []
+
+  def test_an_unwritable_cache_is_not_an_error(self, tmp_path):
+    from jetlink.server import builder as B
+    B._save_timing_cache(self.FakeCache(), tmp_path / 'nodir' / 'x' / 'c.cache')
+    B._save_timing_cache(None, tmp_path / 'c.cache')   # nothing to write
+
+  def test_the_cache_is_keyed_like_the_plans(self, tmp_path):
+    from jetlink.server.builder import EngineCache
+    name = EngineCache(tmp_path).timing_cache().name
+    # A timing from another TensorRT version or another chip is not a timing.
+    assert name.startswith('timing.trt') and name.endswith('.cache')
