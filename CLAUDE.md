@@ -815,17 +815,36 @@ This is also why the wake looked like it worked before: which hub carries us
 depends on the negotiated speed, and at 480 Mbps it is `1-2`, which happens to
 ship enabled. A cable or port that drops you to USB 2 hides the bug.
 
-Two places keep it armed, because one is not enough:
-`/etc/udev/rules.d/99-jetlink-usb-wakeup.rules` arms every hub at boot, and
-`Sleeper._arm_usb_wakeup` re-checks before every suspend, because the udev
-rule is on the host filesystem and a re-flash loses it exactly as it loses the
-masked networkd unit - silently, and at the cost of a drive.
+Both places that arm it are on the **host**, because `/sys` is mounted
+read-only in the container and the same write from in there is a no-op:
+
+```bash
+sudo install -m 644 scripts/99-jetlink-usb-wakeup.rules /etc/udev/rules.d/
+sudo install -m 755 scripts/jetlink-wake-setup.sh /usr/local/bin/
+sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usb --action=add
+```
+
+The rule arms every hub at boot; the script does it again from
+`jetlink-server.service`'s `ExecStartPre`, because the rule lives on the host
+filesystem and a re-flash loses it exactly as it loses the masked networkd
+unit - silently, and at the cost of a drive. `Sleeper._check_usb_wakeup` still
+tries before each suspend and logs an error naming the rule when it cannot,
+so a box that nothing can wake says so in the server log rather than just
+never coming back.
 
 `Sleeper` also arms an RTC alarm (`WAKE_BACKSTOP`, 30 min) before each sleep
 and clears it after, so a wake path that fails some other way costs one period
 rather than the whole park. It is set against
 `/sys/class/rtc/rtc0/since_epoch`, not the wall clock, because this box boots
-with an unset clock - see below.
+with an unset clock - see below. That needs rtc0's real directory bind-mounted
+read-write, which `run.sh` and the unit resolve at runtime: it is a PMIC RTC
+here (`nvvrs-pseq-rtc`) and a Tegra one elsewhere. With `--mount`, not `-v` -
+the resolved path is `/sys/devices/platform/bpmp/bpmp:i2c/...` and `-v` reads
+those colons as field separators. Without the mount the alarm is a warning in
+the log and the USB edge is the only way back.
+
+Changing mounts means `docker rm -f` and a fresh `docker run`; a `docker
+restart` keeps the old ones and looks like the change did nothing.
 
 If a Jetson is unreachable on both LAN and USB, check `arp -an` for its MAC
 before assuming it is powered off: a NIC answering ARP with no ping means
