@@ -615,6 +615,21 @@ Lebowski runs and is numerically correct, but 49.48 ms against a 50 ms budget is
 coincidence, not margin, and the GPU is already at its 1020 MHz ceiling at 83%
 duty with no boost left. Keep it off the car.
 
+**Re-measured end to end 2026-09-04 evening, and it is faster than the row
+above**: 45.1 ms mean on the live bench, per-frame warp 1.7 / data 0.5 / send
+4.7 / reply 37.8, one join, no failures, 2870 big frames. BMRLNAPv6 on the same
+rig the same evening was 30.7. The gain over the older row is `jetson_clocks`
+being pinned, MAXN_SUPER, and the Jetson's vendor services stopped. Two things
+that number is not: the bench reports `exec_last100`, a rolling window, so the
+**global** worst frame across the run is not in it, and the worst frame is what
+a 50 ms budget is decided by; and 150 s is not a sustained thermal run, which
+has still never been done for any model. `trtexec` puts Lebowski's GPU compute
+at 34.07 ms against a 22.3 ms roofline floor (1.754 GB of weights over 78.5
+GB/s of achievable bandwidth, so 66% of achievable), which is why no build
+option moves it: opt level 5 gave 34.10, and an INT8 dynamic-range probe 33.83
+with invalid numerics. There is no DLA on this part - `num_DLA_cores = 0`, that
+is AGX Orin - so cross that off.
+
 TGC v2 and BMRLNAP are within noise because they are the same graph: same 809
 standard nodes, same exporter, TGC v2 plus one layout hint.
 
