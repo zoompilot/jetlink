@@ -317,6 +317,17 @@ swaglog                        "jetlink: Orin-sm87 trt 10.3.0, engine ..."
 A plan that stops at ~5 m instead of ~200 m is the other tell. That is what a
 silent fallback looked like when it happened.
 
+Before blaming the link, check which modeld is even running. jetlink lives in
+stock `modeld`, and manager runs that only while `get_active_model_runner()` is
+`stock`, which means no bundle in `ModelManager_ActiveBundle`. Every bundle the
+sunnypilot model manager offers has `runner = tinygrad`, so picking any custom
+model in the UI moves manager to `modeld_tinygrad` (`sunnypilot/modeld_v2`),
+which knows nothing about jetlink: the Jetson provisions, `ready()` is true, the
+UI says compiled, and `modelV2.big` is never set because the process that would
+set it is not running. `ModelRunnerTypeCache` caches the answer, so clear both
+params together. This is the same hazard as the chestnut catalog above, one slot
+over.
+
 ## The cable
 
 ### The comma is the gadget and the Jetson is the host, and it cannot be reversed
@@ -622,8 +633,22 @@ needs `onnx`):
 TMPDIR=/data/tmp /usr/local/venv/bin/pip install --target /data/tmp/pytest_deps pytest
 cd /data/openpilot && PYTHONPATH=/data/openpilot:/data/jetlink_repo:/data/tmp/pytest_deps \
   /usr/local/venv/bin/python3 -m pytest -q -p no:cacheprovider /data/jetlink_repo/tests \
-  openpilot/sunnypilot/accelerators openpilot/sunnypilot/models/tests/test_manager_download.py
+  openpilot/sunnypilot/accelerators openpilot/sunnypilot/models/tests/test_manager_download.py \
+  openpilot/sunnypilot/modeld_v2/tests
 ```
+
+`modeld_v2/tests` is in that list because the accelerators work moves code out
+from under sunnypilot's own model runner, and those tests import
+`modeld_v2/modeld.py` unstubbed, so they are the only thing that type-checks the
+seam. Leaving them out shipped a `ChestnutState` import still pointing at
+`selfdrive/modeld/modeld.py` after it moved to `accelerators/chestnut.py`:
+`modeld_tinygrad` died at import on every ignition with a custom model selected,
+and the car could not engage. Nothing recorded it. The ImportError beat sentry's
+handler, so there was no crash log, no swaglog and no journal line, only
+manager's `modeld_tinygrad is dead with 1` and a `Speed Error: nan m/s` on the
+screen from `posenetInvalid` formatting `vEgo` against a `modelV2` that never
+arrived. Anything that reads "no model at all, big or small" starts there:
+run `openpilot/sunnypilot/modeld_v2/modeld.py` by hand and read the traceback.
 
 **manager never respawns a process that exited on its own.** After stopping
 `jetlinkd` by hand it stays down until manager restarts. Restarting
