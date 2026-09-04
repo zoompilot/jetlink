@@ -28,7 +28,7 @@ import time
 from collections import deque
 
 from jetlink import protocol as P
-from jetlink.transport.base import LinkError, StreamTransport, take
+from jetlink.transport.base import LinkError, LinkTimeout, StreamTransport, take
 
 # --- FunctionFS ABI -------------------------------------------------------
 
@@ -62,6 +62,10 @@ MAX_QUEUED = 8 << 20
 log = logging.getLogger('jetlink')
 
 EP_READY_TIMEOUT = 10.0
+# How long opening the endpoint files may wait for the host to configure us.
+# Separate from EP_READY_TIMEOUT, which covers a host that has configured us
+# but has not claimed the interface yet.
+EP_OPEN_TIMEOUT = 10.0
 UDC_SYSFS = '/sys/class/udc'
 # How long close() waits for the reader thread after unbinding, which is what
 # wakes it. A read the kernel will not complete is left to die with the process.
@@ -168,24 +172,74 @@ class FfsTransport(StreamTransport):
     self._reader_error: str | None = None
     self._closing = False
     self._had_host = False
+    self._open_lock = threading.Lock()
     self._reader: threading.Thread | None = None
     try:
       self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
       os.write(self.ep0, build_descriptors())
       os.write(self.ep0, build_strings())
-      # The endpoint files only exist once ep0 has accepted the descriptors.
-      self.ep_out = os.open(os.path.join(mount, 'ep1'), os.O_RDWR)
-      self.ep_in = os.open(os.path.join(mount, 'ep2'), os.O_RDWR)
       if gadget is not None:
         # Bind last: a FunctionFS gadget cannot attach to a controller until its
         # descriptors have been written, which is why setup_gadget.sh leaves UDC
         # empty and we finish the job here.
         self.bind(udc)
-      self._reader = threading.Thread(target=self._read_loop, name='jetlink-ffs-read', daemon=True)
-      self._reader.start()
+      # The endpoint files exist now, but opening them is deferred to
+      # _ensure_epfiles: see there for why touching one before a host has
+      # enabled it costs the gadget until the next reboot.
     except BaseException:
       self.close()   # otherwise a failed bring-up leaks the descriptors it did open
       raise
+
+  def _configured(self) -> bool:
+    """Has a host set our configuration? Only then are the endpoints enabled."""
+    if self.bound_udc is None:
+      return self.gadget is None   # no controller of ours to ask; assume ready
+    try:
+      with open(os.path.join(UDC_SYSFS, self.bound_udc, 'state')) as f:
+        return f.read().strip() == 'configured'
+    except OSError:
+      return False
+
+  def _ensure_epfiles(self) -> None:
+    """Open ep1/ep2 and start the reader, once a host has enabled them.
+
+    Not at open, which is where this used to be, and the difference is the
+    whole gadget. ffs_epfile_io waits for the endpoint with
+    wait_event_interruptible(ffs->wait, (ep = epfile->ep)), so a read on an
+    endpoint no host has ever enabled does not return EIO - it sleeps, and
+    only a signal wakes it. Unbinding does not: unbind completes a request the
+    hardware already has, and there is no request here. The reader thread was
+    started at open, so on any drive without a Jetson it went straight into
+    that sleep and stayed there.
+
+    That thread's fd is then unclosable while it sleeps, close() or no close():
+    the syscall holds the struct file, ffs_epfile_release never runs, ffs->opened
+    stays above zero and ffs_ep0_open answers EBUSY from then on - to this
+    process, to jetlinkd, and to the next drive's modeld, until the comma is
+    rebooted. Measured 2026-09-04: one open/close of a gadget no Jetson ever
+    attached to, and every open after it failed with EBUSY.
+
+    So wait for the UDC to say configured, which is the same edge that sets
+    epfile->ep, and only then open them. A host that never arrives leaves ep0
+    as the only fd, and closing that is clean.
+    """
+    if self.ep_out >= 0:
+      return
+    with self._open_lock:
+      if self.ep_out >= 0:
+        return
+      deadline = time.monotonic() + EP_OPEN_TIMEOUT
+      while not self._configured():
+        if self._closing:
+          raise LinkError("gadget closing")
+        if time.monotonic() >= deadline:
+          raise LinkTimeout(f"no host configured the gadget within {EP_OPEN_TIMEOUT:.0f}s")
+        time.sleep(0.02)
+      self.ep_out = os.open(os.path.join(self.mount, 'ep1'), os.O_RDWR)
+      self.ep_in = os.open(os.path.join(self.mount, 'ep2'), os.O_RDWR)
+      self._had_host = True
+      self._reader = threading.Thread(target=self._read_loop, name='jetlink-ffs-read', daemon=True)
+      self._reader.start()
 
   def bind(self, udc: str | None = None) -> None:
     if self.gadget is None:
@@ -232,6 +286,7 @@ class FfsTransport(StreamTransport):
     return self._shrink('write_chunk')
 
   def _write(self, bufs: list[memoryview]) -> int:
+    self._ensure_epfiles()
     # See _IO_SIGNALS: a signal here duplicates data on the wire.
     was = signal.pthread_sigmask(signal.SIG_BLOCK, _IO_SIGNALS)
     try:
@@ -269,6 +324,15 @@ class FfsTransport(StreamTransport):
       # A fresh buffer per read: the chunk is handed to the consumer as is, so
       # reusing one would overwrite bytes it has not copied out yet. 256 KB at
       # 20 Hz is nothing next to the frame itself.
+      if not self._configured():
+        # Same trap as _ensure_epfiles, one loop later: the host can drop our
+        # configuration between two reads, and a readv issued after that sleeps
+        # in the kernel until a signal that is never coming. Treat it as the
+        # endpoint error it would have been, and let the grace period decide.
+        if self._wait_for_host_ready():
+          continue
+        self._fail("host dropped the gadget configuration")
+        return
       buf = bytearray(self._read_size)
       try:
         # Multiples of the packet size only: the OUT endpoint rejects anything
@@ -299,6 +363,7 @@ class FfsTransport(StreamTransport):
       self._cv.notify_all()
 
   def _read_into(self, dest: memoryview, timeout: float | None) -> int:
+    self._ensure_epfiles()
     with self._cv:
       if not self._chunks and self._reader_error is None:
         self._cv.wait(timeout)

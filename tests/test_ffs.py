@@ -33,15 +33,38 @@ def mount(tmp_path):
   return tmp_path
 
 
+def test_no_endpoint_is_opened_before_a_host_has_enabled_it(mount):
+  """The one that costs the gadget until the comma is rebooted.
+
+  ffs_epfile_io does not fail on an endpoint no host has enabled, it sleeps in
+  wait_event_interruptible until a signal that never comes, and unbinding does
+  not wake it. The thread stuck there holds the struct file, so ffs->opened
+  never drops and every later ffs_ep0_open answers EBUSY - for jetlinkd and the
+  next drive's modeld too, not just this process. Opening ep0 and nothing else
+  until a host is actually there is what keeps that from happening.
+  """
+  t = FfsTransport(str(mount))
+  try:
+    assert t.ep0 >= 0
+    assert t.ep_in == -1 and t.ep_out == -1, "endpoint files opened before a host"
+    assert t._reader is None, "the reader thread started before a host"
+  finally:
+    t.close()
+  # And that close really let go, which is the half that used to fail.
+  again = FfsTransport(str(mount))
+  again.close()
+
+
 def test_recv_times_out_while_the_kernel_read_is_blocked(mount):
   t = FfsTransport(str(mount))
   try:
-    assert t._reader is not None and t._reader.is_alive()
     t0 = time.monotonic()
     with pytest.raises(LinkTimeout):
       t.recv(timeout=0.2)
     assert time.monotonic() - t0 < 1.0, "the deadline must not wait on the blocked read"
-    assert t._reader.is_alive(), "the reader is still parked in its read, as it should be"
+    # Started by that first recv, not by the constructor, and still parked in
+    # its read, which is exactly where it should be.
+    assert t._reader is not None and t._reader.is_alive()
   finally:
     t.close()
 
@@ -49,6 +72,10 @@ def test_recv_times_out_while_the_kernel_read_is_blocked(mount):
 def test_data_written_by_the_host_arrives_through_the_reader(mount):
   t = FfsTransport(str(mount))
   try:
+    # The transport opens its endpoint files on the first read or write, and a
+    # FIFO standing in for one blocks the writer until somebody is reading it.
+    # The real ep1 is not a FIFO and needs none of this.
+    t._ensure_epfiles()
     payload = np.arange(3000, dtype=np.float32)
     host = os.open(mount / 'ep1', os.O_WRONLY)
     try:
@@ -69,6 +96,7 @@ def test_padded_messages_survive_the_chunked_reader(mount):
   consumed by framing and never leak into the next message."""
   t = FfsTransport(str(mount))
   try:
+    t._ensure_epfiles()   # see above: the FIFO needs a reader before a writer
     host = os.open(mount / 'ep1', os.O_WRONLY)
     try:
       first = bytes(P.PACKET_MULTIPLE - P.HEADER_SIZE)
