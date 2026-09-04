@@ -284,6 +284,49 @@ with the same seq, and a 3 s frame timeout. It never showed on the bench with
 `bench_link`, `verify_parity`, the replay tool or a scripted reconnect loop,
 because none of them run next to camerad. Only the live bench below did.
 
+### Never touch an endpoint file before the host has enabled it
+
+This one costs the gadget until the comma is rebooted, and it is silent.
+
+`ffs_epfile_io` does not fail on an endpoint no host has enabled. It sleeps:
+`wait_event_interruptible(ffs->wait, (ep = epfile->ep))`, and only a signal
+wakes it. Unbinding the UDC does not - unbind completes a request the hardware
+already holds, and an endpoint that was never enabled has no request. So a
+read on `ep1` before a host arrives never returns.
+
+A thread stuck there cannot have its fd closed. The syscall holds the `struct
+file`, so `ffs_epfile_release` never runs, `ffs->opened` stays above zero, and
+`ffs_ep0_open` answers `EBUSY` from then on - to this process, to `jetlinkd`,
+and to the next drive's `modeld`. `close()` returns cleanly and `/proc/PID/fd`
+shows nothing; only the live thread gives it away. Measured on the car
+2026-09-04: one open and close of a gadget no Jetson ever attached to, and
+every open after it failed with
+
+```
+[Errno 16] Device or resource busy: '/dev/ffs-jetlink/ep0'
+```
+
+for the life of the device. This is the "I had to restart the comma to get
+jetlink established" of that drive: any ignition without the Jetson up poisoned
+the mount, and the retry loop, `jetlinkd` and the next drive all bounced off it.
+
+So `FfsTransport.__init__` opens `ep0`, writes the descriptors and binds, and
+nothing else. `_ensure_epfiles()` opens `ep1`/`ep2` and starts the reader on
+the first read or write, and only once the UDC reads `configured` - the same
+edge that sets `epfile->ep`. A host that never comes leaves `ep0` as the only
+fd, and closing that is clean and instant. `_read_loop` re-checks before every
+`readv` for the same reason: the host can drop our configuration between two
+reads, and the read after that would sleep forever.
+
+If you add a code path that opens an endpoint file, it goes through
+`_ensure_epfiles`. Verify with the loop below, which fails on the first
+reopen if this regresses:
+
+```python
+for i in range(4):
+  c = helpers.connect(); print(i, 'opened'); c.close()
+```
+
 The endpoints answer `ENODEV` both before a host has configured the gadget
 and after it disconnects. `FfsTransport` gives the first a 10 s grace period
 (`EP_READY_TIMEOUT`: the server still has to open the device and claim the
@@ -636,6 +679,16 @@ cd /data/openpilot && PYTHONPATH=/data/openpilot:/data/jetlink_repo:/data/tmp/py
   openpilot/sunnypilot/accelerators openpilot/sunnypilot/models/tests/test_manager_download.py \
   openpilot/sunnypilot/modeld_v2/tests
 ```
+
+These tests write to whatever params directory they find. On a PC that is
+nobody's car; on the comma it is the live one, and several of them exercise
+code whose job is to clear a param - `jetlinkd` dropping `JetlinkEngineReady`
+when it finds the Jetson's cache gone. A suite run on 2026-09-04 cleared it and
+left the device unable to use the accelerator at all: `backend.ready()` is
+params-only by design, so `modeld` built no joining state, loaded the small
+model and said nothing. `accelerators/conftest.py` now sets `OPENPILOT_PREFIX`
+for that whole subtree; keep any new test directory under it, or under its own
+conftest doing the same.
 
 `modeld_v2/tests` is in that list because the accelerators work moves code out
 from under sunnypilot's own model runner, and those tests import

@@ -159,8 +159,29 @@ when the alternator is running, or with ignition wired to the button header.
 ## Reusing chestnut's surfaces
 
 Nothing in cereal, the UI or the alerts changed. modeld sets
-`ChestnutLoading`/`ChestnutActive` for whichever accelerator is active, and this
-backend publishes `chestnutState`, with Tegra sysfs mapped onto chestnut's fields (`tempC` ← tj-thermal, `powerDrawW` ←
+`ChestnutLoading`/`ChestnutActive` for whichever accelerator is active, except
+that a model state which is still bringing its accelerator up (`loading` is
+true on the object `make_model_state` returned) owns both for the drive: for a
+Jetson the load is never over, because it can join, leave and join again.
+`ChestnutLoading` is true while the small model proxies and false while the
+large one runs, so selfdrived's "Big Model Ready" is the swap and nothing
+else; `ChestnutActive` is absent while proxying, true at the swap and false at
+a demote, which gets a chestnut's soft disable so the driver hears that the
+plan changed under them.
+
+The swap lands on a disengaged frame or on a standstill. Disengaged alone was
+not enough: a driver who engages at the ramp and lifts off at their exit gives
+the join nowhere to land, and "the Jetson was ready the whole time and never got
+used" is what that shape of drive produced. At a standstill the plan is not
+turning a wheel or asking for acceleration, so the step between two models that
+disagree by ~195 m of planned path lands on nothing. A drive that is neither -
+engaged from the driveway to the destination without ever stopping - still runs
+small, on purpose. selfdrived only makes "Big Model Loading" a NO_ENTRY
+while nothing publishes `modelV2`, so a Jetson that takes a whole drive to
+arrive never keeps the driver off the small model. That used to be a 60 s
+`LOADING_TIMEOUT` in the joining state, and the edge read as ready to
+selfdrived and as "unavailable" to the UI while the join was still trying.
+This backend publishes `chestnutState`, with Tegra sysfs mapped onto chestnut's fields (`tempC` ← tj-thermal, `powerDrawW` ←
 INA3221 VDD_IN, `pcieLtssm` ← `0x78` when the link is up, so existing "link
 down" logic keeps working). The Jetson reports neutral field names; the openpilot
 schema is known only to `state.py`, and the sysfs side only to
@@ -195,14 +216,35 @@ rather than returning it, matching openpilot's own guard on big-model output.
 Upstream's own fallback is one-way: modeld sets `model = small_model` in the
 frame loop's `except` and stays there for the drive. jetlink does change that.
 `JoiningModelState.run` catches the failure before modeld sees it, demotes to
-the small model, and rejoins after `REJOIN_DELAY`, swapping back at the next
-disengaged frame - so a Jetson that reboots, a nudged cable or a transport
-desync costs some frames rather than the rest of the drive. modeld's one-way
-path is still underneath, for anything the joining state does not catch.
+the small model, and rejoins after a backoff, swapping back at the next open
+window - so a Jetson that reboots, a nudged cable or a transport desync costs
+some frames rather than the rest of the drive. modeld's one-way path is still
+underneath, for anything the joining state does not catch.
+
+The backoff doubles from `REJOIN_DELAY` to `REJOIN_DELAY_MAX` per consecutive
+failure and resets after a join that held for `STABLE_SECONDS`, because a link
+that dies on its first frame every time is the expensive shape: each cycle is a
+swap frame, a demote frame, a soft disable and a "Big Model Ready" chime, and
+at a flat delay that repeats for the drive. A Jetson that reboots once is still
+picked up within a minute.
+
+A link that is ready has to wait for the frame loop to find a window, and on a
+drive with no stop and no disengagement that is the whole drive. `_keep_alive`
+pings it every `KEEPALIVE_PERIOD` while it waits, so a Jetson that reboots in
+that window is noticed there rather than at the swap, where finding out costs a
+build on a dead link, a demote and the backoff, all on modeld's thread.
 
 What that does not cover is `chestnutPresent`: selfdrived soft-disables on it
 dropping while the big model is active, so the driver is still disengaged once
-per dropout even though the model layer recovers on its own.
+per dropout even though the model layer recovers on its own. The alert that
+comes with it no longer says "restart the car to retry", which was true for a
+board bolted to the comma and false for this: the rejoin is already running.
+
+The UI asks "loading" before it asks "present", which it did not used to. A
+Jetson rebooting mid-drive is not attached for a minute, and reading that as
+DISCONNECTED - rendered "unavailable" - while the join loop is actively getting
+it back is what sends a driver looking for a way to force a reconnect. There is
+nothing to force.
 
 ## Getting the package onto the comma
 
