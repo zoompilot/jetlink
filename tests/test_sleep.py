@@ -26,6 +26,14 @@ def power(tmp_path, mem_sleep='s2idle [deep]', success=3):
   return p
 
 
+def rtc(tmp_path, since_epoch=1_700_000_000):
+  r = tmp_path / 'rtc0'
+  r.mkdir(parents=True)
+  (r / 'since_epoch').write_text(f'{since_epoch}\n')
+  (r / 'wakealarm').write_text('\n')
+  return r
+
+
 class Kernel(S.Sleeper):
   """A Sleeper whose write to /sys/power/state behaves like the kernel we tell it to."""
 
@@ -165,4 +173,45 @@ def test_serve_loop_sleeps_only_on_absence(tmp_path, clock, monkeypatch):
   with pytest.raises(Stop):
     M._serve(None, opener, s)  # EngineHost(None, ...) is fine: it loads lazily
   # 60 s, 120 s: slept at the second poll, then woke and looked again at once.
+  assert s.slept == 1
+
+
+def test_an_rtc_alarm_is_armed_before_sleeping_and_cleared_after(tmp_path, clock):
+  """The USB edge is the wake source and it is not guaranteed: on 2026-09-04 a
+  sleeping Jetson took a bus reset from the comma's gadget and never
+  enumerated, through four connect cycles and a wake-on-LAN, and needed its
+  button. The alarm is the wake that does not depend on that path."""
+  r = rtc(tmp_path, since_epoch=1_700_000_000)
+  s = Kernel(after=1, power=power(tmp_path), rtc=r, backstop=1800)
+  clock[0] += 10
+  seen = []
+  enter = s._enter
+
+  def watch():
+    seen.append((r / 'wakealarm').read_text().strip())
+    enter()
+
+  s._enter = watch
+  assert s.idle() is True
+  # Armed against the RTC's own counter, which on this box is years out and
+  # must not be compared against the wall clock.
+  assert seen == ['1700001800']
+  # And cleared on the way out, so the next sleep can set its own.
+  assert (r / 'wakealarm').read_text().strip() == '0'
+
+
+def test_a_failed_sleep_still_clears_the_alarm(tmp_path, clock):
+  r = rtc(tmp_path)
+  s = Kernel(after=1, power=power(tmp_path), rtc=r, backstop=1800, outcome='freezer')
+  clock[0] += 10
+  assert s.idle() is False
+  assert (r / 'wakealarm').read_text().strip() == '0', "an alarm left armed wakes a box that never slept"
+
+
+def test_no_rtc_is_not_a_reason_not_to_sleep(tmp_path, clock):
+  # A kernel with no alarm support, or a container that cannot write it. The
+  # USB edge is still there; only the backstop is gone.
+  s = Kernel(after=1, power=power(tmp_path), rtc=tmp_path / 'nope', backstop=1800)
+  clock[0] += 10
+  assert s.idle() is True
   assert s.slept == 1

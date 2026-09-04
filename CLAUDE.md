@@ -741,6 +741,17 @@ The build workspace is sized from `MemAvailable` alone. Swap does not count:
 the GPU's allocations are pinned system RAM on Tegra and cannot page, and this
 Jetson's 25 GB of swap used to hand the builder the old flat 4 GB.
 
+**The clock is unset until NTP.** There is no usable RTC across boots and no
+network in the car, so `systemd-timesyncd` never runs on a drive and every
+journal line is stamped from a cold-start guess. On 2026-09-04 boot -1 claimed
+`17:01` to `17:08` for a boot that actually happened just before its
+`Initial clock synchronization to Fri 2026-09-04 18:35:12` line, which is the
+only real anchor in that boot. So `journalctl --since/--until` against comma
+time finds nothing, and grepping for that sync line is the first thing to do
+before trusting any Jetson timestamp. Aligning on USB connect/disconnect
+events is the fallback, and for the first seconds of a boot it is the only
+option, because enumeration happens before anything could set a clock.
+
 `systemd-networkd-wait-online.service` is masked on the Jetson, on purpose.
 docker.service is ordered after `network-online.target`, and in the car there
 is no network, so dockerd waited out the 120 s timeout before the container
@@ -777,6 +788,27 @@ jetlinkd releases the gadget a minute after it has nothing to do (the fork's
 to sleep about three minutes later without anyone killing anything. It keeps
 `present()` true through `/dev/shm/jetlink-dormant`; if chestnutPresent
 drops while parked, check that marker and the pid in it first.
+
+**The USB wake is not guaranteed.** Observed 2026-09-04: jetlinkd released the
+gadget, the Jetson slept, and presenting it again did not bring it back. The
+comma's UDC went `not attached` to `default` - a bus reset with no
+SET_ADDRESS, which is the Realtek hub holding VBUS up while the Jetson's xHCI
+is still down - and stayed there through four connect cycles, ~10 minutes. No
+LAN, no ssh, and a wake-on-LAN magic packet to its NIC did nothing either,
+though the NIC was answering ARP the whole time. The comma also logged
+`dwc3 a600000.dwc3: failed to stop controller` on one unbind. It needed the
+button.
+
+In the car that is a whole drive small-model with nothing able to recover it,
+because the only thing that could ask is the comma and it is already asking.
+So `Sleeper` arms an RTC alarm (`WAKE_BACKSTOP`, 30 min) before every sleep
+and clears it after, which bounds the outage to one period without depending
+on the path that failed. It is set against `/sys/class/rtc/rtc0/since_epoch`,
+not the wall clock, because this box boots with an unset clock - see below.
+
+If a Jetson is unreachable on both LAN and USB, check `arp -an` for its MAC
+before assuming it is powered off: a NIC answering ARP with no ping means
+suspended, not dead.
 
 ### Poweroff
 

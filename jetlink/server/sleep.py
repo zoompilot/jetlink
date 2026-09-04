@@ -52,6 +52,20 @@ RETRY_MAX = 300.0
 # and still have failed to freeze.
 FREEZER_TIMEOUT = 20.0
 
+# How long a sleep may last with nothing else waking us. USB is the wake
+# source and it is not guaranteed: on 2026-09-04 the comma presented the
+# gadget to a sleeping Jetson and got a bus reset and no enumeration, held
+# there through four connect cycles, and neither a second bind nor a
+# wake-on-LAN magic packet brought it back - the box needed its button. In
+# the car that is a whole drive on the small model with no way to recover,
+# because the only thing that could ask is the comma and it is already
+# asking. An RTC alarm is the one wake source that does not depend on the
+# path that just failed, so arm one before every sleep and bound the outage
+# to this. The cost is a wake and SLEEP_AFTER awake per period, ~7 W for
+# 120 s in 30 min, well under a tenth of a watt averaged.
+WAKE_BACKSTOP = 1800.0
+RTC = '/sys/class/rtc/rtc0'
+
 
 def _boottime() -> float:
   # Counts through a suspend, unlike CLOCK_MONOTONIC, so the difference across
@@ -68,9 +82,12 @@ class Sleeper:
   has run out, then suspends and returns once the box is back.
   """
 
-  def __init__(self, after: float = SLEEP_AFTER, power: str | Path = '/sys/power'):
+  def __init__(self, after: float = SLEEP_AFTER, power: str | Path = '/sys/power',
+               rtc: str | Path = RTC, backstop: float = WAKE_BACKSTOP):
     self.after = float(after)
     self.power = Path(power)
+    self.rtc = Path(rtc)
+    self.backstop = float(backstop)
     self.enabled = True
     self._last_seen = time.monotonic()
     self._retry_at = 0.0
@@ -141,9 +158,11 @@ class Sleeper:
     before = self._read_int('suspend_stats/success')
     t0 = _boottime()
     log.info("no gadget for %.0f s, suspending", self.after)
+    armed = self._arm_backstop()
     try:
       self._enter()
     except OSError as e:
+      self._disarm_backstop(armed)
       if e.errno in (errno.EACCES, errno.EPERM, errno.EROFS, errno.ENOENT):
         # Configuration, not weather: /sys/power is not writable in here.
         # run.sh and the unit mount it read-write; see docs/transport.md.
@@ -156,6 +175,7 @@ class Sleeper:
       log.warning("suspend failed: %s (%s)", e, self._failure())
       self.failed += 1
       return False
+    self._disarm_backstop(armed)
     asleep = _boottime() - t0
     after = self._read_int('suspend_stats/success')
     if before >= 0 and after <= before:
@@ -168,6 +188,36 @@ class Sleeper:
     self.slept += 1
     log.info("resumed after %.0f s asleep", asleep)
     return True
+
+  def _arm_backstop(self) -> bool:
+    """Set an RTC alarm so a wake we do not control still happens.
+
+    Against the RTC's own count, not the wall clock: this box boots with an
+    unset clock and only learns the time from NTP, which in the car never
+    happens, so since_epoch may be years out and it does not matter as long
+    as both sides of the comparison come from the same counter.
+    """
+    if self.backstop <= 0:
+      return False
+    try:
+      alarm = self.rtc / 'wakealarm'
+      now = int((self.rtc / 'since_epoch').read_text().strip())
+      alarm.write_text('0\n')            # a stale alarm blocks setting a new one
+      alarm.write_text(f"{now + int(self.backstop)}\n")
+      return True
+    except (OSError, ValueError) as e:
+      # No RTC, no alarm support, or not writable from in here. The USB edge
+      # is still the wake source; this was only the backstop.
+      log.warning("could not arm the %.0f s wake backstop: %s", self.backstop, e)
+      return False
+
+  def _disarm_backstop(self, armed: bool) -> None:
+    if not armed:
+      return
+    try:
+      (self.rtc / 'wakealarm').write_text('0\n')
+    except OSError:
+      pass   # it has either fired or it fires once and is spent
 
   def _enter(self) -> None:
     # Blocks until resume. Split out so a test can stand in for the kernel.
