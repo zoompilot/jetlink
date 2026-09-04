@@ -92,8 +92,14 @@ did not move. It just has to be JIT-compiled somewhere, and that somewhere is
 not modeld: the compile would land on the loader thread inside the 60 s
 `BIG_MODEL_TIMEOUT`, on the one GPU the main thread is already using, every
 ignition. `jetlinkd` does it parked and pickles the result to
-`<comma_home>/jetlink/warp_<camWxcamH>_<modelWxmodelH>_tinygrad.pkl`, which is
-the shape of upstream's own `compile_dm_warp.py`.
+`/data/jetlink/warp_<camWxcamH>_<modelWxmodelH>_tinygrad.pkl` on the device
+(`<comma_home>/jetlink/` on a PC), which is the shape of upstream's own
+`compile_dm_warp.py`. Not `Paths.comma_home()` on the device: that is
+`/home/comma/.comma`, and AGNOS mounts `/home` as an overlay whose upper layer
+is in `/rwtmp`, a tmpfs. A warp cached there is gone at the next boot, and
+with the car and the comma powering up together jetlinkd then loses the ~9 s
+compile race to ignition on every cold boot. That was the "no warp compiled
+yet, staying on the small model" of the 2026-09-04 drive.
 
 The cache is keyed on the openpilot git commit, because tinygrad is a submodule
 that commit pins and a pickled TinyJit only loads under the tinygrad that made
@@ -174,6 +180,24 @@ handle it, but re-enumeration has been observed at 45 to 70 seconds, against
 `backend.CONNECT_TIMEOUT = 45.0` and modeld's 60 s big-model timeout. That margin
 is thin and has not been proven onroad.
 
+A `hello()` sent while the Jetson is still booting blocks inside the
+gadget `writev` until the server process starts reading, whatever timeout was
+passed: FunctionFS writes cannot time out, and the UDC says "configured" the
+whole time because the host enumerated us long before the server came up.
+Measured 90 s on the car. It is benign (the exchange completes the moment the
+server reads) and it is why jetlinkd sits through manager's SIGINT and eats
+the SIGKILL 5 s later at an ignition that lands mid-boot.
+
+The swap to the large model happens on modeld's frame thread and has to be
+cheap: measured on a comma, unpickling the warp JIT is 0.3 s and its *first
+call* 1.9 s, which as one frame is ~26 dropped camera frames, and modeld's
+drop filter (cap 10, tau 10 s) then reads 4.74% for 16 s. That was
+`modeldLagging` after every join on the 2026-09-04 drive.
+`backend.make_model_state` therefore loads and warms the warp in the joining
+state's constructor, on the loader thread while modeld's main thread is
+blocked in `loader.join`, and the swap sends no warmup frame; the first real
+frame carries the reset.
+
 The engine does not reload at the handover. `server/session.py`'s `EngineHost`
 owns the one loaded engine and the one build in flight for the life of the
 process; a `Session` is a view onto it. Before that, every reconnect freed the
@@ -220,6 +244,15 @@ from two frames' bytes overflowing fp16 in the queues), a duplicate request
 with the same seq, and a 3 s frame timeout. It never showed on the bench with
 `bench_link`, `verify_parity`, the replay tool or a scripted reconnect loop,
 because none of them run next to camerad. Only the live bench below did.
+
+The endpoints answer `ENODEV` both before a host has configured the gadget
+and after it disconnects. `FfsTransport` gives the first a 10 s grace period
+(`EP_READY_TIMEOUT`: the server still has to open the device and claim the
+interface after enumeration). It used to give the second the same, so the
+mid-drive USB disconnect on the 2026-09-04 drive was 10 s and 201 frames of
+retrying a link the UDC already reported as "not attached" before modeld fell
+back. Now, once a host has talked to us, an endpoint error with the UDC state
+anything but "configured" ends the link at once.
 
 Three things in the transport came out of that session and stay for defence
 in depth: the host reads exactly what the current message still needs and
@@ -448,6 +481,11 @@ python3 scripts/verify_parity.py compare   --dir out
 # 3. does modeld work. real segment, real warp, real modelV2 parsing.
 #    lives in the fork, not here.
 tools/jetlink_replay.py --segment /data/media/0/realdata/<seg> --frames 60
+#    240 frames is the ceiling: the decoded frames are held in RAM and the fork
+#    of modeld fails with ENOMEM above that. --dump out.npz writes per-frame
+#    outputs; run it again with the toggle off for the small model on the same
+#    frames and the two files are the open-loop smoothness comparison. The
+#    replayed selfdriveState is forced disengaged so the swap can happen.
 ```
 
 ```bash
@@ -575,6 +613,14 @@ switching among three models rebuilds; the ONNX files are never pruned.
 The build workspace is sized from `MemAvailable` alone. Swap does not count:
 the GPU's allocations are pinned system RAM on Tegra and cannot page, and this
 Jetson's 25 GB of swap used to hand the builder the old flat 4 GB.
+
+`systemd-networkd-wait-online.service` is masked on the Jetson, on purpose.
+docker.service is ordered after `network-online.target`, and in the car there
+is no network, so dockerd waited out the 120 s timeout before the container
+could start: measured on the 2026-09-04 drive, containerd at uptime 55 s,
+dockerd at 175 s, engine ready at 181 s. Masked, the server is up about a
+minute after Jetson power-on. A re-flash brings it back; check with
+`systemctl is-enabled systemd-networkd-wait-online.service`.
 
 `waiting for a jetlink gadget at 1209:0001` in the log means the comma is not
 presenting. That is a comma-side or cable problem, not a server one.
