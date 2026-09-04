@@ -8,7 +8,8 @@
 # /sys/power is mounted read-write on top of the read-only /sys so that
 # --sleep-after can write /sys/power/state, and rtc0's real directory so that
 # Sleeper can arm its wake backstop. Resolved rather than hardcoded: rtc0 is a
-# PMIC RTC on one board and a Tegra one on another. On an always-on supply
+# PMIC RTC on one board and a Tegra one on another. --mount, not -v, because
+# the resolved path contains colons (bpmp:i2c) and -v cannot parse those. On an always-on supply
 # pass --transport usb --sleep-after 120; see jetlink/server/sleep.py.
 #
 # Arming the hubs for remote wakeup is NOT done from in here - /sys is
@@ -29,6 +30,6 @@ exec docker run --rm -it \
   -v /dev:/dev \
   -v /sys:/sys:ro \
   -v /sys/power:/sys/power \
-  ${RTC:+-v "$RTC":"$RTC"} \
+  ${RTC:+--mount "type=bind,source=$RTC,target=$RTC"} \
   --name jetlink \
   "$IMAGE" "$@"
