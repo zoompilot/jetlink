@@ -425,6 +425,15 @@ UI can say how long a first provision takes.
 If the Jetson already has the ONNX, copy it over the LAN instead of pulling it
 from LFS, then verify the size and sha match the registry entry exactly.
 
+Provisioning needs no other step: land the new `models.json` on the device, put
+the ONNX at `Paths.model_root()/<oid16>.onnx`, and write `JetlinkModel`. A
+dormant jetlinkd sees `has_work()`, presents the gadget, and the bind wakes a
+sleeping Jetson. Measured 2026-09-04 for BMRLNAPv6 (766 MB): the Mac's LAN copy
+to the comma 55 s, then param write to `JetlinkEngineReady` 3 min, of which the
+resume, the hash, the USB upload and the uint8 patch are ~15 s and the TensorRT
+build is 163. Staging the ONNX on the Jetson by hand saves nothing; the upload
+is not the slow part.
+
 ### org.tinygrad ops
 
 comma's exports sometimes carry nodes in the `org.tinygrad` domain. TensorRT's
@@ -647,8 +656,8 @@ Engine cache is `/mnt/data/jetlink/{engines,models}`. Plans are keyed by TensorR
 version and GPU arch (`<oid16>.trt10.3.0.Orin-sm87.plan`) and are not portable
 across either. The sidecar json records `build_seconds`, which is where
 `models.json` gets its number, and `spec`, which is what the comma receives.
-`prune()` keeps the two newest plans and the registry has five entries, so
-switching among three models rebuilds; the ONNX files are never pruned.
+`prune()` keeps the six newest plans, one per registry entry, so an A/B among
+them never rebuilds; the ONNX files are never pruned either.
 
 The build workspace is sized from `MemAvailable` alone. Swap does not count:
 the GPU's allocations are pinned system RAM on Tegra and cannot page, and this
