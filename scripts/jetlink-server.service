@@ -15,6 +15,13 @@
 # loses the rule silently and the failure costs a whole drive. It has to be on
 # the host: /sys is read-only in the container.
 #
+# jetson_clocks pins the clocks and turns DVFS off. nvpmodel sets the ceiling;
+# this is what makes the part actually sit at it, and without it the GPU ramps
+# between frames on a workload that is idle 16 ms in every 50. It is not
+# persistent - there is no unit for it and a reboot loses it - so it goes here,
+# where a reboot is exactly when it gets reapplied. Leading `-` because a board
+# without the tool is not a reason to refuse to serve.
+#
 # rtc0 is bind-mounted read-write, resolved rather than hardcoded because it
 # is a PMIC RTC on one board and a Tegra one on another, so that
 # Sleeper can arm its wake backstop. Without it the alarm is a warning and
@@ -34,6 +41,7 @@ Restart=always
 RestartSec=5
 ExecStartPre=-/usr/bin/docker rm -f jetlink
 ExecStartPre=-/usr/local/bin/jetlink-wake-setup.sh
+ExecStartPre=-/usr/bin/jetson_clocks
 ExecStart=/bin/sh -c 'exec /usr/bin/docker run --rm --name jetlink \
   --runtime nvidia \
   --device-cgroup-rule "c 189:* rmw" \
