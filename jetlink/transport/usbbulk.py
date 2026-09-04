@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from jetlink import protocol as P
 from jetlink.transport.base import LinkError, StreamTransport
 
 # pid.codes test allocation. Get a real PID before distributing this.
@@ -39,6 +40,7 @@ log = logging.getLogger('jetlink.usb')
 class UsbBulkTransport(StreamTransport):
   packet_size = MAX_PACKET
   read_chunk = READ_CHUNK
+  rx_align = P.GADGET_TX_ALIGN
   # A bulk IN read has to be posted for a whole packet, so the buffer needs a
   # packet of headroom beyond the message itself. Without it a message whose
   # length is not a packet multiple *and* big enough to resize the buffer ends

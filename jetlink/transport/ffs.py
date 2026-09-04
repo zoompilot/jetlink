@@ -21,11 +21,13 @@ from __future__ import annotations
 import errno
 import logging
 import os
+import signal
 import struct
 import threading
 import time
 from collections import deque
 
+from jetlink import protocol as P
 from jetlink.transport.base import LinkError, StreamTransport, take
 
 # --- FunctionFS ABI -------------------------------------------------------
@@ -64,6 +66,19 @@ EP_READY_TIMEOUT = 10.0
 # wakes it. A read the kernel will not complete is left to die with the process.
 READER_JOIN_TIMEOUT = 1.0
 _NOT_READY = (errno.EIO, errno.ESHUTDOWN, errno.ENODEV)
+
+# Every signal the thread doing endpoint IO must not take mid-transfer. A
+# signal that interrupts a FunctionFS write is not a retry: ffs_epfile_io
+# dequeues the request, which stops the transfer wherever it is, and returns
+# EINTR, and Python's os.writev then re-issues the whole call. The packets
+# already on the wire stay sent, so the host receives the start of the message
+# twice and the stream is lost from there. modeld is exactly the process this
+# happens to: msgq wakes its subscriber threads with SIGUSR2 for every camera
+# frame, ~160 a second, and strace on a live modeld showed four of them landing
+# inside writev in 120 s, one per link failure that run. Masking signals for
+# the few milliseconds of a write just defers them; nothing in here waits on
+# one. SIGKILL and SIGSTOP cannot be masked and are ignored by the call.
+_IO_SIGNALS = signal.valid_signals()
 
 
 def _interface_desc(n_endpoints: int = 2, i_interface: int = 1) -> bytes:
@@ -121,7 +136,21 @@ class FfsTransport(StreamTransport):
   way.
   """
   read_chunk = READ_CHUNK
-  write_chunk = READ_CHUNK
+  # One writev is one USB request is one TRB, and this controller (dwc3 on
+  # AGNOS 4.9) will occasionally send a TRB twice. Measured on the bench with a
+  # live modeld: about once in 400 frames the host read, right after a
+  # complete message, another copy of one of that message's chunks. When the
+  # request was split into two 256 KB writes the replay of the first chunk
+  # carried a valid header, so the server ran the frame again from a payload
+  # that was half the old request and half the next one, and a replay of the
+  # second chunk put pixels where the next header should be. Either way the
+  # stream was lost and modeld spent the drive rejoining. A message that fits
+  # one request is replayed whole, with its sequence number, and the receiver
+  # drops it (Session.handle). The largest inference request is 475 KB with
+  # its padding; only the model upload is bigger, and a corrupted upload is
+  # caught by its sha256 and sent again.
+  write_chunk = 512 * SS_MAX_PACKET
+  tx_align = P.GADGET_TX_ALIGN
 
   def __init__(self, mount: str = '/dev/ffs-jetlink', gadget: str | None = None,
                udc: str | None = None):
@@ -201,23 +230,32 @@ class FfsTransport(StreamTransport):
     return self._shrink('write_chunk')
 
   def _write(self, bufs: list[memoryview]) -> int:
-    while True:
-      try:
-        return os.writev(self.ep_in, bufs)
-      except OSError as e:
-        # FunctionFS submits a write as one request, so a failed writev put
-        # nothing on the wire and is safe to retry.
-        if e.errno in _NOT_READY and self._wait_for_host_ready():
-          continue
-        if e.errno == errno.ENOMEM and self._shrink_write():
-          # A short write is fine: send() loops until the message is out.
-          bufs = take(bufs, self.write_chunk)
-          continue
-        raise LinkError(f"gadget write failed: {e}") from e
+    # See _IO_SIGNALS: a signal here duplicates data on the wire.
+    was = signal.pthread_sigmask(signal.SIG_BLOCK, _IO_SIGNALS)
+    try:
+      while True:
+        try:
+          return os.writev(self.ep_in, bufs)
+        except OSError as e:
+          # FunctionFS submits a write as one request, so a failed writev put
+          # nothing on the wire and is safe to retry.
+          if e.errno in _NOT_READY and self._wait_for_host_ready():
+            continue
+          if e.errno == errno.ENOMEM and self._shrink_write():
+            # A short write is fine: send() loops until the message is out.
+            bufs = take(bufs, self.write_chunk)
+            continue
+          raise LinkError(f"gadget write failed: {e}") from e
+    finally:
+      signal.pthread_sigmask(signal.SIG_SETMASK, was)
 
   # -- the reader thread ---------------------------------------------------
 
   def _read_loop(self) -> None:
+    # The same hazard as _write, on the read side: an interrupted read drops
+    # the packets it had already taken. This thread is ours and handles no
+    # signals, so mask them for its whole life.
+    signal.pthread_sigmask(signal.SIG_BLOCK, _IO_SIGNALS)
     while not self._closing:
       with self._cv:
         while self._queued >= MAX_QUEUED and not self._closing:

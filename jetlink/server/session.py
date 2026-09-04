@@ -293,6 +293,7 @@ class Session:
     self.request: Request | None = None
     self.send_lock = threading.Lock()
     self.frames = 0
+    self.last_seq = 0
     # Primed here so the first health publish carries real values. Session
     # construction is not latency sensitive; on_infer is.
     self._telemetry_cache = json.dumps(self.telemetry.read()).encode()
@@ -347,6 +348,15 @@ class Session:
         self._error(msg.seq, type(e).__name__, str(e))
 
   def handle(self, msg: Message) -> None:
+    # The comma's USB controller occasionally sends a request twice; see
+    # FfsTransport.write_chunk. The client numbers requests from 1 and never
+    # reuses one on a connection, so anything at or below the last seq is the
+    # replay, already answered. Running a frame twice would push the same
+    # image into the history queues twice, silently.
+    if msg.seq <= self.last_seq:
+      log.warning("dropping replayed message type=%d seq=%d (last %d)", msg.msg_type, msg.seq, self.last_seq)
+      return
+    self.last_seq = msg.seq
     mt = msg.msg_type
     if mt == P.Msg.INFER_REQ:
       self.on_infer(msg)

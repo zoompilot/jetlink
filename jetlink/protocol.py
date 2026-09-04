@@ -33,6 +33,23 @@ VERSION = 1
 # covers full and high speed too; TCP does not need it and loses one byte.
 PACKET_MULTIPLE = 1024
 
+# What a *gadget* pads its messages to, in the device-to-host direction only.
+# A message the gadget sends is followed by zero bytes up to the next multiple
+# of this, and the host reads exactly that many. Measured on a comma (dwc3,
+# AGNOS 4.9, SuperSpeed, bMaxBurst 15) talking to a Jetson (tegra-xusb, L4T
+# 5.15, libusb 1.0.25): about once in 400 frames the transfer for a message
+# ending in a short packet arrived with extra bytes after it, up to the next
+# 16 KB, which is one burst of 16 x 1024. The bytes were real (a sentinel
+# filled buffer had them overwritten) and looked like earlier frames: the
+# TX FIFO being flushed out as full packets. The host's stream framing then
+# read them as the next header and the session died with bad magic. Making
+# the gadget's transfers burst-aligned means they never end on a short packet
+# and the host never has a read outstanding past the end of a message, so
+# whatever the controller does at a short packet cannot reach the stream.
+# The host-to-device direction keeps the one-byte PADDED trick: the gadget's
+# reads complete on a short packet, and that side has never desynced.
+GADGET_TX_ALIGN = 16 * PACKET_MULTIPLE
+
 # magic, version, msg_type, seq, flags, length, reserved, 4 pad
 HEADER_FMT = '<IHHIIIQ4x'
 HEADER_SIZE = struct.calcsize(HEADER_FMT)

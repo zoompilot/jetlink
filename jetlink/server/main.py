@@ -31,6 +31,9 @@ from jetlink.transport.base import LinkError
 
 log = logging.getLogger('jetlink.server')
 
+# Longer than the client's FRAME_TIMEOUT, so it is the one that gives up.
+DRAIN_TIMEOUT = 5.0
+
 
 def _serve(cache: EngineCache, open_transport) -> None:
   """Serve one client at a time forever.
@@ -54,6 +57,10 @@ def _serve(cache: EngineCache, open_transport) -> None:
       log.info("session ended: %s", e)
     finally:
       session.close()
+      if getattr(transport, '_desynced', False):
+        # The client is still mid-message. Let it finish and time out rather
+        # than reopening under it; see StreamTransport.drain.
+        transport.drain(DRAIN_TIMEOUT)
       transport.close()
       log.info("client disconnected")
 

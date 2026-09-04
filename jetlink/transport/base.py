@@ -15,7 +15,7 @@ from jetlink import protocol as P
 # One frame is ~460 KB. The cap is what stops a corrupt length field making
 # RxBuffer allocate gigabytes before a single byte of it has been read.
 MAX_MESSAGE = 16 << 20
-_PAD = b'\0'
+_PAD = bytes(P.GADGET_TX_ALIGN)
 
 
 class LinkError(IOError):
@@ -128,6 +128,11 @@ class StreamTransport(Transport):
   # 0 means "no constraint" (TCP).
   packet_size = 0
   read_chunk = 1 << 20
+  # Pad every message sent to a multiple of this (0: the one-byte PADDED rule
+  # instead), and expect the peer's messages padded likewise. Set on the two
+  # USB transports; see protocol.GADGET_TX_ALIGN for the measurement behind it.
+  tx_align = 0
+  rx_align = 0
   # Largest single write to hand the kernel. FunctionFS turns one writev into
   # one USB request and has to allocate a contiguous buffer for it, so a big
   # write fails with ENOMEM on a device whose memory is fragmented - which the
@@ -161,10 +166,15 @@ class StreamTransport(Transport):
     # would step by elements, not bytes.
     bufs = [memoryview(p).cast('B') for p in parts]
     length = sum(b.nbytes for b in bufs)
-    if (P.HEADER_SIZE + length) % P.PACKET_MULTIPLE == 0:
+    if self.tx_align:
+      # Never a short packet in this direction; see protocol.GADGET_TX_ALIGN.
+      pad = -(P.HEADER_SIZE + length) % self.tx_align
+      if pad:
+        bufs.append(memoryview(_PAD)[:pad])
+    elif (P.HEADER_SIZE + length) % P.PACKET_MULTIPLE == 0:
       # A bulk transfer only ends on a short packet; see protocol.PACKET_MULTIPLE.
       flags |= P.Flag.PADDED
-      bufs.append(memoryview(_PAD))
+      bufs.append(memoryview(_PAD)[:1])
     header = P.pack_header(msg_type, seq, length, flags)
     bufs.insert(0, memoryview(header))
     while bufs:
@@ -189,7 +199,8 @@ class StreamTransport(Transport):
     self.rx.reserve(need + self.read_slack)
     end = None if timeout is None else time.monotonic() + timeout
     while self.rx.available < need:
-      if self._clamp_read(self.rx.writable()) == 0:
+      dest = self.rx.writable()[:self._read_limit(need - self.rx.available)]
+      if self._clamp_read(dest) == 0:
         # No room to post a whole packet, so every read from here returns 0 and
         # this loop would spin on a core forever while the peer blocks writing
         # the rest. A transport whose read_slack is too small gets here; say so
@@ -201,9 +212,46 @@ class StreamTransport(Transport):
         remaining = end - time.monotonic()
         if remaining <= 0:
           raise LinkTimeout(f"only {self.rx.available} of {need} bytes arrived in time")
-      n = self._read_into(self.rx.writable(), remaining)
+      n = self._read_into(dest, remaining)
       if n:
         self.rx.committed(n)
+
+  def _read_limit(self, missing: int) -> int:
+    """The most one read may ask for, given `missing` bytes of the current
+    message are still to come: exactly that, rounded up to a whole packet.
+
+    On the USB host this is what keeps the stream in sync. The gadget's
+    messages are burst-aligned (protocol.GADGET_TX_ALIGN), so a read that asks
+    for exactly what is left completes by count, and there is never a read
+    outstanding across the end of a message for the controller to fill with
+    whatever it flushes at a short packet. Asking for more, the way a plain
+    stream reader would, was measured to desync the link about once in 400
+    frames. TCP and FunctionFS do not need the limit and are not hurt by it.
+    """
+    if self.packet_size:
+      return -(-missing // self.packet_size) * self.packet_size
+    return missing
+
+  def drain(self, timeout: float) -> None:
+    """After a desync, swallow whatever the peer is still sending, until the
+    link drops or it goes quiet for `timeout`.
+
+    The peer is mid-message and blocked writing the rest of it. Closing and
+    reopening the link instead takes only what one read asks for each time,
+    so on USB the peer's request drains a packet per reopen at ~100 Hz, its
+    frame timeout never fires, and modeld sits inside one send for the whole
+    drive. Measured. Reading it out lets the peer finish, time out, and
+    reconnect cleanly.
+    """
+    scratch = memoryview(bytearray(self.read_chunk))
+    last = time.monotonic()
+    while time.monotonic() - last < timeout:
+      try:
+        n = self._read_into(scratch, timeout)
+      except LinkError:
+        return
+      if n:
+        last = time.monotonic()
 
   def recv(self, timeout: float | None = None) -> Message:
     if self._desynced:
@@ -224,7 +272,10 @@ class StreamTransport(Transport):
       raise LinkError(f"protocol error, link unusable: {e}") from e
     # The remainder of the caller's budget, not a second full one, so one recv
     # can never block for twice what it was given.
-    pad = 1 if flags & P.Flag.PADDED else 0
+    if self.rx_align:
+      pad = -(P.HEADER_SIZE + length) % self.rx_align
+    else:
+      pad = 1 if flags & P.Flag.PADDED else 0
     self._fill(P.HEADER_SIZE + length + pad,
                None if end is None else max(0.0, end - time.monotonic()))
     self.rx.take(P.HEADER_SIZE)

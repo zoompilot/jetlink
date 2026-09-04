@@ -201,6 +201,35 @@ after 14.4 s, when the server was resumed. After it: `LinkTimeout` at 0.501 s,
 the stale reply discarded on resume, the stream still in sync. Writes stay on
 the caller's thread; a host that is not reading is a dead link either way.
 
+### Signals and FunctionFS
+
+A signal that lands while a thread is blocked in a FunctionFS `writev` is not
+a retry. `ffs_epfile_io` dequeues the request, which stops the transfer
+wherever it is, and returns `EINTR`; Python's `os.writev` then re-issues the
+whole call, so the host receives the start of the message twice and the stream
+is lost from there. modeld is exactly the process this happens to: msgq wakes
+its subscriber threads with `SIGUSR2` for every camera frame, ~160 a second.
+`strace -e trace=writev -e signal=all` on a live modeld showed four of them
+inside `writev` in 120 s, one per link failure that run. `FfsTransport` masks
+signals for the duration of a write and for the life of its reader thread.
+
+That one bug wore several faces on the car, all at ~1 in 400 frames: bad magic
+on the Jetson (the replayed prefix read as a header), `NOT_READY` (a fresh
+server session answering the next frame), `NOT_FINITE` (a request assembled
+from two frames' bytes overflowing fp16 in the queues), a duplicate request
+with the same seq, and a 3 s frame timeout. It never showed on the bench with
+`bench_link`, `verify_parity`, the replay tool or a scripted reconnect loop,
+because none of them run next to camerad. Only the live bench below did.
+
+Three things in the transport came out of that session and stay for defence
+in depth: the host reads exactly what the current message still needs and
+never across its end, the gadget pads every message to a 16 KB burst so
+nothing it sends ends on a short packet, and the server drops a request whose
+seq it has already answered. Each was measured not to be the cause on its own.
+The server also drains a desynced gadget rather than reopening it: reopening
+took a packet per session at 100 Hz, the comma's frame timeout never fired,
+and modeld sat inside one `writev` for the rest of the run.
+
 ### Is it actually running
 
 `modelV2.big` is the signal. `JetlinkModelState` sets it; the small-model fallback
@@ -421,8 +450,22 @@ python3 scripts/verify_parity.py compare   --dir out
 tools/jetlink_replay.py --segment /data/media/0/realdata/<seg> --frames 60
 ```
 
-`jetlinkd` owns the link offroad, so stop it first or all three time out waiting
+```bash
+# 4. the whole thing, live. camerad and the real modeld on the bench, with a
+#    fake disengaged selfdriveState so the joining state swaps. This is the
+#    only one that reproduced the FunctionFS signal bug; run it for a few
+#    minutes before any car test. Lives in the fork.
+tools/jetlink_live_bench.sh 180
+```
+
+`jetlinkd` owns the link offroad, so stop it first or all four time out waiting
 for a gadget that is already held.
+
+The replay tool runs modeld under a fresh `OPENPILOT_PREFIX`, which moves
+`Paths.comma_home()` and with it the warp cache, and it never delivered
+`selfdriveState`, so the joining state assumed engaged forever. Both are
+handled in the tool now; if it reports every frame on the small model, check
+those first.
 
 `--spec spec.json` still works everywhere as an override; dump one from the
 device param with `json.dumps(Params().get("JetlinkSpec"))`.
