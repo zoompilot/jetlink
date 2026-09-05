@@ -49,6 +49,50 @@ def make_spec() -> ModelSpec:
                    checkpoint=None)
 
 
+@pytest.mark.parametrize('identity', ['../escape', '/tmp/escape', '', 'a'*63, 'z'*64])
+def test_model_identity_cannot_escape_the_cache(tmp_path, identity):
+  cache = EngineCache(tmp_path)
+  for resolve in (cache.entry, cache.model_path):
+    with pytest.raises(ValueError, match='SHA-256'):
+      resolve(identity)
+  with pytest.raises(ValueError, match='SHA-256'):
+    Request(identity, 100, 4)
+
+
+@pytest.mark.parametrize('payload', [b'', (1234).to_bytes(8, 'little') + b'x'])
+def test_invalid_upload_does_not_create_a_file(tmp_path, payload):
+  from types import SimpleNamespace
+  sent = []
+  spec = make_spec()
+  session, _ = ready_session(spec, SimpleNamespace(send=lambda *args: sent.append(args)), cache=tmp_path)
+  session.on_upload_chunk(SimpleNamespace(seq=1, payload=memoryview(payload)))
+  assert sent[0][0] == P.Msg.ERROR
+  assert not session.host.cache.model_path(spec.sha256).exists()
+
+
+@pytest.mark.parametrize('kind', ['wrong_frame', 'short_header', 'short_output'])
+def test_invalid_inference_response_abandons_the_stream(kind):
+  from types import SimpleNamespace
+  spec = make_spec()
+  payload = P.pack_infer_resp(42 if kind == 'wrong_frame' else 7, P.Status.OK, 0, 0, 0)
+  payload += bytes(spec.output_nbytes)
+  if kind == 'short_header':
+    payload = payload[:P.INFER_RESP_SIZE-1]
+  elif kind == 'short_output':
+    payload = payload[:-1]
+  transport = SimpleNamespace(send=lambda *a, **kw: None,
+                              recv=lambda **kw: SimpleNamespace(msg_type=P.Msg.INFER_RESP, seq=1,
+                                                               payload=memoryview(payload)))
+  client = JetlinkClient(transport)
+  client.spec = spec
+  seq = client.infer_begin(bytes(spec.warped_nbytes), bytes(spec.packed_nbytes), frame_id=7)
+  with pytest.raises(LinkError):
+    client.infer_end(seq)
+  assert client.dead
+  with pytest.raises(LinkError, match='previously failed'):
+    client.infer_begin(bytes(spec.warped_nbytes), bytes(spec.packed_nbytes), frame_id=8)
+
+
 class FakeEngine:
   """Returns something deterministic that depends on the inputs, so a wiring
   mistake between the queues and the engine cannot pass unnoticed."""

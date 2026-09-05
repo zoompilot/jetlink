@@ -6,4 +6,4 @@ See the LICENSE file in the root directory for more details.
 
 jetlink: run openpilot's large driving models on an attached Jetson.
 """
-__version__ = '0.1.0'
+__version__ = '0.2.0'

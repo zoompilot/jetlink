@@ -74,6 +74,7 @@ class JetlinkClient:
     self.last_timings = (0, 0, 0)  # gpu_us, queue_us, total_us as measured server-side
     self.last_state: dict | None = None  # most recent piggybacked telemetry
     self._infer_started = 0.0
+    self._infer_frame_id: int | None = None
 
   # -- construction ---------------------------------------------------------
 
@@ -132,7 +133,9 @@ class JetlinkClient:
     """Wait for one specific reply, servicing anything unsolicited on the way."""
     end = None if timeout is None else time.monotonic() + timeout
     while True:
-      remaining = None if end is None else max(0.001, end - time.monotonic())
+      remaining = None if end is None else end - time.monotonic()
+      if remaining is not None and remaining <= 0:
+        raise LinkTimeout(f'timed out waiting for message type={msg_type} seq={seq}')
       msg = self.t.recv(timeout=remaining)
       if msg.msg_type == msg_type and msg.seq == seq:
         return msg
@@ -278,6 +281,7 @@ class JetlinkClient:
     flags = (P.Flag.RESET_QUEUES if reset else 0) | (P.Flag.WANT_STATE if want_state else 0)
     try:
       self._infer_started = time.monotonic()
+      self._infer_frame_id = frame_id
       self.t.send(P.Msg.INFER_REQ, seq, (P.pack_infer_req(frame_id, flags), warped, packed),
                   timeout=self.deadline if deadline is None else deadline)
     except LinkError:
@@ -305,11 +309,21 @@ class JetlinkClient:
     except LinkError:
       self.dead = True
       raise
+    if msg.payload.nbytes < P.INFER_RESP_SIZE:
+      self.dead = True
+      raise LinkError('inference response is missing its header')
     fid, status, gpu_us, queue_us, total_us = P.unpack_infer_resp(msg.payload)
     self.last_timings = (gpu_us, queue_us, total_us)
     if status != P.Status.OK:
+      self.dead = True
       raise LinkError(f"inference failed: {_name(P.Status, status)} (frame {fid})")
+    if fid != self._infer_frame_id:
+      self.dead = True
+      raise LinkError(f'inference response frame {fid}, expected {self._infer_frame_id}')
     end = P.INFER_RESP_SIZE + self.spec.output_nbytes
+    if msg.payload.nbytes < end:
+      self.dead = True
+      raise LinkError('inference response is missing model outputs')
     if msg.payload.nbytes > end:  # piggybacked telemetry
       try:
         self.last_state = json.loads(bytes(msg.payload[end:]))

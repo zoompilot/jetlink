@@ -71,6 +71,11 @@ class Request:
   nbytes: int
   frame_skip: int
 
+  def __post_init__(self):
+    EngineCache._validate_sha256(self.sha256)
+    if self.nbytes < 0 or self.frame_skip <= 0:
+      raise ValueError('invalid model size or frame skip')
+
 
 class EngineHost:
   """Process-wide owner of the loaded engine and of the build in flight.
@@ -468,8 +473,12 @@ class Session:
     req = self.request
     if req is None:
       return self._error(msg.seq, 'no_model', 'send ENGINE_REQ first')
+    if msg.payload.nbytes < 8:
+      return self._error(msg.seq, 'bad_upload', 'missing chunk offset')
     offset = int.from_bytes(bytes(msg.payload[:8]), 'little')
     data = msg.payload[8:]
+    if offset + data.nbytes > req.nbytes:
+      return self._error(msg.seq, 'bad_upload', 'chunk exceeds declared model size')
     path = self.host.cache.model_path(req.sha256)
     mode = 'r+b' if path.exists() and offset else 'wb'
     with open(path, mode) as f:

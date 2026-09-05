@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import errno
 import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -19,6 +20,23 @@ from jetlink.transport.base import StreamTransport
 from jetlink.spec import ModelSpec
 from jetlink.transport.base import LinkError, LinkTimeout
 from jetlink.transport.tcp import TcpTransport
+
+
+@pytest.mark.parametrize('msg_type,payload', [(P.Msg.PONG, b''), (P.Msg.PROGRESS, b'{}')])
+def test_unsolicited_messages_cannot_extend_a_reply_deadline(monkeypatch, msg_type, payload):
+  from jetlink import client as client_module
+  clock = [0.0]
+
+  def recv(timeout):
+    clock[0] += 0.02
+    assert clock[0] < 1.0, 'client kept consuming messages past its deadline'
+    return SimpleNamespace(msg_type=msg_type, seq=1, payload=memoryview(payload))
+
+  monkeypatch.setattr(client_module, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+  client = client_module.JetlinkClient(SimpleNamespace(recv=recv))
+  with pytest.raises(LinkTimeout):
+    client._expect(P.Msg.INFER_RESP, 2, 0.05)
+  assert clock[0] <= 0.08
 
 
 def make_pair() -> tuple[TcpTransport, TcpTransport]:
@@ -43,6 +61,14 @@ def test_header_roundtrip():
 def test_bad_magic_is_diagnosed():
   with pytest.raises(P.ProtocolError, match='magic'):
     P.unpack_header(b'\x00' * 32)
+
+
+@pytest.mark.parametrize('version', [1, P.VERSION + 1])
+def test_incompatible_release_is_rejected_before_payload(version):
+  raw = bytearray(P.pack_header(P.Msg.HELLO_RESP, 1, 0))
+  raw[4:6] = version.to_bytes(2, 'little')
+  with pytest.raises(P.ProtocolError, match='peer speaks protocol'):
+    P.unpack_header(raw)
 
 
 def test_payload_alignment_allows_zero_copy_views():

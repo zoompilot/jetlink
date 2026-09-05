@@ -90,6 +90,48 @@ def test_data_written_by_the_host_arrives_through_the_reader(mount):
     t.close()
 
 
+def test_inference_reply_spans_bounded_kernel_reads(mount, monkeypatch):
+  from types import SimpleNamespace
+
+  t = FfsTransport(str(mount))
+  reads = []
+  real_os = ffs.os
+
+  def readv(fd, buffers):
+    reads.append(sum(len(b) for b in buffers))
+    return real_os.readv(fd, buffers)
+
+  # Keep read requests below costly high-order kernel allocations, including
+  # when a response is larger than the buffer. Framing must reassemble it.
+  monkeypatch.setattr(ffs, 'os', SimpleNamespace(**{k: getattr(real_os, k) for k in dir(real_os) if k != 'readv'}, readv=readv))
+  try:
+    t._ensure_epfiles()
+    payload = np.arange(18452, dtype=np.float32).tobytes()
+    wire = P.pack_header(P.Msg.INFER_RESP, 7, len(payload)) + payload
+    host = real_os.open(mount / 'ep1', real_os.O_WRONLY)
+
+    def write_all():
+      remaining = memoryview(wire)
+      while remaining:
+        remaining = remaining[real_os.write(host, remaining):]
+
+    writer = threading.Thread(target=write_all, daemon=True)
+    writer.start()
+    try:
+      msg = t.recv(timeout=5.0)
+      writer.join(1.0)
+      assert not writer.is_alive()
+      assert bytes(msg.payload) == payload
+      assert msg.seq == 7
+      assert len(reads) >= 5
+      assert max(reads) <= 16 * 1024
+      assert all(n % ffs.SS_MAX_PACKET == 0 for n in reads)
+    finally:
+      real_os.close(host)
+  finally:
+    t.close()
+
+
 def test_padded_messages_survive_the_chunked_reader(mount):
   """A message whose header plus payload is a packet multiple carries a pad
   byte; the reader hands over whatever the read returned, so the pad must be

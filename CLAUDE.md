@@ -7,6 +7,16 @@ what they are; `docs/openpilot-integration.md` covers the integration design.
 This file is the operational layer: the things that are not in the code, and the
 ones that have already cost a session to rediscover.
 
+## September 5 reliability review
+
+Read `docs/drive-2026-09-05-latency.md`, `docs/release-readiness.md`, and
+`docs/releasing.md` before deployment. They supersede older readiness claims
+below: the latest offline changes are not hardware-qualified or installed.
+Protocol 2 requires paired client/server updates; the fork now pins client
+source and the service requires an immutable image ID. Upgrades require fully
+disengaged controls, not merely standstill. USB power-role startup and the full
+parking/power lifecycle remain release blockers.
+
 ## The openpilot side
 
 Lives in the fork (`sunnypilot-jetson-trt` worktree), not here. jetlink is a plain

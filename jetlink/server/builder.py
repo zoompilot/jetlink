@@ -134,6 +134,7 @@ class EngineCache:
       d.mkdir(parents=True, exist_ok=True)
 
   def key(self, model_sha256: str) -> str:
+    self._validate_sha256(model_sha256)
     return f"{model_sha256[:16]}.trt{_sanitize(trt.__version__)}.{device_tag()}"
 
   def entry(self, model_sha256: str) -> CacheEntry:
@@ -141,7 +142,14 @@ class EngineCache:
     return CacheEntry(self.engines / f"{k}.plan", self.engines / f"{k}.json")
 
   def model_path(self, model_sha256: str) -> Path:
+    self._validate_sha256(model_sha256)
     return self.models / f"{model_sha256[:16]}.onnx"
+
+  @staticmethod
+  def _validate_sha256(value: str) -> None:
+    # Model identities arrive from the peer and become filesystem paths.
+    if re.fullmatch(r'[0-9a-f]{64}', value) is None:
+      raise ValueError('model identity must be a lowercase SHA-256 digest')
 
   def inventory(self) -> list[str]:
     """Model identities with plans compatible with this GPU and TensorRT."""

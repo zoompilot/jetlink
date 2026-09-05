@@ -22,7 +22,9 @@ import struct
 from enum import IntEnum
 
 MAGIC = 0x4B4E4C4A  # b'JLNK'
-VERSION = 1
+# Reliability release: do not silently pair the new client with a legacy
+# server. Model tensors are unchanged, so existing TensorRT plans remain usable.
+VERSION = 2
 
 # USB bulk streams have no length: a transfer ends at a packet shorter than the
 # endpoint's maximum, so a message whose total length is an exact multiple of

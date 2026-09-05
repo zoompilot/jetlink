@@ -29,6 +29,7 @@ from collections import deque
 
 from jetlink import protocol as P
 from jetlink.transport.base import LinkError, LinkTimeout, StreamTransport, take
+from jetlink.transport.watchdog import WriteWatchdog
 
 # --- FunctionFS ABI -------------------------------------------------------
 
@@ -48,7 +49,12 @@ EP_OUT = 0x01  # host -> device
 EP_IN = 0x82   # device -> host
 
 SS_MAX_PACKET = 1024
-READ_CHUNK = 256 * SS_MAX_PACKET  # 256 KB
+# FunctionFS kmallocs a contiguous kernel buffer for every read, even though
+# our userspace buffer is already allocated. The 2026-09-05 drive hit order-6
+# and order-5 allocation failures in ffs_epfile_read_iter, with 100-300 ms
+# reply stalls. Start below Linux's costly-allocation threshold instead of
+# waiting for ENOMEM to shrink a buffer after the frame budget is spent.
+READ_CHUNK = 16 * SS_MAX_PACKET
 # How much the reader thread may queue before it stops reading. The inference
 # path never needs more than one response; the cap only bounds memory if the
 # consumer stalls.
@@ -197,6 +203,7 @@ class FfsTransport(StreamTransport):
     self._open_lock = threading.Lock()
     self._write_aborted = False
     self._reader: threading.Thread | None = None
+    self._write_guard = WriteWatchdog(self._abort_write)
     try:
       self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
       os.write(self.ep0, build_descriptors())
@@ -311,7 +318,7 @@ class FfsTransport(StreamTransport):
   def _abort_write(self) -> None:
     """Take the link down so a write nobody is reading returns. See WRITE_TIMEOUT.
 
-    Runs on the timer thread, never on the one stuck in writev - that thread
+    Runs on the watchdog thread, never on the one stuck in writev - that thread
     cannot act, which is the whole problem.
     """
     self._write_aborted = True
@@ -322,12 +329,11 @@ class FfsTransport(StreamTransport):
   def _write(self, bufs: list[memoryview]) -> int:
     self._ensure_epfiles()
     self._write_budget = self._write_timeout(WRITE_TIMEOUT)
-    guard = threading.Timer(self._write_budget, self._abort_write)
-    guard.daemon = True
-    guard.start()
     # See _IO_SIGNALS: a signal here duplicates data on the wire.
     was = signal.pthread_sigmask(signal.SIG_BLOCK, _IO_SIGNALS)
     try:
+      if not self._write_guard.arm(self._write_budget):
+        raise LinkError('gadget write watchdog already expired or closed')
       while True:
         try:
           n = os.writev(self.ep_in, bufs)
@@ -348,8 +354,10 @@ class FfsTransport(StreamTransport):
             continue
           raise LinkError(f"gadget write failed: {e}") from e
     finally:
-      guard.cancel()
+      completed = self._write_guard.disarm()
       signal.pthread_sigmask(signal.SIG_SETMASK, was)
+      if not completed:
+        raise LinkError('gadget write had no reader before deadline; link abandoned')
 
   # -- the reader thread ---------------------------------------------------
 
@@ -365,8 +373,7 @@ class FfsTransport(StreamTransport):
       if self._closing:
         return
       # A fresh buffer per read: the chunk is handed to the consumer as is, so
-      # reusing one would overwrite bytes it has not copied out yet. 256 KB at
-      # 20 Hz is nothing next to the frame itself.
+      # reusing one would overwrite bytes it has not copied out yet.
       if not self._configured():
         # Same trap as _ensure_epfiles, one loop later: the host can drop our
         # configuration between two reads, and a readv issued after that sleeps
@@ -466,6 +473,11 @@ class FfsTransport(StreamTransport):
 
   def close(self) -> None:
     self._closing = True
+    self._write_guard.close()
+    self._write_guard.thread.join(READER_JOIN_TIMEOUT)
+    if self._write_guard.thread.is_alive():
+      # Keep ownership rather than allow a late abort to unbind a new owner.
+      raise LinkError('gadget watchdog teardown did not finish')
     # Unbinding disables the endpoints, which completes the reader's pending
     # request with ESHUTDOWN and lets the thread exit before its fd goes away.
     self.unbind()
