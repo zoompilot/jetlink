@@ -16,9 +16,21 @@ Without --spec the only correlation available is over the whole output vector,
 and 16384 of its 18452 values are hidden_state, so a wrong head hides behind a
 right recurrence. That mode proves load, shape and finiteness, nothing more.
 With the model spec each output slice and each column within it is checked,
-the same test verify_parity.py makes.
+the same test verify_parity.py makes, on the one frame this has: a column with
+one value per frame cannot be correlated, so verify_parity's multi-frame
+capture is where columns are really judged.
 
     python3 scripts/verify_engine.py --engine <plan> --inputs <dir> --ref ref_out.npy --spec spec.json
+
+--capture answers a different question: did the comma receive what the engine
+computed? It replays a verify_parity capture (in_warped_*, in_packed_* and the
+out_link_* the comma got back) through the same PolicyQueues, pinned inputs
+and CUDA graph the server uses, and demands the engine's output equal the
+link's bit for bit. Passing means every difference verify_parity then shows
+against onnxruntime is inference precision, not transport. Used 2026-09-05 to
+rule the USB path out of a per-column parity failure: 16 of 16 frames identical.
+
+    python3 scripts/verify_engine.py --engine <plan> --capture <dir from verify_parity capture>
 """
 from __future__ import annotations
 
@@ -36,16 +48,59 @@ from jetlink.server.engine import TrtEngine
 from verify_parity import MIN_CORR, load_spec_file, report_slices
 
 
+def replay_capture(engine: TrtEngine, d: Path) -> int:
+  """Feed a verify_parity capture through the server's own path and compare with out_link_*."""
+  from jetlink.queues import PolicyQueues
+
+  spec = load_spec_file(d / 'spec.json')
+  queues = PolicyQueues(spec)
+  host_inputs = {n: engine.host_input(n) for n in engine.inputs}
+  # Same warm-up as EngineHost._warm: one zero frame, then the graph capture,
+  # so the replay runs the kernels the server runs.
+  queues.step_into(np.zeros(spec.warped_shape, np.uint8), np.zeros(spec.packed_nelem, np.float32), host_inputs)
+  engine.run()
+  if engine.capture_graph():
+    engine.run()
+  queues.reset()
+
+  n = len(list(d.glob('in_warped_*.npy')))
+  if not n:
+    print(f'no captured inputs in {d}', file=sys.stderr)
+    return 1
+  bad = 0
+  for i in range(n):
+    # in_packed_i already carries the hidden state the link returned for frame
+    # i-1: capture writes it after patching, so the server saw exactly this.
+    queues.step_into(np.load(d / f'in_warped_{i}.npy'), np.load(d / f'in_packed_{i}.npy'), host_inputs)
+    out = np.asarray(next(iter(engine.run().values())).reshape(-1), np.float32)
+    link = np.load(d / f'out_link_{i}.npy').reshape(-1)
+    same = np.array_equal(out, link)
+    bad += not same
+    print(f'frame {i:2d}: {"identical" if same else "DIFFERS"} to the link, '
+          f'{np.count_nonzero(out != link)} values, max abs {np.abs(out - link).max():.6f}')
+  if bad:
+    print(f'{bad} of {n} frames differ: the link did not carry the engine output unchanged', file=sys.stderr)
+    return 2
+  print(f'OK: the comma received the engine output bit for bit on all {n} frames')
+  return 0
+
+
 def main() -> int:
   p = argparse.ArgumentParser()
   p.add_argument('--engine', required=True)
-  p.add_argument('--inputs', required=True, help='dir with in_<name>.npy per model input')
+  p.add_argument('--inputs', help='dir with in_<name>.npy per model input')
+  p.add_argument('--capture', help='replay a verify_parity capture dir and require bit-identity with out_link_*')
   p.add_argument('--ref', help='reference output .npy')
   p.add_argument('--spec', help='model spec json: compare per output slice instead of one number')
   p.add_argument('--iters', type=int, default=50)
   args = p.parse_args()
 
+  if not args.capture and not args.inputs:
+    p.error('one of --inputs or --capture is required')
+
   engine = TrtEngine(args.engine)
+  if args.capture:
+    return replay_capture(engine, Path(args.capture))
   print('engine inputs:')
   for n, b in engine.inputs.items():
     print(f'  {n:<20} {str(b.shape):<24} {b.dtype}')
@@ -77,11 +132,10 @@ def main() -> int:
               f'and {len(ref)} in the reference', file=sys.stderr)
         return 2
       print('per output slice:')
-      gate = report_slices(spec, out, ref)
-      bad = {k: v for k, v in gate.items() if v < MIN_CORR}
+      passed = report_slices(spec, out, ref)
+      bad = sorted(k for k, ok in passed.items() if not ok)
       if bad:
-        print(f'FAIL: {len(bad)} slice(s) below corr {MIN_CORR}, whole or in a column: '
-              + ', '.join(f'{k} {v:.6f}' for k, v in sorted(bad.items(), key=lambda kv: kv[1])),
+        print(f'FAIL: {len(bad)} slice(s) below corr {MIN_CORR}, whole or in a column: ' + ', '.join(bad),
               file=sys.stderr)
         return 2
       print(f'OK: every slice and every column at or above corr {MIN_CORR}')

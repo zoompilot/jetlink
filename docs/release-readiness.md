@@ -153,6 +153,51 @@ benchmarks for optimizations and preserving stock logging semantics. Acceptance
 of the whole feature must be discussed, not assumed:
 https://docs.comma.ai/CONTRIBUTING/
 
+## Bench validation with the Jetson back, September 5 afternoon
+
+Bench: comma on fork `7ba3b9df50` with Jetlink `5f06840` sources at
+`/data/jetlink_repo`; Jetson container image `4d0cec7051bd`, TensorRT 10.3.0,
+Orin-sm87; model Cinque Terre `e8d82173`, 766 MB. Raw outputs are on the comma
+under `/data/jetlink-validation.E7gLQa/` and locally under
+`/private/tmp/jetlink-validation-20260905.PBB3NV/`. These are bench runs with
+synthetic or disengaged inputs, not vehicle qualification.
+
+| Check | Result |
+| --- | --- |
+| On-device suite (Jetlink tests, accelerators, model-manager download, modeld_v2 tests) under an isolated prefix | 446 passed, 3 skipped, 2 min 46 s |
+| Local Jetlink suite | 130 passed, 1 skipped (`test_queues` needs tinygrad) |
+| QCOM small-model reset, 100 resets | p50 / p99 / max 0.90 / 3.34 / 4.19 ms; the four frames after a reset matched fresh-state raw outputs exactly |
+| Live disengaged bench, camerad and modeld (`tools/jetlink_bench.py`), 3390 frames | big-model execution p50 / p99 / p99.9 / max 34.3 / 36.3 / 38.1 / 54.4 ms; one frame over 50 ms; no lagging frames; 0% filtered drop |
+| Same bench with two injected server stalls, 5758 frames | the 500 ms write watchdog fired twice; modeld fell back to the small model and rejoined 5 s later both times. Each fallback cost a 550 ms small-model frame, a peak filtered drop of 4.74% and 640 frames flagged lagging (209 big, 431 small), which on the car is `modeldLagging` |
+| Numerical parity, TensorRT over USB against onnxruntime on the unmodified ONNX, 32 frames | passes. Every whole slice at or above 0.99992 on every frame, every pooled column at or above 0.99933; the largest disagreement on any head value is 0.81 (lead x near 130 m, seven float16 steps) |
+| Transport, `verify_engine.py --capture` inside the container | the plan replayed through the server's own queues and CUDA graph equalled the bytes the comma received bit for bit on 16 of 16 frames; two captures 15 min apart were also bit-identical |
+
+What the parity result is and is not. The ONNX is float16 end to end, output
+tensor included, so onnxruntime is a second float16 implementation, not an FP32
+truth, and no FP32 reference exists for this model. The two disagree by roughly
+0.005 to 0.03 absolute per head value, scaling with each output's weights. Plan
+position and velocity errors are typically 0.5 to 1.5% of the model's own
+predicted standard deviation for that element, worst case 92% (lateral
+position on a synthetic scene). The inputs are synthetic gradients, not road
+frames.
+
+The morning's failure (plan 0.9976, lead_prob 0.9982) was the check, not the
+link: per-frame correlation over three logits, over columns that have one value
+per frame, and over a roll column that is identically near zero. The gate now
+pools frames (`MIN_SAMPLES`, `CONSTANT_FRACTION`) with `MIN_CORR` unchanged at
+0.999, and injected wiring bugs (swapped columns, off-by-one slice, swapped
+mu/std halves, a stale frame) still fail it with correlations below 0.94 or
+negative. A second defect, an unbounded `action_t` ramp in the synthetic input
+generator, drove the model out of distribution past 16 frames (the plan ran
+backwards at -74 m with metre-sized disagreement) and is bounded now. These
+thresholds are engineering choices, not derived from a safety requirement; the
+numerical check that matters for the car is still the closed-loop replay of
+real segments against the small model.
+
+Not covered this afternoon: the bounded-read A/B, suspend/resume and cold-boot
+repeats, long soaks and vehicle testing listed in
+`drive-2026-09-05-latency.md`.
+
 ## Validation required before public driving support
 
 Local validation limitations: the complete accelerator suite crashed in native

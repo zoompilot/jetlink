@@ -660,7 +660,7 @@ python3 scripts/bench_link.py --ffs --wait-host 60 --sha256 <oid> --nbytes <size
 #    per output slice and per column. This is what validates any graph surgery.
 #    The queues are NOT independent here (both sides use jetlink.queues);
 #    tests/test_queues.py against tinygrad on the comma is the queue check.
-python3 scripts/verify_parity.py capture   --sha256 <oid> --nbytes <size> --dir out --ffs --n 4   # on the comma
+python3 scripts/verify_parity.py capture   --sha256 <oid> --nbytes <size> --dir out --ffs   # on the comma, 32 frames; never fewer than 16
 python3 scripts/verify_parity.py reference --onnx model.onnx --dir out
 python3 scripts/verify_parity.py compare   --dir out
 
@@ -695,10 +695,31 @@ into the source tree.
 `--spec spec.json` still works everywhere as an override; dump one from the
 device param with `json.dumps(Params().get("JetlinkSpec"))`.
 
-Correlation, not absolute tolerance, is the bar in `verify_parity`: FP16 against
-FP32 on a 40 layer network never matches exactly, but correlation moves the moment
-a head is wired up wrong, transposed or fed a stale queue. `MIN_CORR = 0.999`.
-Healthy runs sit at 0.99997 and above on every slice.
+Correlation, not absolute tolerance, is the bar in `verify_parity`, because a
+wrong head, a transposed column or a stale queue moves correlation and an
+absolute tolerance waves them through. `MIN_CORR = 0.999`. What it compares is
+two float16 implementations: the ONNX is float16 end to end, output tensor
+included, so onnxruntime is not an FP32 truth, and the two disagree by roughly
+0.005 to 0.03 absolute per head value (2026-09-05, Cinque Terre). Healthy whole
+slices sit at 0.9999 and above per frame.
+
+Columns and slices are gated on all frames pooled. Per frame, lead_prob is three
+logits and every pose, euler and road_transform column is one value: the old
+per-frame column gate read 1.0 on those (so they were never checked) and 0.9976
+on flat plan columns (rounding noise against rounding noise), which is the
+2026-09-05 "failure". The link had nothing to do with it: two captures were
+bit-identical, and the plan replayed on the Jetson equalled the bytes the comma
+received on every frame. Pooling needs frames: the one-value-per-frame columns
+read 0.95 over 4 frames and 0.9993 over 16, so capture at least 16; the default
+is 32. The synthetic inputs are bounded for that reason. The generator used to
+ramp `action_t` by 0.05 s a frame, and past frame 20 the plan ran backwards at
+-74 m with metre-sized disagreement between the two float16 implementations.
+
+Before blaming the link for any numeric mismatch, run
+`verify_engine.py --capture <dir>` inside the container: it replays a capture
+through the server's own queues and CUDA graph and demands the bytes the comma
+received, bit for bit. Identical bytes end the transport conversation; the
+remainder is inference precision and belongs to the model, not the cable.
 
 ## Working on the comma
 
@@ -859,13 +880,20 @@ carry the same flags: `--restart unless-stopped --runtime nvidia
 With `--sleep-after`, no gadget for that long deep-suspends the Jetson, and
 any USB edge wakes it with the engine still loaded (`server/sleep.py`,
 `docs/transport.md`). On the bench that means: kill jetlinkd on the comma and
-two minutes later the Jetson is asleep and ssh is gone. Starting jetlinkd
-again wakes it in ~6 s. The freezer refuses to freeze an ssh session's
-processes sometimes, so a bench attempt can fail with `EBUSY` where the car
-would not; the server logs `suspend failed` and retries with backoff. The
-proof it slept is `/sys/power/suspend_stats/success` moving, and the server
-logs `resumed after N s asleep`. `sudo rtcwake -m no -s 600` before a bench
-test arms a safety alarm in case the wake path breaks.
+two minutes later the Jetson is asleep and ssh is gone, and so is the LAN: a
+Jetson that answers nothing on the network with a MAC still in `arp -an` is
+asleep, not broken. Starting jetlinkd again wakes it in ~6 s, but a dormant
+jetlinkd releases the gadget again a minute later, so to keep the Jetson
+reachable while working on it hold the gadget from the comma with a small
+client that opens ffs, sends hello and pings every 10 s. Kill that with
+SIGTERM: a background job from a non-interactive shell ignores SIGINT.
+
+The freezer refuses to freeze an ssh session's processes sometimes, so a bench
+attempt can fail with `EBUSY` where the car would not; the server logs
+`suspend failed` and retries with backoff. The proof it slept is
+`/sys/power/suspend_stats/success` moving, and the server logs `resumed after
+N s asleep`. `sudo rtcwake -m no -s 600` before a bench test arms a safety
+alarm in case the wake path breaks.
 
 jetlinkd releases the gadget a minute after it has nothing to do (the fork's
 `DORMANT_HOLD`), so on the bench a freshly started jetlinkd puts the Jetson

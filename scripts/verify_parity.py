@@ -24,6 +24,18 @@ identically on both sides and cannot show up here. tests/test_queues.py is the
 queue check: it compares against openpilot's own tinygrad implementation and
 passes on the comma, where both are importable.
 
+What the numbers can resolve. The graph is float16 end to end (weights, the
+output tensor, the reference's own output), so TensorRT and onnxruntime are
+two float16 implementations that differ in accumulation order, not a half
+precision engine against a full precision truth. Measured on Cinque Terre,
+2026-09-05: the disagreement is roughly an absolute 0.005 to 0.03 across the
+2068 head values, with lead x (~130 m) worst at 0.875, seven float16 steps. A
+column whose values spread less than that cannot be judged by correlation,
+and a slice of three values cannot be judged by correlation on one frame; see
+MIN_SAMPLES and CONSTANT_FRACTION. The transport was ruled out the same day by
+`verify_engine.py --capture`, which replays a capture through the plan on the
+Jetson and demands the bytes the comma received, bit for bit.
+
     # 1. on the comma, over the cable (stop jetlinkd first, it owns the link).
     #    the server returns the spec of a model it already has, so only the
     #    model's identity is needed; --spec overrides it
@@ -46,10 +58,29 @@ import numpy as np
 
 from jetlink.spec import ModelSpec
 
-# FP16 against FP32 on a 40-layer network, so exact equality is not the bar.
-# Correlation is: it moves the moment a head is wired up wrong, transposed or
-# fed a stale queue, all of which an absolute tolerance would wave through.
+# Two float16 implementations of a 40-layer network, so exact equality is not
+# the bar. Correlation is: it moves the moment a head is wired up wrong,
+# transposed or fed a stale queue, all of which an absolute tolerance would
+# wave through.
 MIN_CORR = 0.999
+
+# Correlation needs samples. Per frame, lead_prob is three logits and every
+# pose, euler and road_transform column is one value: three points correlate at
+# 0.998 over float16 rounding, and one point correlates at exactly 1.0 with
+# anything, which is how those columns went unchecked until 2026-09-05. Slices
+# and columns are gated on all captured frames pooled, a column with fewer
+# pooled values than this is reported but not gated, and only a slice at least
+# this wide is gated per frame as well. Measured on the 2026-09-05 capture, the
+# one-value-per-frame columns read 0.95 pooled over 4 frames and 0.9993 over
+# 16, so capture's default is 32 frames and compare warns below 16.
+MIN_SAMPLES = 16
+
+# A column whose reference values spread less than this fraction of its slice
+# is constant at float16 resolution (2^-11 relative). wide_from_device_euler's
+# roll is ~1e-6 rad beside pitch and yaw of ~7, and correlating its rounding
+# noise against the reference's read 0.9877. Such a column is held to an
+# absolute error inside that same fraction of the slice spread instead.
+CONSTANT_FRACTION = 1e-3
 
 # How openpilot's Parser reads each regression head (parse_model_outputs.py):
 # the raw slice is `hypotheses` blocks of [mu | std | selection], mu and std
@@ -111,9 +142,19 @@ def make_inputs(spec: ModelSpec, n: int, seed: int = 0) -> list[tuple[np.ndarray
       if name == 'traffic_convention':
         packed[off:off + size] = np.array([1.0, 0.0][:size])
       elif name == 'action_t':
-        packed[off:off + size] = 0.05 * (i + 1)
+        # Lateral and longitudinal action horizons, in seconds: modeld sends
+        # the actuator delays plus a frame, 0.2 to 0.4 s on a real car. This
+        # used to ramp 0.05 s a frame, which at 32 frames asked for a 1.6 s
+        # horizon; by frame 20 the plan ran backwards at -74 m and the two
+        # float16 implementations disagreed by metres there. Bounded, so the
+        # model stays in distribution however many frames are captured.
+        packed[off:off + size] = np.array([0.25 + 0.1 * np.sin(0.5 * i), 0.35 + 0.1 * np.cos(0.5 * i)][:size])
       elif name == 'desire':
-        packed[off + (i % size)] = 1.0
+        # A pulse every eighth frame, cycling through the seven real desires;
+        # index 0 is "none" and modeld zeroes it. One pulse a frame was not a
+        # drive anyone takes.
+        if i % 8 == 0:
+          packed[off + 1 + (i // 8) % (size - 1)] = 1.0
       off += size
     frames.append((warped, packed))
   return frames
@@ -274,30 +315,60 @@ def columns(name: str, a: np.ndarray) -> dict[str, np.ndarray] | None:
   return None
 
 
-def compare_slice(name: str, a: np.ndarray, b: np.ndarray) -> tuple[float, float, str]:
-  """Whole-slice correlation, the worst column's, and which column that was ('' if none)."""
-  whole = _corr(a, b)
-  ca, cb = columns(name, a), columns(name, b)
-  if not ca:
-    return whole, whole, ''
-  per = {k: _corr(ca[k], cb[k]) for k in ca}
-  worst = min(per, key=per.get)
-  return whole, per[worst], worst
+def _frames(x) -> list[np.ndarray]:
+  """One array or a list of per-frame arrays, as flat float32 frames."""
+  seq = x if isinstance(x, (list, tuple)) else [x]
+  return [np.asarray(f, np.float32).reshape(-1) for f in seq]
 
 
-def report_slices(spec: ModelSpec, link: np.ndarray, ref: np.ndarray) -> dict[str, float]:
-  """One line per output slice. Returns the number each slice is gated on:
-  the lower of its whole-slice correlation and its worst column's."""
-  gate = {}
+def report_slices(spec: ModelSpec, links, refs) -> dict[str, bool]:
+  """One line per output slice with every frame pooled. Returns whether each passed.
+
+  A slice passes when its pooled correlation and every column's clear MIN_CORR.
+  A column flatter than CONSTANT_FRACTION of its slice is judged on absolute
+  error within that fraction instead, because correlation over what is left of
+  it is rounding noise against rounding noise.
+  """
+  links, refs = _frames(links), _frames(refs)
+  passed = {}
   for name, sl in sorted(spec.output_slices.items()):
-    a, b = link[sl], ref[sl]
-    whole, col_c, col = compare_slice(name, a, b)
-    gate[name] = min(whole, col_c)
-    flag = '' if gate[name] >= MIN_CORR else '   <-- FAIL'
-    cols = f"worst col {col_c:8.6f} {col:8}" if col else f"{'(compared whole)':27}"
-    print(f"    {name:24} corr {whole:8.6f}  {cols}  max abs {np.abs(a - b).max():8.4f}  "
+    a = np.concatenate([x[sl] for x in links])
+    b = np.concatenate([y[sl] for y in refs])
+    whole = _corr(a, b)
+    ok = whole >= MIN_CORR
+    detail = f"{'(compared whole)':38}"
+    cols_a = [columns(name, x[sl]) for x in links]
+    if cols_a[0]:
+      cols_b = [columns(name, y[sl]) for y in refs]
+      bound = CONSTANT_FRACTION * b.std()
+      worst_c, worst_k, failed, flat, thin = 2.0, '', [], 0, 0
+      for k in cols_a[0]:
+        ca = np.concatenate([c[k] for c in cols_a])
+        cb = np.concatenate([c[k] for c in cols_b])
+        if ca.size < MIN_SAMPLES:
+          thin += 1
+          continue
+        c = _corr(ca, cb)
+        if cb.std() < bound:
+          flat += 1
+          if np.abs(ca - cb).max() > bound:
+            failed.append(f'{k} flat, max abs {np.abs(ca - cb).max():.4g} > {bound:.4g}')
+          continue
+        if c < worst_c:
+          worst_c, worst_k = c, k
+        if c < MIN_CORR:
+          failed.append(f'{k} {c:.6f}')
+      ok &= not failed
+      notes = ([f'{flat} flat'] if flat else []) + ([f'{thin} under {MIN_SAMPLES} samples, not gated'] if thin else [])
+      worst = f"worst col {worst_c:8.6f} {worst_k:8}" if worst_k else f"{'no column gated':27}"
+      detail = f"{worst} {f'({', '.join(notes)})' if notes else '':9}"
+      if failed:
+        detail += '  cols: ' + ', '.join(failed)
+    passed[name] = ok
+    flag = '' if ok else '   <-- FAIL'
+    print(f"    {name:24} corr {whole:8.6f}  {detail}  max abs {np.abs(a - b).max():8.4f}  "
           f"mean abs {np.abs(a - b).mean():7.5f}{flag}")
-  return gate
+  return passed
 
 
 def compare(args) -> int:
@@ -309,7 +380,7 @@ def compare(args) -> int:
   if not n:
     raise SystemExit(f"no captured outputs in {d}")
 
-  worst = {}
+  links, refs = [], []
   for i in range(n):
     link = np.load(d / f'out_link_{i}.npy').reshape(-1)
     ref_path = d / f'out_ref_{i}.npy'
@@ -317,17 +388,38 @@ def compare(args) -> int:
       raise SystemExit(f"missing {ref_path}; run reference first")
     ref = np.load(ref_path).reshape(-1)
     m = min(len(link), len(ref))
-    print(f"\nframe {i}: corr {_corr(link[:m], ref[:m]):.6f}  "
-          f"max abs {np.abs(link[:m] - ref[:m]).max():.4f}")
-    for name, c in report_slices(spec, link, ref).items():
-      worst[name] = min(worst.get(name, 2.0), c)
+    links.append(link[:m])
+    refs.append(ref[:m])
 
-  bad = {k: v for k, v in worst.items() if v < MIN_CORR}
+  # Per frame, the whole-slice correlation: a stale queue or a dropped reset
+  # shows on the frame it happens to. Slices too small to correlate on one
+  # frame are only gated pooled, below.
+  frame_fail: dict[str, float] = {}
+  for i, (link, ref) in enumerate(zip(links, refs)):
+    print(f"\nframe {i}: corr {_corr(link, ref):.6f}  max abs {np.abs(link - ref).max():.4f}")
+    for name, sl in sorted(spec.output_slices.items()):
+      a, b = link[sl], ref[sl]
+      c = _corr(a, b)
+      gated = sl.stop - sl.start >= MIN_SAMPLES
+      if gated and c < MIN_CORR:
+        frame_fail[name] = min(frame_fail.get(name, 2.0), c)
+      flag = '   <-- FAIL' if gated and c < MIN_CORR else ('' if gated else '   (pooled only)')
+      print(f"    {name:24} corr {c:8.6f}  max abs {np.abs(a - b).max():8.4f}  "
+            f"mean abs {np.abs(a - b).mean():7.5f}{flag}")
+
+  print(f"\npooled over {n} frames, per slice and per column:")
+  if n < MIN_SAMPLES:
+    print(f"    only {n} frames: columns with one value per frame (pose, euler, road_transform) "
+          f"have too few samples to gate; capture at least {MIN_SAMPLES}")
+  passed = report_slices(spec, links, refs)
+
+  bad = [f'{k} {v:.6f} on one frame' for k, v in sorted(frame_fail.items(), key=lambda kv: kv[1])]
+  bad += [f'{k} pooled' for k, ok in passed.items() if not ok and k not in frame_fail]
   if bad:
-    print(f"\nFAIL: {len(bad)} slice(s) below corr {MIN_CORR}, whole or in a column: "
-          + ', '.join(f'{k} {v:.6f}' for k, v in sorted(bad.items(), key=lambda kv: kv[1])))
+    print(f"\nFAIL: {len(bad)} slice(s) below corr {MIN_CORR}, whole or in a column: " + ', '.join(bad))
     return 1
-  print(f"\nOK: every slice and every column at or above corr {MIN_CORR} on all {n} frames")
+  print(f"\nOK: every slice and every column at or above corr {MIN_CORR}, "
+        f"per frame and pooled over all {n} frames")
   return 0
 
 
@@ -339,7 +431,8 @@ def main() -> int:
   p.add_argument('--sha256', help='capture mode: model identity, when the server already has it')
   p.add_argument('--nbytes', type=int, help='capture mode: ONNX size in bytes, with --sha256')
   p.add_argument('--dir', default='parity')
-  p.add_argument('--n', type=int, default=3)
+  p.add_argument('--n', type=int, default=32,
+                 help=f'capture mode: frames; pose-like columns have one value per frame and need {MIN_SAMPLES}+')
   p.add_argument('--seed', type=int, default=0)
   p.add_argument('--onnx', help='reference mode: the ONNX the engine was built from')
   p.add_argument('--ffs', action='store_true', help='capture mode: this end is the gadget')
