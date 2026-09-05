@@ -66,6 +66,28 @@ EP_READY_TIMEOUT = 10.0
 # Separate from EP_READY_TIMEOUT, which covers a host that has configured us
 # but has not claimed the interface yet.
 EP_OPEN_TIMEOUT = 10.0
+
+# How long a write may sit with the host not reading before we take the link
+# down ourselves. FunctionFS writes cannot time out: the request is queued on
+# an enabled endpoint and os.writev returns when the host drains it, whenever
+# that is. A hello sent to a Jetson that has enumerated but whose server is not
+# reading blocks for as long as that stays true - measured 90 s while the
+# Jetson booted, and three minutes on a drive 2026-09-05, which the driver saw
+# as the big model simply never arriving. The join loop cannot retry what it is
+# blocked inside.
+#
+# Unbinding the UDC is the only lever. It dequeues the pending request, the
+# writev returns ESHUTDOWN, and the caller gets a LinkError it can retry -
+# which is exactly what happened by hand when the driver cycled offroad. Note
+# this works *because the endpoint is enabled*: unbind does not wake a read
+# waiting on an endpoint no host ever enabled, which is a different bug with a
+# different fix (see _ensure_epfiles).
+#
+# 15 s is far longer than any real write (a frame is ~3.6 ms) and short enough
+# that a stuck link costs one retry rather than a drive. Churning the gadget a
+# few times while a Jetson boots is harmless: the server polls for it and
+# re-enumeration is milliseconds.
+WRITE_TIMEOUT = 15.0
 UDC_SYSFS = '/sys/class/udc'
 # How long close() waits for the reader thread after unbinding, which is what
 # wakes it. A read the kernel will not complete is left to die with the process.
@@ -173,6 +195,7 @@ class FfsTransport(StreamTransport):
     self._closing = False
     self._had_host = False
     self._open_lock = threading.Lock()
+    self._write_aborted = False
     self._reader: threading.Thread | None = None
     try:
       self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
@@ -285,8 +308,22 @@ class FfsTransport(StreamTransport):
   def _shrink_write(self) -> bool:
     return self._shrink('write_chunk')
 
+  def _abort_write(self) -> None:
+    """Take the link down so a write nobody is reading returns. See WRITE_TIMEOUT.
+
+    Runs on the timer thread, never on the one stuck in writev - that thread
+    cannot act, which is the whole problem.
+    """
+    self._write_aborted = True
+    log.warning("jetlink: no reader for %.0f s, dropping the gadget to free the write",
+                WRITE_TIMEOUT)
+    self.unbind()
+
   def _write(self, bufs: list[memoryview]) -> int:
     self._ensure_epfiles()
+    guard = threading.Timer(WRITE_TIMEOUT, self._abort_write)
+    guard.daemon = True
+    guard.start()
     # See _IO_SIGNALS: a signal here duplicates data on the wire.
     was = signal.pthread_sigmask(signal.SIG_BLOCK, _IO_SIGNALS)
     try:
@@ -296,6 +333,10 @@ class FfsTransport(StreamTransport):
           self._had_host = True
           return n
         except OSError as e:
+          if self._write_aborted:
+            # Our own doing, not the host's: say so, because "no such device"
+            # on its own reads like a cable falling out.
+            raise LinkError(f"gadget write had no reader for {WRITE_TIMEOUT:.0f}s") from e
           # FunctionFS submits a write as one request, so a failed writev put
           # nothing on the wire and is safe to retry.
           if e.errno in _NOT_READY and self._wait_for_host_ready():
@@ -306,6 +347,7 @@ class FfsTransport(StreamTransport):
             continue
           raise LinkError(f"gadget write failed: {e}") from e
     finally:
+      guard.cancel()
       signal.pthread_sigmask(signal.SIG_SETMASK, was)
 
   # -- the reader thread ---------------------------------------------------

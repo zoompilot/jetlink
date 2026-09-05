@@ -22,7 +22,7 @@ import pytest
 
 from jetlink import protocol as P
 from jetlink.transport import ffs
-from jetlink.transport.base import LinkTimeout
+from jetlink.transport.base import LinkError, LinkTimeout
 from jetlink.transport.ffs import FfsTransport
 
 
@@ -151,3 +151,51 @@ def test_a_host_that_disconnects_mid_session_ends_the_link_at_once(tmp_path, mon
   state.write_text('configured\n')
   t._ready_deadline = None
   assert t._wait_for_host_ready() is True
+
+
+def test_the_watchdog_drops_the_link_so_a_stuck_write_can_return(mount, monkeypatch):
+  """FunctionFS writes cannot time out: the request sits on the endpoint until
+  the host drains it. A hello to a Jetson that has enumerated but whose server
+  is not reading blocked three minutes on a drive 2026-09-05, and the join loop
+  cannot retry what it is blocked inside. Unbinding the UDC is the only lever,
+  and it works here because the endpoint is enabled - unlike a read on an
+  endpoint no host ever enabled, which unbind does not touch (_ensure_epfiles).
+  """
+  t = FfsTransport(str(mount))
+  try:
+    unbound = []
+    monkeypatch.setattr(t, 'unbind', lambda: unbound.append(True))
+    t._abort_write()
+    assert t._write_aborted and unbound, "the watchdog must drop the link, not just flag it"
+
+    # Once aborted, the write reports our own doing rather than retrying
+    # through the host-ready grace period.
+    t._ensure_epfiles()
+    os.close(t.ep_in)
+    t.ep_in = -1                      # any failure will do; the flag decides the message
+    with pytest.raises(LinkError) as e:
+      t._write([memoryview(b'x')])
+    assert 'no reader' in str(e.value), str(e.value)
+  finally:
+    t.ep_in = -1                      # already closed; keep close() off it
+    t.close()
+
+
+def test_a_write_that_completes_leaves_the_link_alone(mount, monkeypatch):
+  # The guard must not fire on a healthy write; unbinding a working link would
+  # turn a slow frame into a dropped one.
+  monkeypatch.setattr(ffs, 'WRITE_TIMEOUT', 5.0)
+  t = FfsTransport(str(mount))
+  try:
+    t._ensure_epfiles()
+    unbound = []
+    monkeypatch.setattr(t, 'unbind', lambda: unbound.append(True))
+    host = os.open(mount / 'ep2', os.O_RDONLY | os.O_NONBLOCK)
+    try:
+      t.send(P.Msg.HELLO_REQ, 1, (b'hello',))
+    finally:
+      os.close(host)
+    assert not unbound
+    assert not t._write_aborted
+  finally:
+    t.close()
