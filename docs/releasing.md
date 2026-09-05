@@ -1,7 +1,16 @@
 # Paired release and rollback
 
 This is a bench-validation procedure, not authorization to deploy a public
-driving release. September 5 changes have not been installed on either device.
+driving release.
+
+Installed pair as of 2026-09-05 17:40 UTC: fork `ee2116199` (jetson-trt) with
+Jetlink `58686cf5`, source digest `a2741f0d…`, protocol 2. Comma: `/data/jetlink_repo`
+verified against the lock, previous package kept at `/data/jetlink_repo.prev-5f06840`,
+fork applied through the updater and a reboot. Jetson: image `jetlink:58686cf`,
+ID `sha256:c300ccd1d053…`, built from `/mnt/data/jetlink-src/58686cf`, pinned in
+`/etc/jetlink/server.env` (previous ID kept in `server.env.prev-5f06840`),
+service enabled, rebooted. Rollback is the previous pair: fork `7ba3b9df50`,
+`jetlink_repo.prev-5f06840`, `jetlink:5f06840` (`4d0cec7051bd`).
 
 ## Compatibility
 
