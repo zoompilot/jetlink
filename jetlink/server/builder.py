@@ -143,6 +143,19 @@ class EngineCache:
   def model_path(self, model_sha256: str) -> Path:
     return self.models / f"{model_sha256[:16]}.onnx"
 
+  def inventory(self) -> list[str]:
+    """Model identities with plans compatible with this GPU and TensorRT."""
+    found = []
+    for meta in self.engines.glob('*.json'):
+      try:
+        sha = json.loads(meta.read_text())['spec']['sha256']
+        if (isinstance(sha, str) and re.fullmatch(r'[0-9a-f]{64}', sha)
+            and self.entry(sha).meta_path == meta and self.entry(sha).exists):
+          found.append(sha)
+      except (OSError, ValueError, KeyError, TypeError):
+        continue
+    return sorted(set(found))
+
   def remember_loaded(self, sha256: str, frame_skip: int) -> None:
     """Record what is loaded, for the next process to preload.
 

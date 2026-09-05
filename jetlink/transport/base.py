@@ -42,7 +42,7 @@ class Transport(ABC):
   """
 
   @abstractmethod
-  def send(self, msg_type: int, seq: int, parts=(), flags: int = 0) -> None:
+  def send(self, msg_type: int, seq: int, parts=(), flags: int = 0, timeout: float | None = None) -> None:
     """Send one message. `parts` is an iterable of buffers, sent as one message."""
 
   @abstractmethod
@@ -143,6 +143,15 @@ class StreamTransport(Transport):
   def __init__(self, rx_size: int = 1 << 20):
     self.rx = RxBuffer(rx_size)
     self._desynced = False
+    self._send_deadline: float | None = None
+
+  def _write_timeout(self, default: float | None = None) -> float | None:
+    if self._send_deadline is None:
+      return default
+    remaining = self._send_deadline - time.monotonic()
+    if remaining <= 0:
+      raise LinkError('send timed out; link abandoned')
+    return remaining
 
   # -- primitives a subclass must provide ----------------------------------
 
@@ -161,7 +170,7 @@ class StreamTransport(Transport):
 
   # -- framing -------------------------------------------------------------
 
-  def send(self, msg_type: int, seq: int, parts=(), flags: int = 0) -> None:
+  def send(self, msg_type: int, seq: int, parts=(), flags: int = 0, timeout: float | None = None) -> None:
     # cast('B') matters: slicing a memoryview of a float32 array in _advance
     # would step by elements, not bytes.
     bufs = [memoryview(p).cast('B') for p in parts]
@@ -177,11 +186,16 @@ class StreamTransport(Transport):
       bufs.append(memoryview(_PAD)[:1])
     header = P.pack_header(msg_type, seq, length, flags)
     bufs.insert(0, memoryview(header))
-    while bufs:
-      n = self._write(take(bufs, self.write_chunk) if self.write_chunk else bufs)
-      if n <= 0:
-        raise LinkError("peer went away during send")
-      bufs = advance(bufs, n)
+    self._send_deadline = None if timeout is None else time.monotonic() + timeout
+    try:
+      while bufs:
+        self._write_timeout()
+        n = self._write(take(bufs, self.write_chunk) if self.write_chunk else bufs)
+        if n <= 0:
+          raise LinkError("peer went away during send")
+        bufs = advance(bufs, n)
+    finally:
+      self._send_deadline = None
 
   def _clamp_read(self, dest: memoryview) -> int:
     """How many bytes this transport may ask for in one read."""

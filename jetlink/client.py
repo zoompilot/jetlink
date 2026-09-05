@@ -73,6 +73,7 @@ class JetlinkClient:
     self.dead = False
     self.last_timings = (0, 0, 0)  # gpu_us, queue_us, total_us as measured server-side
     self.last_state: dict | None = None  # most recent piggybacked telemetry
+    self._infer_started = 0.0
 
   # -- construction ---------------------------------------------------------
 
@@ -261,7 +262,7 @@ class JetlinkClient:
   # -- inference ------------------------------------------------------------
 
   def infer_begin(self, warped: np.ndarray, packed: np.ndarray, frame_id: int = 0,
-                  reset: bool = False, want_state: bool = False) -> int:
+                  reset: bool = False, want_state: bool = False, deadline: float | None = None) -> int:
     """Send a frame and return immediately with its sequence number.
 
     Split from infer_end so the caller can do useful work while the Jetson is
@@ -276,7 +277,9 @@ class JetlinkClient:
     seq = self._next_seq()
     flags = (P.Flag.RESET_QUEUES if reset else 0) | (P.Flag.WANT_STATE if want_state else 0)
     try:
-      self.t.send(P.Msg.INFER_REQ, seq, (P.pack_infer_req(frame_id, flags), warped, packed))
+      self._infer_started = time.monotonic()
+      self.t.send(P.Msg.INFER_REQ, seq, (P.pack_infer_req(frame_id, flags), warped, packed),
+                  timeout=self.deadline if deadline is None else deadline)
     except LinkError:
       self.dead = True
       raise
@@ -291,7 +294,11 @@ class JetlinkClient:
     the small model is the right place to be.
     """
     try:
-      msg = self._expect(P.Msg.INFER_RESP, seq, self.deadline if deadline is None else deadline)
+      budget = self.deadline if deadline is None else deadline
+      remaining = budget - (time.monotonic() - self._infer_started)
+      if remaining <= 0:
+        raise LinkTimeout('frame deadline elapsed during send')
+      msg = self._expect(P.Msg.INFER_RESP, seq, remaining)
     except LinkTimeout as e:
       self.dead = True
       raise LinkError(f"no answer for frame in {self.deadline:.1f}s; link abandoned") from e
@@ -321,7 +328,7 @@ class JetlinkClient:
     buffer - a tinygrad `Tensor.data()` memoryview goes straight to the wire
     with no numpy round trip. Sent as-is: no copy on the TCP path, one on USB.
     """
-    return self.infer_end(self.infer_begin(warped, packed, frame_id, reset, want_state), deadline)
+    return self.infer_end(self.infer_begin(warped, packed, frame_id, reset, want_state, deadline), deadline)
 
   def close(self) -> None:
     self.t.close()

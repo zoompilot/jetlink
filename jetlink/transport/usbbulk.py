@@ -118,7 +118,7 @@ class UsbBulkTransport(StreamTransport):
       # One transfer, not several: multiple writes would let the host scheduler
       # interleave and show up as jitter.
       return self.handle.bulkWrite(self.ep_out, memoryview(self._tx)[:total],
-                                   timeout=self.timeout_ms)
+                                   timeout=self._ms(self._write_timeout()))
     except usb1.USBErrorTimeout as e:
       # Report what actually went out so the caller resends only the remainder;
       # claiming zero would duplicate bytes the device already has.

@@ -315,13 +315,14 @@ class FfsTransport(StreamTransport):
     cannot act, which is the whole problem.
     """
     self._write_aborted = True
-    log.warning("jetlink: no reader for %.0f s, dropping the gadget to free the write",
-                WRITE_TIMEOUT)
+    log.warning("jetlink: no reader for %.3f s, dropping the gadget to free the write",
+                getattr(self, '_write_budget', WRITE_TIMEOUT))
     self.unbind()
 
   def _write(self, bufs: list[memoryview]) -> int:
     self._ensure_epfiles()
-    guard = threading.Timer(WRITE_TIMEOUT, self._abort_write)
+    self._write_budget = self._write_timeout(WRITE_TIMEOUT)
+    guard = threading.Timer(self._write_budget, self._abort_write)
     guard.daemon = True
     guard.start()
     # See _IO_SIGNALS: a signal here duplicates data on the wire.
@@ -336,7 +337,7 @@ class FfsTransport(StreamTransport):
           if self._write_aborted:
             # Our own doing, not the host's: say so, because "no such device"
             # on its own reads like a cable falling out.
-            raise LinkError(f"gadget write had no reader for {WRITE_TIMEOUT:.0f}s") from e
+            raise LinkError(f"gadget write had no reader for {self._write_budget:.3f}s") from e
           # FunctionFS submits a write as one request, so a failed writev put
           # nothing on the wire and is safe to retry.
           if e.errno in _NOT_READY and self._wait_for_host_ready():

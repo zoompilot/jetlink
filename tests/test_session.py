@@ -29,7 +29,7 @@ from jetlink import protocol as P                          # noqa: E402
 from jetlink.client import JetlinkClient                   # noqa: E402
 from jetlink.queues import PolicyQueues                    # noqa: E402
 from jetlink.server.builder import EngineCache             # noqa: E402
-from jetlink.server.session import EngineHost, Loaded, Request, Session  # noqa: E402
+from jetlink.server.session import EngineHost, Job, Loaded, Request, Session  # noqa: E402
 from jetlink.spec import ModelSpec                         # noqa: E402
 from jetlink.transport.base import LinkError               # noqa: E402
 from jetlink.transport.tcp import TcpTransport             # noqa: E402
@@ -209,6 +209,22 @@ def test_ping_and_state_requests(link):
   assert hello['protocol'] == P.VERSION
 
 
+def test_frame_deadline_includes_time_spent_sending(link, monkeypatch):
+  client, _, _, spec = link
+  send = client.t.send
+
+  def delayed_send(*args, **kwargs):
+    send(*args, **kwargs)
+    time.sleep(0.08)
+
+  monkeypatch.setattr(client.t, 'send', delayed_send)
+  client.deadline = 0.05
+  with pytest.raises(LinkError, match='link abandoned'):
+    client.infer(np.zeros(spec.warped_nbytes // 4, np.float32),
+                 np.zeros(spec.packed_nelem, np.float32))
+  assert client.dead
+
+
 def test_shutdown_replies_before_leaving_the_flag(link, tmp_path):
   from jetlink.server import power
   client, session, engine, spec = link
@@ -315,6 +331,20 @@ class TestPreload:
     cache.remember_loaded(spec.sha256, spec.frame_skip)
     return cache
 
+  @pytest.mark.parametrize('requested_sha', ['b' * 64, 'c' * 64])
+  def test_request_during_load_returns_without_locking_out_completion(self, tmp_path, requested_sha):
+    host = EngineHost(EngineCache(tmp_path))
+    host.job = Job('b' * 64, load_only=True)
+    result = []
+    worker = threading.Thread(target=lambda: result.append(
+      host.request(Request(requested_sha, 1234, 4), None)), daemon=True)
+    worker.start()
+    worker.join(1.0)
+    assert not worker.is_alive(), 'request deadlocked while an engine was loading'
+    assert result[0]['state'] == 'building'
+    assert host.lock.acquire(timeout=1.0), 'the load worker cannot publish its result'
+    host.lock.release()
+
   def test_the_last_loaded_engine_is_remembered_and_preloaded(self, tmp_path):
     spec = make_spec()
     cache = self._cache(tmp_path, spec)
@@ -332,6 +362,13 @@ class TestPreload:
     host._start = lambda *a: started.append(a)
     host.preload()
     assert started == []
+
+  def test_inventory_requires_a_compatible_plan_and_spec(self, tmp_path):
+    spec = make_spec()
+    cache = self._cache(tmp_path, spec)
+    assert cache.inventory() == [spec.sha256]
+    cache.entry(spec.sha256).plan_path.unlink()
+    assert cache.inventory() == []
 
   def test_a_plan_whose_sidecar_has_no_spec_is_left_alone(self, tmp_path):
     # Deriving one means parsing the ONNX, which is real work to do on a guess.

@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -49,10 +48,9 @@ def _serve(cache: EngineCache, open_transport, sleeper: Sleeper | None = None) -
   With a `sleeper`, a long enough run of None suspends the box; see sleep.py.
   """
   host = EngineHost(cache, Telemetry())
-  # Before the first client, not after it: see EngineHost.preload. Off the
-  # poll thread because deserializing a 1.7 GB plan would otherwise be time
-  # spent not looking for the gadget that is about to arrive.
-  threading.Thread(target=host.preload, daemon=True, name='jetlink-preload').start()
+  # preload starts its own load worker. Reserve that job before accepting a
+  # request, so two callers cannot race to start independent GPU loads.
+  host.preload()
   while True:
     transport = open_transport()
     if transport is None:

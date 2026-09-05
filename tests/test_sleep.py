@@ -186,7 +186,7 @@ def test_serve_loop_sleeps_only_on_absence(tmp_path, clock, monkeypatch):
 
   monkeypatch.setattr(M.time, 'sleep', lambda t: None)
   with pytest.raises(Stop):
-    M._serve(None, opener, s)  # EngineHost(None, ...) is fine: it loads lazily
+    M._serve(M.EngineCache(tmp_path / 'cache'), opener, s)
   # 60 s, 120 s: slept at the second poll, then woke and looked again at once.
   assert s.slept == 1
 

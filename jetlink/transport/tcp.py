@@ -52,7 +52,7 @@ class TcpTransport(StreamTransport):
     # sendmsg keeps the header and a 460 KB body in one syscall, and with
     # TCP_NODELAY that goes out as one segment train rather than a small header
     # packet followed by the body.
-    self._set_timeout(None)
+    self._set_timeout(self._write_timeout())
     try:
       return self.sock.sendmsg(bufs)
     except OSError as e:

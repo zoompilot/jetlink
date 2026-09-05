@@ -190,12 +190,46 @@ def test_a_write_that_completes_leaves_the_link_alone(mount, monkeypatch):
     t._ensure_epfiles()
     unbound = []
     monkeypatch.setattr(t, 'unbind', lambda: unbound.append(True))
-    host = os.open(mount / 'ep2', os.O_RDONLY | os.O_NONBLOCK)
+    host = os.open(mount / 'ep2', os.O_RDONLY)
+    # A padded message can exceed a FIFO's capacity (8 KB on macOS). Having
+    # an fd open is not enough: the fake host must actually drain the write.
+    def drain():
+      remaining = P.GADGET_TX_ALIGN
+      while remaining:
+        remaining -= len(os.read(host, remaining))
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
     try:
       t.send(P.Msg.HELLO_REQ, 1, (b'hello',))
+      reader.join(1.0)
+      assert not reader.is_alive()
     finally:
       os.close(host)
     assert not unbound
     assert not t._write_aborted
   finally:
+    t.close()
+
+
+def test_send_deadline_aborts_a_blocked_kernel_write(mount, monkeypatch):
+  from types import SimpleNamespace
+  t = FfsTransport(str(mount))
+  released = threading.Event()
+  try:
+    t._ensure_epfiles()
+    monkeypatch.setattr(t, 'unbind', released.set)
+
+    def blocked(*args):
+      assert released.wait(1.0), 'write watchdog did not run'
+      raise OSError(108, 'endpoint shutdown')
+
+    # Replace this module's reference, not the process-wide os.writev.
+    monkeypatch.setattr(ffs, 'os', SimpleNamespace(writev=blocked))
+    started = time.monotonic()
+    with pytest.raises(LinkError, match='no reader'):
+      t.send(P.Msg.INFER_REQ, 1, (b'frame',), timeout=0.05)
+    assert time.monotonic() - started < 0.5
+    assert released.is_set()
+  finally:
+    monkeypatch.undo()
     t.close()

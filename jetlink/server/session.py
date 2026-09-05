@@ -101,7 +101,11 @@ class EngineHost:
     alone would answer "ready" and serve it the other client's spec.
     """
     with self.lock:
-      loaded, job = self.loaded, self.job
+      return self._status(sha256, frame_skip)
+
+  def _status(self, sha256: str | None, frame_skip: int | None = None) -> dict:
+    """Snapshot while holding lock, including callers already inside request."""
+    loaded, job = self.loaded, self.job
     if sha256 is None:
       return {'state': 'none', 'detail': '', 'sha256': None, 'chunk': CHUNK}
     if (loaded is not None and loaded.sha256 == sha256
@@ -133,7 +137,7 @@ class EngineHost:
       if self.job is not None and self.job.state == 'building':
         # Either it is this model, and the client simply attaches to the build
         # that is already running, or another build owns the GPU right now.
-        return self.status(req.sha256, req.frame_skip)
+        return self._status(req.sha256, req.frame_skip)
     entry = self.cache.entry(req.sha256)
     model_path = self.cache.model_path(req.sha256)
     spec = self._spec_on_disk(entry, model_path, req.frame_skip)
@@ -447,6 +451,7 @@ class Session:
       'engine_state': self.host.status(*self._wanted())['state'],
       'loaded': self.host.loaded_sha(),
       'frames_served': self.frames,
+      'cached_models': self.host.cache.inventory(),
       'telemetry': self.telemetry.read(),
     })
 
