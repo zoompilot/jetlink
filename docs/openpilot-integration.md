@@ -158,29 +158,42 @@ when the alternator is running, or with ignition wired to the button header.
 
 ## Reusing chestnut's surfaces
 
-Nothing in cereal, the UI or the alerts changed. modeld sets
+modeld sets
 `ChestnutLoading`/`ChestnutActive` for whichever accelerator is active, except
 that a model state which is still bringing its accelerator up (`loading` is
 true on the object `make_model_state` returned) owns both for the drive: for a
 Jetson the load is never over, because it can join, leave and join again.
 `ChestnutLoading` is true while the small model proxies and false while the
-large one runs, so selfdrived's "Big Model Ready" is the swap and nothing
-else; `ChestnutActive` is absent while proxying, true at the swap and false at
+large one runs. selfdrived's "Big Model Ready" follows the first valid big-model
+frame; `ChestnutActive` is absent while proxying, true after first inference and false at
 a demote, which gets a chestnut's soft disable so the driver hears that the
 plan changed under them.
 
-The swap lands on a disengaged frame or on a standstill. Disengaged alone was
-not enough: a driver who engages at the ramp and lifts off at their exit gives
-the join nowhere to land, and "the Jetson was ready the whole time and never got
-used" is what that shape of drive produced. At a standstill the plan is not
-turning a wheel or asking for acceleration, so the step between two models that
-disagree by ~195 m of planned path lands on nothing. A drive that is neither -
-engaged from the driveway to the destination without ever stopping - still runs
-small, on purpose. selfdrived only makes "Big Model Loading" a NO_ENTRY
+The swap requires fresh, fully disengaged controls, including MADS lateral and
+longitudinal activity. Standstill alone does not permit a swap: longitudinal
+control can still hold the brake or request a restart. A driver who remains
+engaged keeps running the small model. selfdrived only makes "Big Model Loading" a NO_ENTRY
 while nothing publishes `modelV2`, so a Jetson that takes a whole drive to
 arrive never keeps the driver off the small model. That used to be a 60 s
 `LOADING_TIMEOUT` in the joining state, and the edge read as ready to
 selfdrived and as "unavailable" to the UI while the join was still trying.
+
+When a connected engine is waiting for disengagement, modeld publishes
+`modelDataV2SP.bigModelAvailable`. selfdrived announces "Big Model Available"
+with "Disengage to switch" once on its rising edge. mici uses the shorter title
+"Model Available" to fit its display. The alert is informational and does not
+disengage controls. A keepalive ping does not rearm it; a confirmed pending-link
+loss clears availability. Missing or invalid model messages cannot announce or
+rearm availability. The existing "Big Model Ready" still confirms execution
+after switching, including when the Jetson was available before engagement.
+
+The availability field and event are additive sunnypilot schema changes. The
+field defaults to false for older logs, Chestnut and other startup-only runners.
+No comma schema fields, Chestnut loading policy, accelerator icons or provisioning
+params change. Availability describes the onroad model instance, not the cached
+engine or the home-screen readiness indicator. This keeps the notification
+independent of backend identity and of the separately fixed USB icon detection.
+
 This backend publishes `chestnutState`, with Tegra sysfs mapped onto chestnut's fields (`tempC` ← tj-thermal, `powerDrawW` ←
 INA3221 VDD_IN, `pcieLtssm` ← `0x78` when the link is up, so existing "link
 down" logic keeps working). The Jetson reports neutral field names; the openpilot
