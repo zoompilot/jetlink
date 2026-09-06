@@ -16,12 +16,75 @@ and it works unprivileged inside the container.
 """
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 THERMAL = Path('/sys/devices/virtual/thermal')
 GPU = Path('/sys/devices/platform/bus@0/17000000.gpu')
 GPU_DEVFREQ = Path('/sys/class/devfreq/17000000.gpu')
 HWMON = Path('/sys/class/hwmon')
+
+
+class CachedTelemetry:
+  """One sensor worker per server, with bounded refresh rate and sample age.
+
+  Sensor IO never holds the snapshot lock. Inference does not wait for a stuck
+  read, and reconnects do not spawn more workers. Age starts before sampling, so a slow
+  sensor read cannot make old measurements look fresh when it finally returns.
+  """
+
+  def __init__(self, source, period: float = 0.1, max_age: float = 1.0):
+    if period <= 0 or max_age < period:
+      raise ValueError('require 0 < period <= max_age')
+    self.source = source
+    self.period = period
+    self.max_age = max_age
+    self._cv = threading.Condition()
+    self._sample: dict = {}
+    self._sample_time = float('-inf')
+    self._next_read = 0.0
+    self._requested = False
+    self._closed = False
+    self.thread = threading.Thread(target=self._run, name='jetlink-health', daemon=True)
+    self.thread.start()
+
+  def read(self) -> dict:
+    now = time.monotonic()
+    with self._cv:
+      if self._closed:
+        return {}
+      if now >= self._next_read:
+        self._requested = True
+        self._cv.notify()
+      return dict(self._sample) if now - self._sample_time <= self.max_age else {}
+
+  def close(self) -> None:
+    # Do not join a worker that could be blocked in a sensor's kernel driver.
+    with self._cv:
+      self._closed = True
+      self._cv.notify()
+
+  def _run(self) -> None:
+    while True:
+      with self._cv:
+        while not self._requested and not self._closed:
+          self._cv.wait()
+        if self._closed:
+          return
+        self._requested = False
+        started = time.monotonic()
+        self._next_read = float('inf')
+      try:
+        sample = self.source.read()
+      except Exception:
+        sample = {}
+      with self._cv:
+        self._sample = sample
+        self._sample_time = started
+        self._next_read = time.monotonic() + self.period
+        self._cv.notify_all()
+
 
 def _read(path: Path, default=None):
   # Broad except on purpose: the cv*-thermal zones on an Orin Nano have no

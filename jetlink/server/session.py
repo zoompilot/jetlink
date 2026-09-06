@@ -32,7 +32,7 @@ import numpy as np
 
 from jetlink import protocol as P
 from jetlink.server.builder import CacheEntry, EngineCache, build_engine
-from jetlink.server.telemetry import Telemetry
+from jetlink.server.telemetry import CachedTelemetry, Telemetry
 from jetlink.spec import CHUNK, DEFAULT_FRAME_SKIP, ModelSpec, sha256_file, spec_from_onnx
 from jetlink.transport.base import LinkError, LinkTimeout, Message, Transport
 
@@ -88,7 +88,7 @@ class EngineHost:
 
   def __init__(self, cache: EngineCache, telemetry: Telemetry | None = None):
     self.cache = cache
-    self.telemetry = telemetry or Telemetry()
+    self.telemetry = CachedTelemetry(telemetry if telemetry is not None else Telemetry())
     self.lock = threading.Lock()
     self.loaded: Loaded | None = None
     self.job: Job | None = None
@@ -308,6 +308,7 @@ class EngineHost:
       log.info("engine %s unloaded", loaded.sha256[:16])
 
   def close(self) -> None:
+    self.telemetry.close()
     self._unload()
 
   # Seams the tests replace: everything below touches TensorRT or a real ONNX.
@@ -358,9 +359,7 @@ class Session:
     self.send_lock = threading.Lock()
     self.frames = 0
     self.last_seq = 0
-    # Primed here so the first health publish carries real values. Session
-    # construction is not latency sensitive; on_infer is.
-    self._telemetry_cache = json.dumps(self.telemetry.read()).encode()
+    self.telemetry.read()  # request the first sample without blocking connection setup
 
   # -- plumbing -------------------------------------------------------------
 
@@ -559,19 +558,17 @@ class Session:
     parts = [P.pack_infer_resp(frame_id, status, loaded.engine.last_gpu_us, queue_us, total_us),
              out32]
     if flags & P.Flag.WANT_STATE:
-      parts.append(self._telemetry_cache)
+      parts.append(json.dumps(self.telemetry.read()).encode())
+    send_started = time.perf_counter()
     self._send(P.Msg.INFER_RESP, msg.seq, parts)
+    send_us = int((time.perf_counter() - send_started) * 1e6)
     self.frames += 1
-    if total_us > SLOW_FRAME_US:
+    if total_us > SLOW_FRAME_US or send_us > 10_000:
       # After the reply, so the log write never delays it. The comma logs the
       # same frame split by its own stages; together they say which end, and
       # which stage of it, a slow frame belongs to.
-      log.warning("slow frame %d: gpu %.1f queue %.1f total %.1f ms", frame_id,
-                  loaded.engine.last_gpu_us / 1e3, queue_us / 1e3, total_us / 1e3)
-    if flags & P.Flag.WANT_STATE:
-      # ~30 sysfs reads. Refresh after replying, never between the GPU result
-      # and the wire: health data must not cost a frame.
-      self._telemetry_cache = json.dumps(self.telemetry.read()).encode()
+      log.warning("slow frame %d: gpu %.1f queue %.1f total %.1f send %.1f ms", frame_id,
+                  loaded.engine.last_gpu_us / 1e3, queue_us / 1e3, total_us / 1e3, send_us / 1e3)
 
   def on_shutdown(self, msg: Message) -> None:
     from jetlink.server.power import request_poweroff

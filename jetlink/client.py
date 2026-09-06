@@ -329,6 +329,12 @@ class JetlinkClient:
         self.last_state = json.loads(bytes(msg.payload[end:]))
       except ValueError:
         pass
+    receive = getattr(self.t, 'last_receive', None)
+    if receive is not None and time.monotonic() - self._infer_started > 0.05:
+      log.warning('frame %d receive maxima: prepare %.1f read_wait %.1f handoff %.1f ms; '
+                  'server gpu %.1f queue %.1f total %.1f ms', fid,
+                  receive['prepare'] * 1e3, receive['read_wait'] * 1e3, receive['handoff'] * 1e3,
+                  gpu_us / 1e3, queue_us / 1e3, total_us / 1e3)
     # copy: the payload is a view into the transport's reusable receive buffer.
     return np.frombuffer(msg.payload, np.float32, self.spec.output_nelem, P.INFER_RESP_SIZE).copy()
 

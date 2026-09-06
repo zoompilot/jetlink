@@ -122,6 +122,9 @@ class FakeEngine:
       self._out[5] = np.float16('nan')
     return {'outputs': self._out}
 
+  def close(self):
+    pass
+
 
 def ready_session(spec, transport, engine=None, cache='/tmp/jetlink-test-cache'):
   host = EngineHost(EngineCache(cache))
@@ -151,6 +154,8 @@ def link():
   yield client, session, engine, spec
   client.close()
   server_t.close()
+  thread.join(1.0)
+  session.host.close()
 
 
 def test_infer_round_trip(link):
@@ -215,11 +220,51 @@ def test_telemetry_piggybacks_without_an_extra_round_trip(link):
   warped = np.zeros(spec.warped_shape, np.uint8)
   packed = np.zeros(spec.packed_nelem, np.float32)
 
+  # Sampling is asynchronous; startup may legitimately carry no health yet.
+  health = session.host.telemetry
+  health.read()
+  with health._cv:
+    assert health._cv.wait_for(lambda: bool(health._sample), timeout=1.0)
+
   client.infer(warped, packed, want_state=False)
   assert client.last_state is None
   client.infer(warped, packed, want_state=True)
   assert client.last_state is not None
   assert 'temp_c' in client.last_state and 'power_w' in client.last_state
+
+
+def test_blocked_sensor_does_not_delay_following_inferences(link):
+  from jetlink.server.telemetry import CachedTelemetry
+
+  client, session, engine, spec = link
+  entered, release = threading.Event(), threading.Event()
+
+  class Sensor:
+    calls = 0
+
+    def read(self):
+      self.calls += 1
+      entered.set()
+      assert release.wait(3.0)
+      return {'temp_c': 65.0}
+
+  sensor = Sensor()
+  session.host.telemetry.close()
+  health = CachedTelemetry(sensor)
+  session.telemetry = session.host.telemetry = health
+  try:
+    health.read()
+    assert entered.wait(1.0)
+    warped = np.zeros(spec.warped_shape, np.uint8)
+    packed = np.zeros(spec.packed_nelem, np.float32)
+    for frame in range(3):
+      client.infer(warped, packed, frame_id=frame, want_state=True, deadline=0.5)
+      assert client.last_state == {}  # unavailable health must not look valid
+    assert engine.calls == 3
+    assert sensor.calls == 1
+  finally:
+    release.set()
+    health.close()
 
 
 def test_not_ready_is_reported_rather_than_crashing():
@@ -521,3 +566,26 @@ class TestTimingCache:
     name = EngineCache(tmp_path).timing_cache().name
     # A timing from another TensorRT version or another chip is not a timing.
     assert name.startswith('timing.trt') and name.endswith('.cache')
+
+
+def test_slow_reply_send_is_logged_even_when_inference_is_fast(tmp_path, monkeypatch, caplog):
+  from types import SimpleNamespace
+  from jetlink.server import session as session_module
+  from jetlink.transport.base import Message
+
+  clock = [1.0]
+
+  def send(*args):
+    clock[0] += .02
+
+  spec = make_spec()
+  session, engine = ready_session(spec, SimpleNamespace(send=send), cache=tmp_path)
+  monkeypatch.setattr(session_module, 'time', SimpleNamespace(perf_counter=lambda: clock[0]))
+  payload = P.pack_infer_req(42, 0) + bytes(spec.warped_nbytes + spec.packed_nbytes)
+  try:
+    session.on_infer(Message(P.Msg.INFER_REQ, 1, 0, memoryview(payload)))
+    assert engine.calls == 1
+    assert 'slow frame 42:' in caplog.text
+    assert 'total 0.0 send 20.0 ms' in caplog.text
+  finally:
+    session.host.close()

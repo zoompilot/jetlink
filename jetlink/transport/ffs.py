@@ -52,13 +52,28 @@ SS_MAX_PACKET = 1024
 # FunctionFS kmallocs a contiguous kernel buffer for every read, even though
 # our userspace buffer is already allocated. The 2026-09-05 drive hit order-6
 # and order-5 allocation failures in ffs_epfile_read_iter, with 100-300 ms
-# reply stalls. Start below Linux's costly-allocation threshold instead of
-# waiting for ENOMEM to shrink a buffer after the frame budget is spent.
+# reply stalls. 16 KB (order-2) stopped the failures. Going smaller to dodge
+# the rare *slow success* (an order-2 read reclaiming ~16 ms mid-frame under
+# memory pressure) was tried and reverted: at one page per read a 74 KB reply
+# takes ~19 syscalls and their wakeups added ~6 ms to every frame's baseline,
+# far more than the occasional reclaim it removed. The userspace side of the
+# per-read allocation is handled instead by recycling (see _read_loop); the
+# kernel side stays at 16 KB and leans on the free-memory floor the setup
+# script sets to keep order-2 off the direct-reclaim path.
 READ_CHUNK = 16 * SS_MAX_PACKET
 # How much the reader thread may queue before it stops reading. The inference
 # path never needs more than one response; the cap only bounds memory if the
 # consumer stalls.
 MAX_QUEUED = 8 << 20
+# How many read buffers to keep for reuse. The consumer copies each chunk out
+# and hands the buffer back; steady state has one or two in flight, so this is
+# only a ceiling for a transient backlog. 16 * 16 KB = 256 KB.
+FREE_BUFS = 16
+# SCHED_FIFO priority for the reader thread. modeld runs its frame loop at 54;
+# the reader sits just below so the loop always wins a contended core, but it
+# still preempts every SCHED_OTHER thread the way the loop does. See
+# _raise_reader_priority for why the reader needs this at all.
+READER_RT_PRIORITY = 51
 
 # A host enumerating us is not the same as a host being ready to talk: it still
 # has to open the device and claim the interface, and until it does the gadget's
@@ -187,15 +202,26 @@ class FfsTransport(StreamTransport):
 
   def __init__(self, mount: str = '/dev/ffs-jetlink', gadget: str | None = None,
                udc: str | None = None):
-    super().__init__(rx_size=2 << 20)
+    # The gadget end only ever receives replies - an INFER_RESP is ~74 KB of
+    # output plus telemetry and burst padding, well under 128 KB, and the
+    # control messages are smaller still. The whole model upload goes the other
+    # way (writes), so nothing large lands in this buffer. 256 KB is a 3x margin
+    # that RxBuffer still grows past on demand if the wire format ever changes;
+    # a 2 MB start was 1.75 MB of resident memory the memory-tight comma did not
+    # need. (In the unsupported gadget-on-Jetson inversion this end would take
+    # 458 KB requests - it grows to fit on the first one, once.)
+    super().__init__(rx_size=256 << 10)
     self.mount = mount
     self.gadget = gadget
     self.bound_udc: str | None = None
     self.ep0 = self.ep_out = self.ep_in = -1
+    self._state_fd = -1   # held-open UDC 'state' fd; see _udc_state
     self._ready_deadline: float | None = None
     self._read_size = READ_CHUNK
     self._cv = threading.Condition()
-    self._chunks: deque[memoryview] = deque()
+    self._chunks: deque[tuple[memoryview, float, float, float]] = deque()
+    self._free: deque[bytearray] = deque()   # read buffers the consumer handed back; see _read_loop
+    self.last_receive = {'prepare': 0.0, 'read_wait': 0.0, 'handoff': 0.0}
     self._queued = 0
     self._reader_error: str | None = None
     self._closing = False
@@ -220,15 +246,41 @@ class FfsTransport(StreamTransport):
       self.close()   # otherwise a failed bring-up leaks the descriptors it did open
       raise
 
+  def _udc_state(self) -> str | None:
+    """The controller's current gadget state, off a held-open fd.
+
+    The reader checks this before every readv - a readv on a deconfigured
+    endpoint sleeps in the kernel until a signal that never comes (see
+    _read_loop), so it cannot be skipped. Opening the sysfs file each time was
+    the cost: `open` walks dentries and allocates a struct file, and under
+    recording memory pressure that allocation reclaims - the 2026-09-06 bench
+    saw it stall 25 ms mid-frame (prepare 24.9 ms), straight over budget.
+    Holding the fd and re-reading it (lseek to 0, read) still re-runs the
+    attribute's show() so the value is current - verified on the device against
+    a fresh open across the state's values - but allocates nothing, so it cannot
+    stall. The controller outlives our bind/unbind, so the fd stays valid; it is
+    dropped on unbind and reopened lazily in case the controller ever differs.
+    """
+    if self.bound_udc is None:
+      return None
+    if self._state_fd < 0:
+      try:
+        self._state_fd = os.open(os.path.join(UDC_SYSFS, self.bound_udc, 'state'), os.O_RDONLY)
+      except OSError:
+        return None
+    try:
+      os.lseek(self._state_fd, 0, os.SEEK_SET)
+      return os.read(self._state_fd, 64).decode().strip()
+    except OSError:
+      _close_quietly(self._state_fd)
+      self._state_fd = -1
+      return None
+
   def _configured(self) -> bool:
     """Has a host set our configuration? Only then are the endpoints enabled."""
     if self.bound_udc is None:
       return self.gadget is None   # no controller of ours to ask; assume ready
-    try:
-      with open(os.path.join(UDC_SYSFS, self.bound_udc, 'state')) as f:
-        return f.read().strip() == 'configured'
-    except OSError:
-      return False
+    return self._udc_state() == 'configured'
 
   def _ensure_epfiles(self) -> None:
     """Open ep1/ep2 and start the reader, once a host has enabled them.
@@ -292,6 +344,9 @@ class FfsTransport(StreamTransport):
     except OSError:
       pass
     self.bound_udc = None
+    if self._state_fd >= 0:   # reopens lazily against whatever udc we bind next
+      _close_quietly(self._state_fd)
+      self._state_fd = -1
 
   def _shrink(self, attr: str) -> bool:
     """Halve a transfer size after the kernel refused to allocate for one.
@@ -308,6 +363,8 @@ class FfsTransport(StreamTransport):
     if current <= floor:
       return False
     setattr(self, attr, max(floor, current // 2))
+    if attr == '_read_size':
+      self._free.clear()   # pooled buffers are the old, larger size now
     log.warning("jetlink: gadget could not allocate for %s, dropping to %d KB",
                 attr, getattr(self, attr) >> 10)
     return True
@@ -325,6 +382,20 @@ class FfsTransport(StreamTransport):
     log.warning("jetlink: no reader for %.3f s, dropping the gadget to free the write",
                 getattr(self, '_write_budget', WRITE_TIMEOUT))
     self.unbind()
+
+  def send(self, *args, **kwargs) -> None:
+    # Start every message at the full write quantum. _shrink_write halves it on
+    # an ENOMEM, and once it has, a request larger than the shrunk size is split
+    # across two writes - which re-arms the dwc3 double-TRB replay that splitting
+    # was measured to cause (see write_chunk). The shrink must therefore last
+    # only as long as the memory pressure that forced it: the contiguous memory
+    # a 512 KB kmalloc failed for on one frame is almost always back by the next,
+    # and a request that fits one write must go out as one write. Resetting here,
+    # at each message boundary, keeps the split window to the frames actually
+    # under ENOMEM instead of latching every request split for the rest of the
+    # drive. A no-op for TCP, whose write_chunk is 0.
+    self.write_chunk = type(self).write_chunk
+    super().send(*args, **kwargs)
 
   def _write(self, bufs: list[memoryview]) -> int:
     self._ensure_epfiles()
@@ -361,17 +432,78 @@ class FfsTransport(StreamTransport):
 
   # -- the reader thread ---------------------------------------------------
 
+  def _widen_affinity(self) -> None:
+    """Move the reader off the one core modeld pinned its frame loop to.
+
+    On the comma this thread is created from modeld's frame thread, which has
+    run config_realtime_process(7, 54): a thread started after that inherits
+    SCHED_FIFO 54 *and* the single-core pin. Sharing that core with the frame
+    loop serialises them - a read that has completed on the endpoint cannot be
+    taken off it until the loop next blocks. Simply widening the mask to every
+    core was measured not to help: the balancer keeps waking this thread on the
+    core it last ran, next to the loop. So when the inherited mask is a single
+    core, run on every *other* core instead; the frame loop keeps its core to
+    itself and a completed read is serviced at once elsewhere. The priority is
+    left alone. A no-op where nothing pinned us (the mask is already several
+    cores - jetlinkd offroad, or any host). jetlink must not import openpilot,
+    so this open-codes what common.realtime.set_core_affinity would do.
+    """
+    try:
+      everything = set(range(os.cpu_count() or 1))
+      inherited = os.sched_getaffinity(0)
+      if len(inherited) == 1 and everything - inherited:
+        os.sched_setaffinity(0, everything - inherited)   # off the frame-loop core
+      elif everything - inherited:
+        os.sched_setaffinity(0, everything)               # unpinned already; just widen
+    except (OSError, AttributeError):
+      # No affinity call (macOS), or a kernel that will not move us. The
+      # priority still lets a completed read preempt normal work on our core.
+      pass
+
+  def _raise_reader_priority(self) -> None:
+    """Run the reader at realtime priority so a completed read is taken off the
+    endpoint at once, not behind whatever else the comma is running.
+
+    This thread is created during warmup, before modeld makes itself realtime,
+    so it inherits SCHED_OTHER at priority 0 - measured on the device. read_wait
+    brackets the whole readv, including the time this thread waits on the run
+    queue to return once the transfer is done, and under recording plus onroad
+    load that wait was 17 ms mean and 23 ms max, landing straight on read_wait
+    and over budget - the residual that looked like a kernel allocation stall
+    but is scheduling. The reader only copies a chunk and notifies before it
+    blocks in the next read, so realtime here preempts the contention without
+    ever holding a core. Below modeld's frame loop (54) so the loop still wins.
+    Best effort: a dev box without RTPRIO just keeps SCHED_OTHER and the slower
+    tail. jetlink must not import openpilot, so this open-codes the setscheduler.
+    """
+    try:
+      os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(READER_RT_PRIORITY))
+    except (OSError, AttributeError, ValueError):
+      pass
+
   def _read_loop(self) -> None:
     # The same hazard as _write, on the read side: an interrupted read drops
     # the packets it had already taken. This thread is ours and handles no
     # signals, so mask them for its whole life.
     signal.pthread_sigmask(signal.SIG_BLOCK, _IO_SIGNALS)
+    self._widen_affinity()
+    self._raise_reader_priority()
+    # Fill the recycle pool up front. Recycling alone only removes the hot-path
+    # allocation once the consumer has handed a buffer back; while a reply's
+    # chunks are still arriving, a frame-thread that is a scheduling beat behind
+    # (which CPU contention makes routine) has not recycled the last one yet, so
+    # the reader allocates the next - and that allocation reclaims under memory
+    # pressure (prepare 24 ms, over budget). Pre-allocating FREE_BUFS here, once,
+    # off the frame path, means the reader draws from the pool through that gap
+    # and only ever allocates if a stalled consumer lets it fall this far behind.
+    self._free.extend(bytearray(self._read_size) for _ in range(FREE_BUFS))
     while not self._closing:
       with self._cv:
         while self._queued >= MAX_QUEUED and not self._closing:
           self._cv.wait(0.1)
       if self._closing:
         return
+      prepare_started = time.monotonic()
       # A fresh buffer per read: the chunk is handed to the consumer as is, so
       # reusing one would overwrite bytes it has not copied out yet.
       if not self._configured():
@@ -383,7 +515,14 @@ class FfsTransport(StreamTransport):
           continue
         self._fail("host dropped the gadget configuration")
         return
-      buf = bytearray(self._read_size)
+      # Reuse a buffer the consumer handed back rather than allocating one on
+      # the hot path. A fresh bytearray here, like the kernel's own per-read
+      # kmalloc, reclaims under recording memory pressure - the 2026-09-06 bench
+      # measured this allocation stalling 20+ ms (prepare 24 ms) mid-frame, and
+      # the read cannot start until it returns. The reader is the only thread
+      # that pops the free list, so a bare check needs no lock.
+      buf = self._free.popleft() if self._free else bytearray(self._read_size)
+      read_started = time.monotonic()
       try:
         # Multiples of the packet size only: the OUT endpoint rejects anything
         # else, and _read_size is only ever halved from one.
@@ -400,10 +539,12 @@ class FfsTransport(StreamTransport):
       if got == 0:
         self._fail("gadget read returned EOF (host disconnected)")
         return
+      read_finished = time.monotonic()
       self._ready_deadline = None
       self._had_host = True
       with self._cv:
-        self._chunks.append(memoryview(buf)[:got])
+        self._chunks.append((memoryview(buf)[:got], read_finished,
+                             read_started - prepare_started, read_finished - read_started))
         self._queued += got
         self._cv.notify_all()
 
@@ -412,19 +553,37 @@ class FfsTransport(StreamTransport):
       self._reader_error = why
       self._cv.notify_all()
 
+  def recv(self, timeout: float | None = None):
+    # Per-message maxima, in seconds. read_wait includes waiting for the peer
+    # and kernel IO; handoff includes waiting for the consumer to run. Neither
+    # is a pure scheduler or USB transfer measurement. No logging on the reader.
+    self.last_receive = {'prepare': 0.0, 'read_wait': 0.0, 'handoff': 0.0}
+    return super().recv(timeout)
+
   def _read_into(self, dest: memoryview, timeout: float | None) -> int:
     self._ensure_epfiles()
     with self._cv:
       if not self._chunks and self._reader_error is None:
         self._cv.wait(timeout)
       if self._chunks:
-        chunk = self._chunks[0]
+        chunk, arrived, prepare, read_wait = self._chunks[0]
+        self.last_receive['prepare'] = max(self.last_receive['prepare'], prepare)
+        self.last_receive['read_wait'] = max(self.last_receive['read_wait'], read_wait)
+        self.last_receive['handoff'] = max(self.last_receive['handoff'], time.monotonic() - arrived)
         n = min(chunk.nbytes, dest.nbytes)
         dest[:n] = chunk[:n]
         if n < chunk.nbytes:
-          self._chunks[0] = chunk[n:]
+          self._chunks[0] = (chunk[n:], arrived, prepare, read_wait)
         else:
           self._chunks.popleft()
+          # The copy above is done and nothing else reads this chunk, so return
+          # its buffer to the reader's pool. chunk.obj is the bytearray readv
+          # filled (still so after a chunk[n:] reslice); skip anything that is
+          # not one of ours at the current size - a shrunk buffer, or a bytes
+          # object a test injected.
+          buf = chunk.obj
+          if type(buf) is bytearray and len(buf) == self._read_size and len(self._free) < FREE_BUFS:
+            self._free.append(buf)
         self._queued -= n
         self._cv.notify_all()
         return n
@@ -465,11 +624,8 @@ class FfsTransport(StreamTransport):
     """
     if not self._had_host or self.bound_udc is None:
       return False
-    try:
-      with open(os.path.join(UDC_SYSFS, self.bound_udc, 'state')) as f:
-        return f.read().strip() != 'configured'
-    except OSError:
-      return False
+    state = self._udc_state()
+    return state is not None and state != 'configured'
 
   def close(self) -> None:
     self._closing = True
@@ -488,7 +644,7 @@ class FfsTransport(StreamTransport):
       self._cv.notify_all()
     # Clear each fd as it is closed: a second close() would otherwise shut
     # whatever those descriptor numbers had been recycled into.
-    for name in ('ep_in', 'ep_out', 'ep0'):
+    for name in ('_state_fd', 'ep_in', 'ep_out', 'ep0'):
       fd = getattr(self, name, -1)
       setattr(self, name, -1)
       if fd is None or fd < 0:
