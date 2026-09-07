@@ -212,3 +212,15 @@ restored by writing 0 (ratio keys), tinygrad's compile pool inherited FIFO 54 on
 write watchdog likewise, the bench summary crashed on the new state column. Master's own
 `bigModelFailed` is also edge-triggered for one tick (same cancel path); not changed here,
 flagged for the user.
+
+### Comment style pass (2026-09-07, user request)
+Every comment and docstring across all branches rewritten toward sunnypilot's style (one to
+three lines, why not what, numbers only when they are the reason, no discovery narrative).
+Fork (jetson-trt `1bfd3b600e`, `40ccd65acb`, `fa9814ebc0`, pushed): added comment lines 559 -> 346,
+plus module docstrings cut to a paragraph; ported into `sp/jetlink` as fixups of the owning
+commits (still seven on the rewritten PR 1); PR 1 wording identical on `sp/big-model-fixes` and
+`develop-big-model-fixes`. jetlink repo (`24803a1`, `f00bcda`): 723 -> 473 comment lines, comment
+blocks 28 -> 18 words on average. Every changed .py on every branch proven code-identical by AST
+with docstrings stripped; non-UI suites green (UI suites cannot open a window in this session:
+raylib segfaults in `_calculate_auto_scale`; they passed before the comment-only change).
+Comma checkout synced to `819465081d` without a reboot (comments only). Pin f00bcda everywhere.
