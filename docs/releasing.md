@@ -20,11 +20,11 @@ plans have unchanged model tensors, but still require the same supported
 JetPack/TRT/device and model identity. A protocol version is not a complete model
 ABI, and source hashes are drift detection, not signed-artifact authentication.
 
-The fork's `openpilot/sunnypilot/accelerators/jetlink/release.json` records the
-Jetlink git revision and runtime source SHA-256. On AGNOS, startup verifies the
-installed package before gadget setup. Missing/mismatched sources publish a
-setup error and prevent Jetlink selection; they must not trigger downloads,
-builds or an installation attempt during a driving boot.
+The fork pins the Jetlink package as the `jetlink_repo` submodule; the gitlink
+sha is the installed revision. On AGNOS, startup reads `JetlinkEnabled` before
+touching the gadget and refuses to present it when the submodule is not checked
+out, publishing a setup error instead. Nothing at boot downloads, builds or
+installs the package during a driving boot.
 
 ## Prepare the pair
 
@@ -34,7 +34,7 @@ builds or an installation attempt during a driving boot.
 2. Bump the submodule pointer in the fork (`git -C jetlink_repo checkout <sha>`,
    commit the gitlink), then commit and test the fork. Any runtime source edit
    is a new sha and a new pointer.
-3. On the Jetson, build the image from the locked source. Record
+3. On the Jetson, build the image from the pinned source. Record
    `docker image inspect --format '{{.Id}}' <tested-tag>` alongside the fork
    revision, source digest, JetPack/TRT, model hashes and validation results.
    Archive that image for rollback; do not rely on rebuilding a floating base
@@ -56,7 +56,7 @@ builds or an installation attempt during a driving boot.
 - Install the paired fork and Jetson service/configuration, keeping model caches
   intact. Validate the service with `systemd-analyze verify` on the Jetson, reload
   systemd, then restart. Inspect the container's actual image ID, not just its tag.
-- Reboot both devices. Confirm source-lock success, enabled service, actual
+- Reboot both devices. Confirm the submodule sha, enabled service, actual
   container image, cached engine identity, warmup, and `modelV2.big` only after
   valid inference. Test each boot order, absence, unplug/replug and recovery.
 - A failed verification or partial install is a failed rollout, even if the
