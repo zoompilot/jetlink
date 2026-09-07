@@ -6,17 +6,11 @@ See the LICENSE file in the root directory for more details.
 
 Make an openpilot driving model acceptable to TensorRT's ONNX parser.
 
-TensorRT 10.3 rejects UINT8 graph inputs outright:
+TensorRT 10.3 rejects UINT8 graph inputs ("Found unsupported input type of
+UINT8"), so the image inputs are declared FP16 and the head Cast deleted.
+Feeding 0..255 as fp16 is exact and free; the weights are FP16 already.
 
-    Assertion failed: false: Found unsupported input type of UINT8
-
-openpilot's graph head is `img, big_img (uint8) -> Concat -> Cast(to=fp16)`,
-so the fix is to declare both image inputs FP16 and delete the now-redundant
-Cast. The caller then feeds 0..255 as fp16, which is exact (every integer up to
-2048 is representable) and costs nothing: the weights are already FP16.
-
-Runs on the Jetson at engine-build time only. The model openpilot ships is
-never modified in place.
+Runs on the Jetson at build time. The shipped model is never modified in place.
 """
 from __future__ import annotations
 
@@ -25,12 +19,10 @@ from onnx import TensorProto
 
 IMG_INPUTS = ('img', 'big_img')
 
-# tinygrad's exporter can leave a layout hint in the graph as a node in its own
-# domain. Contiguous means "materialise this tensor", which is a statement about
-# tinygrad's internal buffers and nothing about the arithmetic, so it is safe to
-# bypass - and it has to be, because TensorRT's parser rejects any op outside a
-# domain it knows. comma's 2026-09-01 model carries exactly one; the model a day
-# earlier carries none, so this comes and goes with how a model was exported.
+# tinygrad's exporter leaves layout hints in its own domain, and TensorRT rejects
+# any op in a domain it does not know. Contiguous is about tinygrad's buffers,
+# not the arithmetic, so bypassing it is safe. Whether a model has one varies
+# with how it was exported.
 TINYGRAD_DOMAIN = 'org.tinygrad'
 PASSTHROUGH_OPS = ('Contiguous',)
 
@@ -59,10 +51,9 @@ def strip_tinygrad_ops(model: onnx.ModelProto) -> int:
 
     source, produced = node.input[0], node.output[0]
     if produced in graph_outputs:
-      # It fed a graph output directly. The output keeps its name, because
-      # that is what openpilot's output_slices and the parity tools address,
-      # so the producer takes over the name instead. Renaming both ends, as an
-      # earlier version did, left the output dangling with no producer.
+      # The output keeps its name: output_slices and the parity tools address
+      # it. So the producer takes the name over; renaming both ends leaves the
+      # output with no producer at all.
       for n in g.node:
         for i, name in enumerate(n.output):
           if name == source:
@@ -99,14 +90,11 @@ def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
   if not img_inputs:
     raise ValueError(f"model has none of {IMG_INPUTS} as graph inputs")
 
-  # Two graph shapes in the wild, and exporters pick between them freely:
+  # Two graph shapes in the wild, same fix either way: the casts are all that
+  # stands between a uint8 input and the fp16 the model wants.
   #
   #   comma      Concat(img, big_img) -> cat -> Cast(fp16)
   #   sunnypilot Cast(img), Cast(big_img) -> Concat -> cat
-  #
-  # Either way the fix is the same, because the casts are the only thing
-  # standing between a uint8 graph input and the fp16 the rest of the model
-  # wants: declare the inputs fp16 and delete the casts.
   casts = _head_casts(g)
   if not casts:
     raise ValueError("could not find the head Cast on the image inputs; "
@@ -133,8 +121,7 @@ def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
     g.node.remove(cast)
     retyped.add(source)
 
-  # A declared type left saying uint8 is not merely untidy: TensorRT tolerates
-  # it but onnxruntime rejects the model outright, and we want both to load.
+  # TensorRT tolerates a stale uint8 value_info; onnxruntime rejects the model.
   for vi in g.value_info:
     if vi.name in retyped:
       vi.type.tensor_type.elem_type = TensorProto.FLOAT16

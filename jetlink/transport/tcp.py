@@ -4,11 +4,10 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-TCP transport.
+TCP transport, for ethernet and benchmarking.
 
-Used over ethernet, and for benchmarking. Note it cannot run over a USB cable
-to a comma: AGNOS has no host-side USB-ethernet driver, so a USB ethernet
-gadget will not enumerate there. See docs/transport.md.
+Not usable over the USB cable: AGNOS has no host-side USB-ethernet driver, so
+an ethernet gadget will not enumerate there. See docs/transport.md.
 """
 from __future__ import annotations
 
@@ -49,9 +48,8 @@ class TcpTransport(StreamTransport):
       self._timeout = timeout
 
   def _write(self, bufs: list[memoryview]) -> int:
-    # sendmsg keeps the header and a 460 KB body in one syscall, and with
-    # TCP_NODELAY that goes out as one segment train rather than a small header
-    # packet followed by the body.
+    # sendmsg keeps the header and a 460 KB body in one syscall, so with NODELAY
+    # they go out as one segment train.
     self._set_timeout(self._write_timeout())
     try:
       return self.sock.sendmsg(bufs)
@@ -78,9 +76,8 @@ class TcpTransport(StreamTransport):
 
 
 def _tune(sock: socket.socket) -> None:
-  # NODELAY is the one that matters: without it a 32-byte header and a 460 KB
-  # body can be split across an RTT. It cannot fail on a real TCP socket, but a
-  # transport must not die in a setsockopt, so it is guarded like the rest.
+  # NODELAY is the one that matters: without it the header and the body can be
+  # split across an RTT. Guarded anyway; a transport must not die in setsockopt.
   for level, opt, value in ((socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
                             (socket.SOL_SOCKET, socket.SO_SNDBUF, 4 << 20),
                             (socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20),

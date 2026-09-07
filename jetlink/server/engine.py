@@ -6,13 +6,10 @@ See the LICENSE file in the root directory for more details.
 
 TensorRT execution.
 
-Everything is preallocated at load time - device buffers, pinned host staging
-buffers and the stream - so the steady state does no allocation at all. That is
-what keeps the per-frame time predictable, which matters more here than raw
-throughput: the budget is 50 ms per frame and the tail is what breaks a drive.
-
-Callers write straight into the pinned input arrays exposed by `host_input()`
-to avoid a second copy on the way to the GPU.
+Device buffers, pinned host buffers and the stream are all preallocated at load
+time, so the steady state never allocates: the 50 ms frame budget is broken by
+the tail, not the mean. Callers write into the pinned arrays `host_input()`
+hands out, which saves a copy on the way to the GPU.
 """
 from __future__ import annotations
 
@@ -51,8 +48,8 @@ class Binding:
 def _np_from_ptr(ptr: int, shape, dtype) -> np.ndarray:
   """Writable numpy view over pinned host memory, so writes need no further copy.
 
-  Goes through a raw byte buffer rather than np.ctypeslib.as_ctypes_type,
-  which cannot represent float16 - the dtype most of this model uses.
+  Through a raw byte buffer, because np.ctypeslib.as_ctypes_type cannot
+  represent float16, which is most of this model.
   """
   dtype = np.dtype(dtype)
   nbytes = int(np.prod(shape)) * dtype.itemsize
@@ -131,10 +128,9 @@ class TrtEngine:
   def capture_graph(self) -> bool:
     """Capture the per-frame sequence into a CUDA graph.
 
-    Replaying a graph skips the per-launch CPU work for every copy and kernel,
-    which is worth a couple of ms here and, more importantly, takes the
-    variance out of the launch path. Only valid because every buffer is
-    preallocated and never moves. Call after at least one warm run.
+    A replay skips the per-launch CPU work, worth a couple of ms and most of the
+    launch jitter. Valid only because no buffer ever moves. Call after at least
+    one warm run.
     """
     if self.graph_exec is not None:
       return True
@@ -165,11 +161,9 @@ class TrtEngine:
     self.load_inputs(values)
     return self.run()
 
-  # Deliberately no __del__. host_input() hands out numpy views over
-  # cudaHostAlloc memory that hold no reference back here, so a GC-driven
-  # close() would free pages another object is still writing into - a segfault
-  # rather than an exception. Ownership is explicit: whoever swaps an engine
-  # out closes it.
+  # No __del__: host_input() hands out views over cudaHostAlloc memory with no
+  # reference back here, so a GC-driven close would free pages someone is still
+  # writing into. Whoever swaps an engine out closes it.
   def close(self) -> None:
     for b in self.bindings.values():
       try:

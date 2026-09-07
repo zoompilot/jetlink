@@ -16,12 +16,10 @@ def all_cpus() -> set[int]:
 def widen_affinity() -> None:
   """Let the calling thread run on every CPU.
 
-  A thread created inside modeld inherits the frame loop's single-core pin,
-  and a pinned helper competes with the loop for that core. If the inherited
-  mask is a single core, prefer every *other* core: simply widening was
-  measured not to help the reader, because the balancer keeps waking a thread
-  on the core it last ran. Best effort; jetlink must not import openpilot, so
-  this open-codes what common.realtime.set_core_affinity would do.
+  A thread created inside modeld inherits the frame loop's single-core pin. If
+  the inherited mask is one core, prefer every other core: simply widening did
+  not help, because the balancer keeps waking a thread where it last ran. Best
+  effort, and open-coded because jetlink must not import openpilot.
   """
   try:
     everything = all_cpus()
@@ -31,19 +29,17 @@ def widen_affinity() -> None:
     elif everything - inherited:
       os.sched_setaffinity(0, everything)               # unpinned already; just widen
   except (OSError, AttributeError):
-    # No affinity call (macOS), or a kernel that will not move us.
+    # no affinity call (macOS), or a kernel that refuses
     pass
 
 
 def background_thread() -> None:
   """Drop the calling thread to SCHED_OTHER 0 on every CPU.
 
-  Threads created after config_realtime_process inherit SCHED_FIFO and the
-  core pin, so a library thread that only waits on a condition would still
-  take the frame loop's core, at equal priority, for every wake until it
-  blocks again. Call this first thing in any thread the library starts; the
-  process that created it cannot lend it realtime by accident. No-op where
-  the scheduler calls do not exist, and best effort where they are refused.
+  Threads created after config_realtime_process inherit SCHED_FIFO and the core
+  pin, so even one that only waits on a condition takes the frame loop's core at
+  equal priority on every wake. Call it first in any thread started here. Best
+  effort.
   """
   try:
     os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))

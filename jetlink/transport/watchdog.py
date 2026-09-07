@@ -51,9 +51,8 @@ class WriteWatchdog:
       self._cv.notify()
 
   def _run(self) -> None:
-    # The creator may be modeld's SCHED_FIFO 54 frame thread, and this thread
-    # inherits its policy and core pin. A 10 Hz wake at equal FIFO priority on
-    # that core takes it from the frame loop until we block again.
+    # This inherits the creator's policy and pin, which in modeld is the frame
+    # loop's SCHED_FIFO 54 on one core.
     background_thread()
     with self._cv:
       while not self._closed:

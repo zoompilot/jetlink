@@ -12,8 +12,8 @@ from dataclasses import dataclass
 
 from jetlink import protocol as P
 
-# One frame is ~460 KB. The cap is what stops a corrupt length field making
-# RxBuffer allocate gigabytes before a single byte of it has been read.
+# Stops a corrupt length field making RxBuffer allocate gigabytes. A frame is
+# ~460 KB.
 MAX_MESSAGE = 16 << 20
 _PAD = bytes(P.GADGET_TX_ALIGN)
 
@@ -61,11 +61,9 @@ class Transport(ABC):
 class RxBuffer:
   """Receive buffer for a byte stream carrying framed messages.
 
-  Reads land directly in here and messages are handed out as views, so the
-  steady state does no allocation and no copying between the wire and the
-  caller. Crucially it is also *resumable*: a read that times out part way
-  through a message leaves the bytes in place, so a missed deadline costs a
-  frame rather than desyncing the stream.
+  Reads land in here and messages are handed out as views, so the steady state
+  neither allocates nor copies. Resumable: a read that times out mid-message
+  leaves the bytes in place, so a missed deadline costs a frame, not the stream.
   """
 
   def __init__(self, size: int = 1 << 20):
@@ -81,11 +79,8 @@ class RxBuffer:
   def reserve(self, need: int) -> None:
     """Guarantee room for `need` unconsumed bytes, compacting or growing."""
     if self.start and self.start + need > len(self.buf):
-      # Slide the partial message to the front before considering a resize.
-      # Go through the bytearray, not the memoryview: source and destination
-      # overlap, and a memoryview slice assignment is a memcpy, which is
-      # undefined on overlap. Slicing the bytearray materialises the source
-      # first. Compaction is rare, so the copy is not worth avoiding.
+      # Through the bytearray, not the view: the ranges overlap and a
+      # memoryview slice assignment is a memcpy. Compaction is rare.
       self.buf[:self.available] = self.buf[self.start:self.end]
       self.end -= self.start
       self.start = 0
@@ -120,24 +115,20 @@ class StreamTransport(Transport):
   Subclasses supply only the two primitives that differ.
   """
 
-  # Extra capacity kept beyond the current message, for transports whose reads
-  # must land in a buffer of at least a given size (FunctionFS OUT endpoints
-  # want a multiple of the max packet size).
+  # Extra capacity past the current message, for transports whose reads need a
+  # minimum buffer size (a bulk OUT endpoint wants a whole packet).
   read_slack = 0
   # Bulk endpoints reject a read whose buffer is not a whole number of packets.
   # 0 means "no constraint" (TCP).
   packet_size = 0
   read_chunk = 1 << 20
-  # Pad every message sent to a multiple of this (0: the one-byte PADDED rule
-  # instead), and expect the peer's messages padded likewise. Set on the two
-  # USB transports; see protocol.GADGET_TX_ALIGN for the measurement behind it.
+  # Pad sent messages to a multiple of this and expect the peer's padded
+  # likewise; 0 uses the one-byte PADDED rule. See protocol.GADGET_TX_ALIGN.
   tx_align = 0
   rx_align = 0
-  # Largest single write to hand the kernel. FunctionFS turns one writev into
-  # one USB request and has to allocate a contiguous buffer for it, so a big
-  # write fails with ENOMEM on a device whose memory is fragmented - which the
-  # inference path never sees, because its largest message is a few hundred KB,
-  # and the model upload hits immediately at 4 MB a chunk. 0 means no cap (TCP).
+  # Largest single write. FunctionFS allocates a contiguous buffer per writev,
+  # so a 4 MB upload chunk hits ENOMEM on a fragmented device where a few
+  # hundred KB of inference does not. 0 means no cap (TCP).
   write_chunk = 0
 
   def __init__(self, rx_size: int = 1 << 20):
@@ -163,16 +154,14 @@ class StreamTransport(Transport):
   def _read_into(self, dest: memoryview, timeout: float | None) -> int:
     """Read up to len(dest) bytes, returning how many arrived.
 
-    May return short, including 0. Must NOT raise on a timeout: return whatever
-    arrived and let _fill decide. Dropping partially transferred bytes is how a
-    stream silently desyncs.
+    May return short, including 0. Must not raise on a timeout, and must not
+    drop what did arrive: that is how a stream silently desyncs.
     """
 
   # -- framing -------------------------------------------------------------
 
   def send(self, msg_type: int, seq: int, parts=(), flags: int = 0, timeout: float | None = None) -> None:
-    # cast('B') matters: slicing a memoryview of a float32 array in _advance
-    # would step by elements, not bytes.
+    # cast('B'): slicing a float32 view in advance() would step by elements
     bufs = [memoryview(p).cast('B') for p in parts]
     length = sum(b.nbytes for b in bufs)
     if self.tx_align:
@@ -205,20 +194,17 @@ class StreamTransport(Transport):
   def _fill(self, need: int, timeout: float | None) -> None:
     """Read until `need` bytes are buffered, or the deadline passes.
 
-    The deadline is per *message*, not per read: handing the full timeout to
-    each read would let one 74 KB response take several times the caller's
-    budget. Partial reads are kept, so a missed deadline costs a frame and
-    leaves the stream in sync.
+    The deadline is per message, not per read, or one response could take
+    several times the caller's budget. Partial reads are kept, so a missed
+    deadline costs a frame and leaves the stream in sync.
     """
     self.rx.reserve(need + self.read_slack)
     end = None if timeout is None else time.monotonic() + timeout
     while self.rx.available < need:
       dest = self.rx.writable()[:self._read_limit(need - self.rx.available)]
       if self._clamp_read(dest) == 0:
-        # No room to post a whole packet, so every read from here returns 0 and
-        # this loop would spin on a core forever while the peer blocks writing
-        # the rest. A transport whose read_slack is too small gets here; say so
-        # rather than hanging.
+        # No room for a whole packet: every read returns 0 and this loop spins
+        # while the peer blocks. read_slack is too small; say so, do not hang.
         raise LinkError(f"no room to read the rest of a {need} byte message "
                         + f"({self.rx.available} in hand); read_slack too small")
       remaining = None
@@ -231,31 +217,22 @@ class StreamTransport(Transport):
         self.rx.committed(n)
 
   def _read_limit(self, missing: int) -> int:
-    """The most one read may ask for, given `missing` bytes of the current
-    message are still to come: exactly that, rounded up to a whole packet.
+    """`missing` bytes of the current message, rounded up to a whole packet.
 
-    On the USB host this is what keeps the stream in sync. The gadget's
-    messages are burst-aligned (protocol.GADGET_TX_ALIGN), so a read that asks
-    for exactly what is left completes by count, and there is never a read
-    outstanding across the end of a message for the controller to fill with
-    whatever it flushes at a short packet. Asking for more, the way a plain
-    stream reader would, was measured to desync the link about once in 400
-    frames. TCP and FunctionFS do not need the limit and are not hurt by it.
+    Keeps the USB host in sync: the gadget's messages are burst-aligned, so a
+    read for exactly what is left never stays outstanding past the end of a
+    message. Reading further desynced about once in 400 frames.
     """
     if self.packet_size:
       return -(-missing // self.packet_size) * self.packet_size
     return missing
 
   def drain(self, timeout: float) -> None:
-    """After a desync, swallow whatever the peer is still sending, until the
-    link drops or it goes quiet for `timeout`.
+    """After a desync, swallow what the peer is still sending until the link
+    drops or it goes quiet for `timeout`.
 
-    The peer is mid-message and blocked writing the rest of it. Closing and
-    reopening the link instead takes only what one read asks for each time,
-    so on USB the peer's request drains a packet per reopen at ~100 Hz, its
-    frame timeout never fires, and modeld sits inside one send for the whole
-    drive. Measured. Reading it out lets the peer finish, time out, and
-    reconnect cleanly.
+    The peer is blocked mid-message. Reopening instead drains a packet per
+    session, so its frame timeout never fires and it never reconnects.
     """
     scratch = memoryview(bytearray(self.read_chunk))
     last = time.monotonic()
@@ -278,14 +255,13 @@ class StreamTransport(Transport):
       if length > MAX_MESSAGE:
         raise P.ProtocolError(f"message claims {length} bytes, over the {MAX_MESSAGE} cap")
     except P.ProtocolError as e:
-      # Nothing can resynchronise a byte stream mid-message, and the bad bytes
-      # are still buffered. Latch it and report a link failure: callers
-      # reconnect on LinkError, whereas a ProtocolError escaping from here
-      # unwinds out of the server's accept loop and kills the process.
+      # Nothing resynchronises a byte stream mid-message. Latch it and report a
+      # LinkError, which callers reconnect on; a ProtocolError escaping here
+      # unwinds the server's accept loop and kills the process.
       self._desynced = True
       raise LinkError(f"protocol error, link unusable: {e}") from e
-    # The remainder of the caller's budget, not a second full one, so one recv
-    # can never block for twice what it was given.
+    # the remainder of the budget, so one recv cannot block for twice what it
+    # was given
     if self.rx_align:
       pad = -(P.HEADER_SIZE + length) % self.rx_align
     else:

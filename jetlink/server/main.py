@@ -39,17 +39,13 @@ DRAIN_TIMEOUT = 5.0
 def _serve(cache: EngineCache, open_transport, sleeper: Sleeper | None = None) -> None:
   """Serve one client at a time forever.
 
-  `open_transport()` returns a transport, or None to wait and retry. The three
-  transports differ only in how they are opened, so the session lifecycle lives
-  here once. The engine host is shared across sessions on purpose: the comma
-  reconnects at every jetlinkd/modeld handover and the engine must not be
-  reloaded each time.
-
-  With a `sleeper`, a long enough run of None suspends the box; see sleep.py.
+  `open_transport()` returns a transport, or None to wait and retry; the three
+  transports differ only in how they open. The engine host is shared across
+  sessions: the comma reconnects at every handover and the engine must not
+  reload. With a `sleeper`, a long run of None suspends the box; see sleep.py.
   """
   host = EngineHost(cache, Telemetry())
-  # preload starts its own load worker. Reserve that job before accepting a
-  # request, so two callers cannot race to start independent GPU loads.
+  # before accepting anything, so two callers cannot race to start GPU loads
   host.preload()
   while True:
     transport = open_transport()
@@ -98,17 +94,16 @@ def _usb_opener(args, sleeper: Sleeper | None = None):
       log.warning("waiting for a jetlink gadget at %04x:%04x", args.vid, args.pid)
       return None
     if sleeper is not None:
-      # Present but not (yet) openable still means the comma is there. Do
-      # not sleep on it: nothing would wake us until it bounces the gadget.
+      # Present but not yet openable still means the comma is there; sleeping
+      # now needs it to bounce the gadget before anything wakes the box.
       sleeper.touch()
     try:
       transport = UsbBulkTransport.open(args.vid, args.pid, timeout_ms=args.usb_timeout_ms)
       log.info("client connected over usb")
       return transport
     except Exception as e:
-      # Broad on purpose: this loop is the server's only supervisor. Anything
-      # that escapes here exits the process, and under a restart policy that is
-      # a crash loop rather than a retry.
+      # Broad on purpose: this loop is the only supervisor, and anything that
+      # escapes it turns a retry into a container crash loop.
       log.warning("could not open the gadget: %s", e)
       return None
   return open_transport

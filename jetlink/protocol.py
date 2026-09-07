@@ -6,15 +6,12 @@ See the LICENSE file in the root directory for more details.
 
 Wire protocol.
 
-Transport-agnostic: every message is a fixed 32-byte header followed by an
-opaque payload. The header is padded to 32 bytes so that float32 payloads land
-8-byte aligned, which lets both ends build numpy views over the receive buffer
-without copying.
+Every message is a 32-byte header and an opaque payload. 32 keeps float32
+payloads 8-byte aligned, so both ends can view the receive buffer without
+copying.
 
-The hot path (INFER) is deliberately not JSON or capnp. It is a fixed struct
-plus two raw arrays whose sizes both ends agree on at handshake time, so a
-request costs one vectored write and a response costs one read into a
-preallocated buffer.
+INFER is a fixed struct plus two raw arrays sized at handshake, not json: one
+vectored write out, one read into a preallocated buffer back.
 """
 from __future__ import annotations
 
@@ -22,34 +19,18 @@ import struct
 from enum import IntEnum
 
 MAGIC = 0x4B4E4C4A  # b'JLNK'
-# Reliability release: do not silently pair the new client with a legacy
-# server. Model tensors are unchanged, so existing TensorRT plans remain usable.
+# Bumped so a new client cannot silently pair with a legacy server. Tensors are
+# unchanged, so existing plans still load.
 VERSION = 2
 
-# USB bulk streams have no length: a transfer ends at a packet shorter than the
-# endpoint's maximum, so a message whose total length is an exact multiple of
-# the packet size never terminates the read on the far side and sits there
-# until the next message pushes it out - one frame late, every frame. The
-# sender appends one byte and says so in the header instead. SuperSpeed bulk
-# packets are 1024 bytes and every smaller size divides it, so one constant
-# covers full and high speed too; TCP does not need it and loses one byte.
+# A bulk transfer ends on a short packet, so a message that is an exact multiple
+# of the packet size never terminates the peer's read and arrives a frame late;
+# the sender appends a pad byte and sets Flag.PADDED. 1024 divides all the rest.
 PACKET_MULTIPLE = 1024
 
-# What a *gadget* pads its messages to, in the device-to-host direction only.
-# A message the gadget sends is followed by zero bytes up to the next multiple
-# of this, and the host reads exactly that many. Measured on a comma (dwc3,
-# AGNOS 4.9, SuperSpeed, bMaxBurst 15) talking to a Jetson (tegra-xusb, L4T
-# 5.15, libusb 1.0.25): about once in 400 frames the transfer for a message
-# ending in a short packet arrived with extra bytes after it, up to the next
-# 16 KB, which is one burst of 16 x 1024. The bytes were real (a sentinel
-# filled buffer had them overwritten) and looked like earlier frames: the
-# TX FIFO being flushed out as full packets. The host's stream framing then
-# read them as the next header and the session died with bad magic. Making
-# the gadget's transfers burst-aligned means they never end on a short packet
-# and the host never has a read outstanding past the end of a message, so
-# whatever the controller does at a short packet cannot reach the stream.
-# The host-to-device direction keeps the one-byte PADDED trick: the gadget's
-# reads complete on a short packet, and that side has never desynced.
+# The gadget pads every message to a burst so it never ends on a short packet:
+# dwc3 flushed its TX FIFO past one about once in 400 frames, and the host read
+# those bytes as the next header. Host to device keeps the PADDED byte instead.
 GADGET_TX_ALIGN = 16 * PACKET_MULTIPLE
 
 # magic, version, msg_type, seq, flags, length, reserved, 4 pad
@@ -83,9 +64,8 @@ class Msg(IntEnum):
 class Flag(IntEnum):
   RESET_QUEUES = 1 << 0   # on INFER_REQ: warm-start, clear history before this frame
   WANT_STATE = 1 << 1     # on INFER_REQ: append telemetry json to the response.
-                          # Piggybacked because at 20 Hz there is no gap in which
-                          # to run a separate request/response without racing a
-                          # frame, and health data must not cost a frame.
+                          # Piggybacked because at 20 Hz a separate exchange
+                          # would race a frame.
   PADDED = 1 << 7         # one pad byte follows the payload; see PACKET_MULTIPLE
 
 

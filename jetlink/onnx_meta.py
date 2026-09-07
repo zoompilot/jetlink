@@ -4,19 +4,14 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-Reads a driving model's graph metadata: input/output names, shapes and dtypes,
-plus openpilot's `output_slices` and `model_checkpoint` metadata_props.
+A driving model's graph metadata: input/output names, shapes and dtypes, plus
+openpilot's output_slices and model_checkpoint metadata_props.
 
-This is an adapter over an existing parser, picked by what the host has:
-
-  * tinygrad's `OnnxPBParser` - preferred, and what upstream openpilot's own
-    `get_model_metadata.py` uses for exactly this. It walks the protobuf
-    without materialising the weights, which matters for a 766 MB model, and
-    it is already present on a comma.
-  * the `onnx` package - used on the Jetson, which needs it anyway for the
-    graph surgery in `onnx_patch`, and where RAM is not tight.
-
-Neither is a hard dependency: whichever is importable wins.
+Adapter over whichever parser the host has, neither a hard dependency.
+tinygrad's OnnxPBParser is preferred and is what openpilot's
+get_model_metadata.py uses: it walks the protobuf without materialising 766 MB
+of weights, and a comma has it already. The onnx package is the Jetson's, which
+needs it for onnx_patch anyway.
 """
 from __future__ import annotations
 
@@ -55,8 +50,8 @@ class OnnxMeta:
 def _parse_tinygrad(path: str) -> OnnxMeta:
   """Same approach as openpilot's get_model_metadata.py, without importing it.
 
-  OnnxPBParser does all the protobuf work; we only narrow ModelProto to the two
-  fields we want so the 766 MB of initializers are skipped rather than built.
+  ModelProto is narrowed to two fields, so the 766 MB of initializers are
+  skipped rather than built.
   """
   from tinygrad.nn.onnx import OnnxPBParser
 
@@ -107,8 +102,8 @@ def parse_file(path: str) -> OnnxMeta:
     try:
       return fn(path)
     except Exception as e:
-      # Not just ImportError: a parser that is present but chokes on a newer
-      # ModelProto layout should fall through to the other one, not abort.
+      # not just ImportError: a parser that chokes on a newer layout falls
+      # through to the other one rather than aborting
       errors.append(f'{name}: {type(e).__name__}: {e}')
   raise RuntimeError(
     "could not read model metadata; need tinygrad or the onnx package. Tried:\n  "

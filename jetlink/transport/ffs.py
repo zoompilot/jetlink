@@ -6,10 +6,10 @@ See the LICENSE file in the root directory for more details.
 
 USB gadget side of the link: a FunctionFS vendor-specific bulk function.
 
-On a comma this is the *comma* end. The roles look backwards and are not:
-AGNOS has CONFIG_USB_F_FS and libcomposite built in, while a USB host needs no
-kernel driver at all, which matters because L4T rootfs images are often
-stripped of the gadget modules. See docs/transport.md.
+On a comma this is the comma end. The roles look backwards and are not: AGNOS
+has CONFIG_USB_F_FS built in, while a host needs no kernel driver at all, which
+an L4T rootfs stripped of the gadget modules does not have. See
+docs/transport.md.
 
 Bring-up (scripts/setup_gadget.sh does all of this):
     configfs gadget -> functions/ffs.jetlink -> mount -t functionfs
@@ -50,65 +50,35 @@ EP_OUT = 0x01  # host -> device
 EP_IN = 0x82   # device -> host
 
 SS_MAX_PACKET = 1024
-# FunctionFS kmallocs a contiguous kernel buffer for every read, even though
-# our userspace buffer is already allocated. The 2026-09-05 drive hit order-6
-# and order-5 allocation failures in ffs_epfile_read_iter, with 100-300 ms
-# reply stalls. 16 KB (order-2) stopped the failures. Going smaller to dodge
-# the rare *slow success* (an order-2 read reclaiming ~16 ms mid-frame under
-# memory pressure) was tried and reverted: at one page per read a 74 KB reply
-# takes ~19 syscalls and their wakeups added ~6 ms to every frame's baseline,
-# far more than the occasional reclaim it removed. The userspace side of the
-# per-read allocation is handled instead by recycling (see _read_loop); the
-# kernel side stays at 16 KB and leans on the free-memory floor the setup
-# script sets to keep order-2 off the direct-reclaim path.
+# FunctionFS kmallocs a contiguous buffer per read: order-5 and order-6 failures
+# in ffs_epfile_read_iter stalled replies 100-300 ms, and order-2 does not fail.
+# Do not go smaller to dodge the rare slow success: one page per read is ~19
+# syscalls for a 74 KB reply and cost ~6 ms a frame.
 READ_CHUNK = 16 * SS_MAX_PACKET
-# How much the reader thread may queue before it stops reading. The inference
-# path never needs more than one response; the cap only bounds memory if the
-# consumer stalls.
+# How much the reader may queue before it stops. Only bounds memory if the
+# consumer stalls: inference never needs more than one response.
 MAX_QUEUED = 8 << 20
-# How many read buffers to keep for reuse. The consumer copies each chunk out
-# and hands the buffer back; steady state has one or two in flight, so this is
+# Read buffers kept for reuse. Steady state has one or two in flight, so this is
 # only a ceiling for a transient backlog. 16 * 16 KB = 256 KB.
 FREE_BUFS = 16
-# SCHED_FIFO priority for the reader thread. modeld runs its frame loop at 54;
-# the reader sits just below so the loop always wins a contended core, but it
-# still preempts every SCHED_OTHER thread the way the loop does. See
-# _raise_reader_priority for why the reader needs this at all.
+# Just below modeld's frame loop (54), so the loop wins a contended core and the
+# reader still preempts everything else. See _raise_reader_priority.
 READER_RT_PRIORITY = 51
 
-# A host enumerating us is not the same as a host being ready to talk: it still
-# has to open the device and claim the interface, and until it does the gadget's
-# endpoints return EIO/ESHUTDOWN. The server polls sysfs every couple of
-# seconds to notice us, so that gap is easily a second or two. Wait it out
-# rather than reporting a dead link on the first frame after connect.
 log = logging.getLogger('jetlink')
 
+# Enumerated is not ready: the host still has to open the device and claim the
+# interface, and until then the endpoints return EIO. Its sysfs poll makes that
+# a second or two, so wait rather than fail the first frame after connect.
 EP_READY_TIMEOUT = 10.0
-# How long opening the endpoint files may wait for the host to configure us.
-# Separate from EP_READY_TIMEOUT, which covers a host that has configured us
-# but has not claimed the interface yet.
+# How long opening the endpoint files waits for a host to configure the gadget;
+# EP_READY_TIMEOUT covers the claim that follows.
 EP_OPEN_TIMEOUT = 10.0
 
-# How long a write may sit with the host not reading before we take the link
-# down ourselves. FunctionFS writes cannot time out: the request is queued on
-# an enabled endpoint and os.writev returns when the host drains it, whenever
-# that is. A hello sent to a Jetson that has enumerated but whose server is not
-# reading blocks for as long as that stays true - measured 90 s while the
-# Jetson booted, and three minutes on a drive 2026-09-05, which the driver saw
-# as the big model simply never arriving. The join loop cannot retry what it is
-# blocked inside.
-#
-# Unbinding the UDC is the only lever. It dequeues the pending request, the
-# writev returns ESHUTDOWN, and the caller gets a LinkError it can retry -
-# which is exactly what happened by hand when the driver cycled offroad. Note
-# this works *because the endpoint is enabled*: unbind does not wake a read
-# waiting on an endpoint no host ever enabled, which is a different bug with a
-# different fix (see _ensure_epfiles).
-#
-# 15 s is far longer than any real write (a frame is ~3.6 ms) and short enough
-# that a stuck link costs one retry rather than a drive. Churning the gadget a
-# few times while a Jetson boots is harmless: the server polls for it and
-# re-enumeration is milliseconds.
+# FunctionFS writes cannot time out: the request sits queued until the host
+# drains it, measured at 90 s while a Jetson booted and three minutes on a
+# drive. Unbinding the UDC dequeues it, the writev returns ESHUTDOWN, and the
+# caller retries. A real write is ~3.6 ms.
 WRITE_TIMEOUT = 15.0
 UDC_SYSFS = '/sys/class/udc'
 # How long close() waits for the reader thread after unbinding, which is what
@@ -116,17 +86,10 @@ UDC_SYSFS = '/sys/class/udc'
 READER_JOIN_TIMEOUT = 1.0
 _NOT_READY = (errno.EIO, errno.ESHUTDOWN, errno.ENODEV)
 
-# Every signal the thread doing endpoint IO must not take mid-transfer. A
-# signal that interrupts a FunctionFS write is not a retry: ffs_epfile_io
-# dequeues the request, which stops the transfer wherever it is, and returns
-# EINTR, and Python's os.writev then re-issues the whole call. The packets
-# already on the wire stay sent, so the host receives the start of the message
-# twice and the stream is lost from there. modeld is exactly the process this
-# happens to: msgq wakes its subscriber threads with SIGUSR2 for every camera
-# frame, ~160 a second, and strace on a live modeld showed four of them landing
-# inside writev in 120 s, one per link failure that run. Masking signals for
-# the few milliseconds of a write just defers them; nothing in here waits on
-# one. SIGKILL and SIGSTOP cannot be masked and are ignored by the call.
+# A signal inside a FunctionFS transfer is not a retry: ffs_epfile_io returns
+# EINTR mid-transfer, os.writev re-issues the whole call, and the host sees the
+# start of the message twice. modeld's msgq raises SIGUSR2 ~160 times a second,
+# which cost one link failure per 30 s of driving. Nothing here waits on one.
 _IO_SIGNALS = signal.valid_signals()
 
 
@@ -142,10 +105,8 @@ def _endpoint_desc(addr: int, max_packet: int) -> bytes:
 def _ss_companion(max_burst: int = 15) -> bytes:
   """SuperSpeed endpoint companion.
 
-  bMaxBurst is the number of *additional* packets per burst, so 15 means bursts
-  of 16 x 1024 bytes. It matters enormously: without bursting the gadget sends
-  one packet per handshake and the 459 KB request takes 167 ms (~2.75 MB/s),
-  which blows the whole 50 ms frame budget on its own.
+  bMaxBurst counts *additional* packets, so 15 is a 16 KB burst. Without
+  bursting a 459 KB request takes 167 ms, over the whole frame budget.
   """
   return struct.pack('<BBBBH', 6, USB_DT_SS_ENDPOINT_COMP, max_burst, 0, 0)
 
@@ -172,45 +133,27 @@ def build_strings(name: str = 'jetlink') -> bytes:
 
 
 class FfsTransport(StreamTransport):
-  """
-  Reads run on their own thread. FunctionFS ignores O_NONBLOCK once the host
-  has enabled the endpoint: a synchronous read always waits for the USB
-  request to complete, so a read on the caller's thread cannot honour any
-  deadline and a Jetson that stops answering blocks modeld for as long as it
-  stays silent (measured on a comma: a 0.5 s timeout returned after 14 s, when
-  the server was resumed). The thread absorbs the blocking read and hands
-  whole chunks over under a condition variable, which the caller waits on with
-  a real timeout. Writes stay on the caller's thread: a write only blocks until
-  the host has read it, and a host that is not reading is a dead link either
-  way.
+  """The gadget transport. Reads run on their own thread.
+
+  FunctionFS ignores O_NONBLOCK once the host has enabled the endpoint, so a
+  read on the caller's thread cannot honour a deadline: a 0.5 s timeout was
+  measured returning after 14 s. The reader hands whole chunks over a condition
+  variable the caller can wait on. Writes stay on the caller's thread; a host
+  that is not reading is a dead link either way.
   """
   read_chunk = READ_CHUNK
-  # One writev is one USB request is one TRB, and this controller (dwc3 on
-  # AGNOS 4.9) will occasionally send a TRB twice. Measured on the bench with a
-  # live modeld: about once in 400 frames the host read, right after a
-  # complete message, another copy of one of that message's chunks. When the
-  # request was split into two 256 KB writes the replay of the first chunk
-  # carried a valid header, so the server ran the frame again from a payload
-  # that was half the old request and half the next one, and a replay of the
-  # second chunk put pixels where the next header should be. Either way the
-  # stream was lost and modeld spent the drive rejoining. A message that fits
-  # one request is replayed whole, with its sequence number, and the receiver
-  # drops it (Session.handle). The largest inference request is 475 KB with
-  # its padding; only the model upload is bigger, and a corrupted upload is
-  # caught by its sha256 and sent again.
+  # dwc3 resends a TRB about once in 400 frames. A message that fits one writev
+  # is replayed whole and the receiver drops it by seq; split across two writes
+  # the replay lands mid-stream and the link is lost. The largest inference
+  # request is 475 KB padded, and only uploads, which sha256 covers, are bigger.
   write_chunk = 512 * SS_MAX_PACKET
   tx_align = P.GADGET_TX_ALIGN
 
   def __init__(self, mount: str = '/dev/ffs-jetlink', gadget: str | None = None,
                udc: str | None = None):
-    # The gadget end only ever receives replies - an INFER_RESP is ~74 KB of
-    # output plus telemetry and burst padding, well under 128 KB, and the
-    # control messages are smaller still. The whole model upload goes the other
-    # way (writes), so nothing large lands in this buffer. 256 KB is a 3x margin
-    # that RxBuffer still grows past on demand if the wire format ever changes;
-    # a 2 MB start was 1.75 MB of resident memory the memory-tight comma did not
-    # need. (In the unsupported gadget-on-Jetson inversion this end would take
-    # 458 KB requests - it grows to fit on the first one, once.)
+    # This end only receives replies: an INFER_RESP is ~74 KB with telemetry and
+    # padding, and the upload goes the other way. 256 KB is a 3x margin the
+    # memory-tight comma can spare, and RxBuffer grows past it on demand.
     super().__init__(rx_size=256 << 10)
     self.mount = mount
     self.gadget = gadget
@@ -236,31 +179,23 @@ class FfsTransport(StreamTransport):
       os.write(self.ep0, build_descriptors())
       os.write(self.ep0, build_strings())
       if gadget is not None:
-        # Bind last: a FunctionFS gadget cannot attach to a controller until its
-        # descriptors have been written, which is why setup_gadget.sh leaves UDC
-        # empty and we finish the job here.
+        # Bind last: a FunctionFS gadget cannot attach until its descriptors
+        # are written, which is why setup_gadget.sh leaves UDC empty.
         self.bind(udc)
-      # The endpoint files exist now, but opening them is deferred to
-      # _ensure_epfiles: see there for why touching one before a host has
-      # enabled it costs the gadget until the next reboot.
+      # ep1/ep2 exist now, but opening one before a host enables it costs the
+      # gadget until the next reboot; see _ensure_epfiles.
     except BaseException:
       self.close()   # otherwise a failed bring-up leaks the descriptors it did open
       raise
 
   def _udc_state(self) -> str | None:
-    """The controller's current gadget state, off a held-open fd.
+    """The controller's gadget state, off a held-open fd.
 
-    The reader checks this before every readv - a readv on a deconfigured
-    endpoint sleeps in the kernel until a signal that never comes (see
-    _read_loop), so it cannot be skipped. Opening the sysfs file each time was
-    the cost: `open` walks dentries and allocates a struct file, and under
-    recording memory pressure that allocation reclaims - the 2026-09-06 bench
-    saw it stall 25 ms mid-frame (prepare 24.9 ms), straight over budget.
-    Holding the fd and re-reading it (lseek to 0, read) still re-runs the
-    attribute's show() so the value is current - verified on the device against
-    a fresh open across the state's values - but allocates nothing, so it cannot
-    stall. The controller outlives our bind/unbind, so the fd stays valid; it is
-    dropped on unbind and reopened lazily in case the controller ever differs.
+    The reader checks this before every readv and cannot skip it (see
+    _read_loop). Opening the sysfs file each time allocates, and under memory
+    pressure that reclaim stalled a frame 25 ms; lseek and re-read still re-runs
+    the attribute's show(), so the value is current. The fd is dropped on unbind
+    and reopened lazily in case the controller differs.
     """
     if self.bound_udc is None:
       return None
@@ -286,25 +221,12 @@ class FfsTransport(StreamTransport):
   def _ensure_epfiles(self) -> None:
     """Open ep1/ep2 and start the reader, once a host has enabled them.
 
-    Not at open, which is where this used to be, and the difference is the
-    whole gadget. ffs_epfile_io waits for the endpoint with
-    wait_event_interruptible(ffs->wait, (ep = epfile->ep)), so a read on an
-    endpoint no host has ever enabled does not return EIO - it sleeps, and
-    only a signal wakes it. Unbinding does not: unbind completes a request the
-    hardware already has, and there is no request here. The reader thread was
-    started at open, so on any drive without a Jetson it went straight into
-    that sleep and stayed there.
-
-    That thread's fd is then unclosable while it sleeps, close() or no close():
-    the syscall holds the struct file, ffs_epfile_release never runs, ffs->opened
-    stays above zero and ffs_ep0_open answers EBUSY from then on - to this
-    process, to jetlinkd, and to the next drive's modeld, until the comma is
-    rebooted. Measured 2026-09-04: one open/close of a gadget no Jetson ever
-    attached to, and every open after it failed with EBUSY.
-
-    So wait for the UDC to say configured, which is the same edge that sets
-    epfile->ep, and only then open them. A host that never arrives leaves ep0
-    as the only fd, and closing that is clean.
+    Never touch an endpoint file before that. ffs_epfile_io sleeps in
+    wait_event_interruptible until epfile->ep is set, and unbind does not wake
+    it; the sleeping syscall holds the struct file, so ffs_epfile_release never
+    runs and every ep0 open after it answers EBUSY, to this process and the next
+    one, until the comma is rebooted. The UDC reading configured is the same
+    edge that sets epfile->ep.
     """
     if self.ep_out >= 0:
       return
@@ -352,12 +274,9 @@ class FfsTransport(StreamTransport):
   def _shrink(self, attr: str) -> bool:
     """Halve a transfer size after the kernel refused to allocate for one.
 
-    ENOMEM here is about contiguous DMA memory, not about how much RAM is
-    free, so it depends on how fragmented the machine is right now and a size
-    that worked at boot can fail an hour in - which is exactly what handling a
-    1.7 GB model does to a comma. Backing off keeps the link slow rather than
-    broken. Both directions need it: reads hit this after a big upload just as
-    writes hit it during one.
+    ENOMEM here is contiguous memory, so it tracks fragmentation: a size that
+    worked at boot can fail an hour in, which is what a 1.7 GB model does to a
+    comma. Slow beats broken, and both directions need it.
     """
     floor = (self.packet_size or SS_MAX_PACKET) * 16
     current = getattr(self, attr)
@@ -376,8 +295,7 @@ class FfsTransport(StreamTransport):
   def _abort_write(self) -> None:
     """Take the link down so a write nobody is reading returns. See WRITE_TIMEOUT.
 
-    Runs on the watchdog thread, never on the one stuck in writev - that thread
-    cannot act, which is the whole problem.
+    On the watchdog thread: the one stuck in writev cannot act.
     """
     self._write_aborted = True
     log.warning("jetlink: no reader for %.3f s, dropping the gadget to free the write",
@@ -385,16 +303,10 @@ class FfsTransport(StreamTransport):
     self.unbind()
 
   def send(self, *args, **kwargs) -> None:
-    # Start every message at the full write quantum. _shrink_write halves it on
-    # an ENOMEM, and once it has, a request larger than the shrunk size is split
-    # across two writes - which re-arms the dwc3 double-TRB replay that splitting
-    # was measured to cause (see write_chunk). The shrink must therefore last
-    # only as long as the memory pressure that forced it: the contiguous memory
-    # a 512 KB kmalloc failed for on one frame is almost always back by the next,
-    # and a request that fits one write must go out as one write. Resetting here,
-    # at each message boundary, keeps the split window to the frames actually
-    # under ENOMEM instead of latching every request split for the rest of the
-    # drive. A no-op for TCP, whose write_chunk is 0.
+    # Reset the quantum at each message: a latched shrink would split every
+    # later request across two writes and re-arm the dwc3 replay (see
+    # write_chunk). The pressure that forced it is usually gone by the next
+    # frame.
     self.write_chunk = type(self).write_chunk
     super().send(*args, **kwargs)
 
@@ -413,8 +325,8 @@ class FfsTransport(StreamTransport):
           return n
         except OSError as e:
           if self._write_aborted:
-            # Our own doing, not the host's: say so, because "no such device"
-            # on its own reads like a cable falling out.
+            # Say whose doing it was: ENODEV alone reads like a cable falling
+            # out of a socket.
             raise LinkError(f"gadget write had no reader for {self._write_budget:.3f}s") from e
           # FunctionFS submits a write as one request, so a failed writev put
           # nothing on the wire and is safe to retry.
@@ -434,38 +346,23 @@ class FfsTransport(StreamTransport):
   # -- the reader thread ---------------------------------------------------
 
   def _widen_affinity(self) -> None:
-    """Move the reader off the one core modeld pinned its frame loop to.
+    """Move the reader off the core modeld pinned its frame loop to.
 
-    This thread is created wherever the first read or write happens, because
-    that is where _ensure_epfiles runs. On the comma that is normally the
-    caller's background thread (the joining state's join loop, or jetlinkd),
-    which has already dropped to SCHED_OTHER on every core, so this is usually
-    a no-op. It is the case where it is not that costs frames: modeld runs
-    config_realtime_process(7, 54), and any thread created from a thread that
-    inherited that gets SCHED_FIFO 54 *and* the single-core pin. Sharing that
-    core with the frame loop serialises them - a read that has completed on the
-    endpoint cannot be taken off it until the loop next blocks. See
-    priority.widen_affinity for the mask policy. The priority is left to
-    _raise_reader_priority below.
+    A thread created under config_realtime_process(7, 54) inherits SCHED_FIFO 54
+    and the single-core pin, and sharing that core serialises the reader with
+    the frame loop. Usually a no-op: the creator is normally a background thread
+    already. See priority.widen_affinity.
     """
     widen_affinity()
 
   def _raise_reader_priority(self) -> None:
-    """Run the reader at realtime priority so a completed read is taken off the
-    endpoint at once, not behind whatever else the comma is running.
+    """Realtime priority, so a completed read leaves the endpoint at once.
 
-    The thread that creates this one has dropped realtime deliberately (see the
-    caller's background priority helper), so what this inherits is SCHED_OTHER
-    at priority 0 - measured on the device. read_wait brackets the whole readv,
-    including the time this thread waits on the run queue to return once the
-    transfer is done, and under recording plus onroad
-    load that wait was 17 ms mean and 23 ms max, landing straight on read_wait
-    and over budget - the residual that looked like a kernel allocation stall
-    but is scheduling. The reader only copies a chunk and notifies before it
-    blocks in the next read, so realtime here preempts the contention without
-    ever holding a core. Below modeld's frame loop (54) so the loop still wins.
-    Best effort: a dev box without RTPRIO just keeps SCHED_OTHER and the slower
-    tail. jetlink must not import openpilot, so this open-codes the setscheduler.
+    The creator has dropped to SCHED_OTHER, and under recording plus onroad load
+    the wait to be scheduled after a transfer was 17 ms mean, 23 ms max - over
+    budget on read_wait alone. The reader copies a chunk and blocks again, so it
+    never holds a core. Best effort, and open-coded because jetlink must not
+    import openpilot.
     """
     try:
       os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(READER_RT_PRIORITY))
@@ -473,20 +370,14 @@ class FfsTransport(StreamTransport):
       pass
 
   def _read_loop(self) -> None:
-    # The same hazard as _write, on the read side: an interrupted read drops
-    # the packets it had already taken. This thread is ours and handles no
-    # signals, so mask them for its whole life.
+    # As in _write: an interrupted read drops the packets it already took. This
+    # thread handles no signals, so mask them for its whole life.
     signal.pthread_sigmask(signal.SIG_BLOCK, _IO_SIGNALS)
     self._widen_affinity()
     self._raise_reader_priority()
-    # Fill the recycle pool up front. Recycling alone only removes the hot-path
-    # allocation once the consumer has handed a buffer back; while a reply's
-    # chunks are still arriving, a frame-thread that is a scheduling beat behind
-    # (which CPU contention makes routine) has not recycled the last one yet, so
-    # the reader allocates the next - and that allocation reclaims under memory
-    # pressure (prepare 24 ms, over budget). Pre-allocating FREE_BUFS here, once,
-    # off the frame path, means the reader draws from the pool through that gap
-    # and only ever allocates if a stalled consumer lets it fall this far behind.
+    # Fill the pool up front: recycling alone leaves a gap while a reply's
+    # chunks arrive and the consumer is a scheduling beat behind, and an
+    # allocation there reclaims under memory pressure (24 ms, over budget).
     self._free.extend(bytearray(self._read_size) for _ in range(FREE_BUFS))
     while not self._closing:
       with self._cv:
@@ -495,23 +386,17 @@ class FfsTransport(StreamTransport):
       if self._closing:
         return
       prepare_started = time.monotonic()
-      # A fresh buffer per read: the chunk is handed to the consumer as is, so
-      # reusing one would overwrite bytes it has not copied out yet.
       if not self._configured():
-        # Same trap as _ensure_epfiles, one loop later: the host can drop our
-        # configuration between two reads, and a readv issued after that sleeps
-        # in the kernel until a signal that is never coming. Treat it as the
-        # endpoint error it would have been, and let the grace period decide.
+        # Same trap as _ensure_epfiles: the host can drop the configuration
+        # between two reads, and the readv after that sleeps forever. Treat it
+        # as the endpoint error it would have been.
         if self._wait_for_host_ready():
           continue
         self._fail("host dropped the gadget configuration")
         return
-      # Reuse a buffer the consumer handed back rather than allocating one on
-      # the hot path. A fresh bytearray here, like the kernel's own per-read
-      # kmalloc, reclaims under recording memory pressure - the 2026-09-06 bench
-      # measured this allocation stalling 20+ ms (prepare 24 ms) mid-frame, and
-      # the read cannot start until it returns. The reader is the only thread
-      # that pops the free list, so a bare check needs no lock.
+      # Reuse a buffer the consumer handed back: a fresh bytearray here was
+      # measured stalling 20+ ms mid-frame under memory pressure, and the read
+      # cannot start until it returns. Only this thread pops the free list.
       buf = self._free.popleft() if self._free else bytearray(self._read_size)
       read_started = time.monotonic()
       try:
@@ -545,9 +430,8 @@ class FfsTransport(StreamTransport):
       self._cv.notify_all()
 
   def recv(self, timeout: float | None = None):
-    # Per-message maxima, in seconds. read_wait includes waiting for the peer
-    # and kernel IO; handoff includes waiting for the consumer to run. Neither
-    # is a pure scheduler or USB transfer measurement. No logging on the reader.
+    # Per-message maxima, in seconds. read_wait covers the peer and kernel IO,
+    # handoff the consumer's wake; neither is a pure scheduler measurement.
     self.last_receive = {'prepare': 0.0, 'read_wait': 0.0, 'handoff': 0.0}
     return super().recv(timeout)
 
@@ -567,11 +451,9 @@ class FfsTransport(StreamTransport):
           self._chunks[0] = (chunk[n:], arrived, prepare, read_wait)
         else:
           self._chunks.popleft()
-          # The copy above is done and nothing else reads this chunk, so return
-          # its buffer to the reader's pool. chunk.obj is the bytearray readv
-          # filled (still so after a chunk[n:] reslice); skip anything that is
-          # not one of ours at the current size - a shrunk buffer, or a bytes
-          # object a test injected.
+          # Copied out, so return the buffer to the pool. chunk.obj survives a
+          # reslice; skip anything not from this pool at the current size, such
+          # as a shrunk buffer or a test's bytes.
           buf = chunk.obj
           if type(buf) is bytearray and len(buf) == self._read_size and len(self._free) < FREE_BUFS:
             self._free.append(buf)
@@ -583,12 +465,10 @@ class FfsTransport(StreamTransport):
       return 0   # timed out with nothing new; _fill owns the deadline
 
   def _wait_for_host_ready(self) -> bool:
-    """True while we are still inside the grace period for the host to claim us.
+    """True while still inside the grace period for the host to claim the link.
 
-    Enumeration and readiness are different things: the host has to open the
-    device and claim the interface before our endpoints work, and until then
-    they return EIO. Starting the clock on the first such error rather than at
-    open means the wait covers a re-enumeration too.
+    The endpoints return EIO until the host claims the interface. The clock
+    starts on the first such error, not at open, so it covers a re-enumeration.
     """
     if self._host_gone():
       return False
@@ -601,17 +481,13 @@ class FfsTransport(StreamTransport):
     return False
 
   def _host_gone(self) -> bool:
-    """A host had us configured and no longer does.
+    """A host had the gadget configured and no longer does.
 
-    The endpoints answer ENODEV both before a host has configured us and after
-    it disconnects, and only the first deserves the grace period above. The
-    second used to get it too: on the 2026-09-04 drive a USB disconnect landed
-    mid-write, the kernel disabled the endpoints at once, and modeld then sat
-    here for the full EP_READY_TIMEOUT retrying a link the UDC already said
-    was gone, 10 s and 201 frames before modeld fell back. Both errors look
-    the same at the endpoint; the UDC state is what tells them apart, and it
-    is set in the same interrupt that disabled the endpoint, so it is already
-    current by the time the failed call returns.
+    The endpoints answer ENODEV both before a host configures the gadget and
+    after it disconnects, and only the first deserves the grace period; giving
+    it to the second cost 10 s and 201 frames on a mid-drive disconnect. The UDC
+    state separates them, and it is set in the interrupt that disabled the
+    endpoint, so it is current when the failed call returns.
     """
     if not self._had_host or self.bound_udc is None:
       return False
@@ -641,9 +517,9 @@ class FfsTransport(StreamTransport):
       if fd is None or fd < 0:
         continue
       if name == 'ep_out' and reader is not None and reader.is_alive():
-        # The read did not come back (no gadget to unbind, or a kernel that
-        # will not complete it). Linux lets close() return regardless, but
-        # not every kernel does, so do not risk the caller on it.
+        # The read never came back (nothing to unbind, or a kernel that will
+        # not complete it). close() returns regardless on Linux, but do not
+        # risk the caller on that.
         threading.Thread(target=_close_quietly, args=(fd,), daemon=True).start()
         continue
       _close_quietly(fd)

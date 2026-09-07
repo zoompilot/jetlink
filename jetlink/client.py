@@ -6,16 +6,13 @@ See the LICENSE file in the root directory for more details.
 
 The comma side of the link.
 
-Deliberately knows nothing about openpilot: it takes the warped frame and the
-packed scalars, and returns the model output. The openpilot glue lives in the
-fork (sunnypilot/jetlink/), so this package stays importable by any fork.
+Knows nothing about openpilot: warped frame and packed scalars in, model output
+out. The glue lives in the fork (sunnypilot/jetlink/), so any fork can import
+this.
 
-Failure policy: every error is raised as LinkError. openpilot's modeld already
-wraps the model call in try/except and falls back to the small model, so a
-link that raises inherits that path for free. A frame is treated the way a
-chestnut frame is: the call blocks until the answer is there, and only a stall
-long enough to mean the far end is gone (FRAME_TIMEOUT, chestnut's HCQ wait)
-becomes a failure.
+Every error is a LinkError, which modeld already catches and answers with the
+small model. A frame blocks until the answer arrives, as it does on a chestnut;
+only a stall past FRAME_TIMEOUT is a failure.
 """
 from __future__ import annotations
 
@@ -43,21 +40,19 @@ log = logging.getLogger('jetlink.client')
 
 ProgressFn = Callable[[str, float, str], None]
 
-# How long one frame may take before the link is declared dead. Not a frame
-# budget: a frame past 50 ms is a dropped camera frame and modeld already
-# accounts for those, exactly as it does when a chestnut runs long. This is the
-# analogue of chestnut's HCQDEV_WAIT_TIMEOUT_MS (3000): past it the far end is
-# not slow, it is gone, and modeld falls back to the small model.
+# Not a frame budget: a long frame is a dropped camera frame, which modeld
+# tolerates as it does on a chestnut. This is chestnut's HCQDEV_WAIT_TIMEOUT_MS
+# (3000) - past it the far end is gone, not slow.
 FRAME_TIMEOUT = 3.0
 
 StopFn = Callable[[], bool]
 
 
 class EngineMissing(LinkError):
-  """The server has no engine for this model and we have nothing to upload.
+  """The server has no engine and this caller has no ONNX to upload.
 
-  Raised in modeld, which never carries the ONNX: the Jetson's cache was
-  pruned, re-flashed or swapped since jetlinkd recorded it as ready.
+  Raised in modeld, which never carries the file: the Jetson's cache was pruned,
+  re-flashed or swapped since jetlinkd recorded it ready.
   """
 
 
@@ -71,7 +66,7 @@ class JetlinkClient:
     self._engine_state: dict | None = None
     self._should_stop: StopFn = lambda: False
     self.dead = False
-    self.last_timings = (0, 0, 0)  # gpu_us, queue_us, total_us as measured server-side
+    self.last_timings = (0, 0, 0)  # gpu_us, queue_us, total_us, server-side
     self.last_state: dict | None = None  # most recent piggybacked telemetry
     self._infer_started = 0.0
     self._infer_frame_id: int | None = None
@@ -89,10 +84,8 @@ class JetlinkClient:
                udc: str | None = None, **kw) -> JetlinkClient:
     """This end is the USB gadget (FunctionFS).
 
-    Which end is which is decided by what the two kernels support, not by which
-    is the "client". On a comma 3X the comma is the gadget: AGNOS has F_FS and
-    libcomposite built in, while a Jetson host needs no driver at all because
-    libusb goes through usbfs. See docs/transport.md.
+    The roles follow what the two kernels support, not who is the client: AGNOS
+    has F_FS built in, and a host needs no driver at all. See docs/transport.md.
     """
     from jetlink.transport.ffs import FfsTransport
     return cls(FfsTransport(mount, gadget=gadget, udc=udc), **kw)
@@ -116,9 +109,8 @@ class JetlinkClient:
         self.progress_cb(p.get('stage', ''), float(p.get('frac', 0.0)), p.get('msg', ''))
     elif msg.msg_type == P.Msg.ENGINE_RESP:
       state = json.loads(bytes(msg.payload))
-      # The server may finish a build for a model we have since moved off.
-      # Accepting that as our readiness would leave us inferring against an
-      # engine the server will answer NOT_READY for, every frame.
+      # A build that finished for a model this client has moved off would
+      # otherwise read as ready, and every frame after it as NOT_READY.
       wanted = (self._engine_state or {}).get('sha256')
       if wanted is not None and state.get('sha256') not in (None, wanted):
         log.warning("ignoring engine state for %s (we want %s)",
@@ -142,9 +134,7 @@ class JetlinkClient:
       if msg.msg_type in (P.Msg.PROGRESS, P.Msg.ENGINE_RESP, P.Msg.ERROR):
         self._dispatch(msg)
         continue
-      # A reply to an earlier request, which only happens after a caller gave up
-      # on one. Drop it and keep looking, otherwise every subsequent frame would
-      # read one response behind.
+      # A reply a caller gave up on. Drop it, or every frame reads one behind.
       log.warning("discarding stale %s seq=%d (waiting for %s seq=%d)",
                   _name(P.Msg, msg.msg_type), msg.seq, _name(P.Msg, msg_type), seq)
 
@@ -168,9 +158,9 @@ class JetlinkClient:
     return time.perf_counter() - t0
 
   def shutdown(self, reason: str = '', timeout: float = 5.0) -> dict:
-    """Ask the Jetson to power off. Off, not asleep: only a DC cycle or the
-    power button brings it back, so this is for the comma's own low-battery
-    shutdown and nothing else. The reply comes before the box goes down."""
+    """Ask the Jetson to power off, not sleep: only a DC cycle or the button
+    brings it back, so this is for the comma's low-battery shutdown alone. The
+    reply comes before the box goes down."""
     seq = self._next_seq()
     self.t.send_json(P.Msg.SHUTDOWN_REQ, seq, {'reason': reason})
     return json.loads(bytes(self._expect(P.Msg.SHUTDOWN_RESP, seq, timeout).payload))
@@ -184,17 +174,13 @@ class JetlinkClient:
                     should_stop: StopFn | None = None) -> ModelSpec:
     """Make the server ready to run this model, uploading and building if needed.
 
-    Blocks until the engine is ready or the build fails, and returns the spec
-    the server derived from the ONNX. The comma never parses the model: the
-    server has the onnx package and the file, so it is the one source of truth
-    for shapes, and a device without a parser for a given export (tinygrad
-    rejects the org.tinygrad domain) is no longer stuck.
+    Blocks until ready or the build fails, and returns the spec the server
+    derived from the ONNX. Only the server parses the model, so a device whose
+    parser rejects an export (tinygrad and the org.tinygrad domain) still runs.
 
-    `onnx_path` is what gets uploaded if the server asks; None means the
-    caller cannot upload (modeld) and a missing engine is EngineMissing.
-    Progress is reported through `progress(stage, frac, msg)` with stage in
-    upload/patch/parse/build/load. `should_stop` is polled during the long
-    waits so a daemon told to exit can let go of the link promptly.
+    `onnx_path` None means the caller cannot upload (modeld) and a missing
+    engine is EngineMissing. `progress(stage, frac, msg)` has stage in
+    upload/patch/parse/build/load. `should_stop` is polled during long waits.
     """
     self.progress_cb = progress
     self._should_stop = should_stop or (lambda: False)
@@ -268,8 +254,8 @@ class JetlinkClient:
                   reset: bool = False, want_state: bool = False, deadline: float | None = None) -> int:
     """Send a frame and return immediately with its sequence number.
 
-    Split from infer_end so the caller can do useful work while the Jetson is
-    busy - openpilot publishes chestnutState in exactly this window.
+    Split from infer_end so the caller can work while the Jetson is busy;
+    openpilot publishes chestnutState in that window.
     """
     if self.spec is None:
       raise LinkError("ensure_engine() first")
@@ -292,10 +278,8 @@ class JetlinkClient:
   def infer_end(self, seq: int, deadline: float | None = None) -> np.ndarray:
     """Block for the frame's output, as modeld blocks on a chestnut.
 
-    A frame that runs long is a dropped camera frame, which modeld counts and
-    tolerates. Only a stall past `deadline` (FRAME_TIMEOUT by default) is a
-    failure, and then the link is done: the far end has stopped answering, and
-    the small model is the right place to be.
+    A long frame is a dropped camera frame, which modeld tolerates. Only a stall
+    past `deadline` is a failure, and then the link is done.
     """
     try:
       budget = self.deadline if deadline is None else deadline
@@ -343,10 +327,9 @@ class JetlinkClient:
             want_state: bool = False) -> np.ndarray:
     """One frame. Returns the model output as float32, shaped (n,).
 
-    `warped` is (2, 6, H, W) uint8 straight off openpilot's warp; `packed` is
-    the float32 packed_npy_inputs buffer. Either may be a numpy array or a raw
-    buffer - a tinygrad `Tensor.data()` memoryview goes straight to the wire
-    with no numpy round trip. Sent as-is: no copy on the TCP path, one on USB.
+    `warped` is (2, 6, H, W) uint8 off openpilot's warp, `packed` the float32
+    packed_npy_inputs. Either may be any buffer, so a tinygrad Tensor.data()
+    memoryview reaches the wire with no numpy round trip.
     """
     return self.infer_end(self.infer_begin(warped, packed, frame_id, reset, want_state, deadline), deadline)
 
@@ -357,9 +340,8 @@ class JetlinkClient:
 def _as_bytes(buf, expect: int, name: str) -> memoryview:
   """Byte view over a numpy array or any buffer, size-checked.
 
-  Checking bytes rather than shape lets the caller hand over whatever it
-  already has, and turns a model/protocol mismatch into a clear error here instead
-  of a misparse on the far end.
+  Bytes rather than shape, so the caller can pass whatever it has and a
+  mismatch fails here instead of misparsing on the far end.
   """
   mv = memoryview(buf)
   if not mv.contiguous:

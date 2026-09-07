@@ -6,18 +6,14 @@ See the LICENSE file in the root directory for more details.
 
 The request loop, and the engine it serves.
 
-One client at a time, one message at a time, with the engine build on a worker
-thread so progress keeps flowing while a 160 s build runs. The inference path
-does no allocation and no logging: numpy views are laid over the received
-buffer in place.
+One client at a time, one message at a time, with builds on a worker thread so
+progress keeps flowing through a 160 s build. The inference path neither
+allocates nor logs: numpy views are laid over the received buffer in place.
 
-The engine outlives the connection. The comma reconnects at every handover
-between jetlinkd and modeld, and at the top of every drive that reconnect has
-to fit inside modeld's 60 s budget together with a USB re-enumeration that has
-been seen take 70 s. Reloading a 770 MB plan on each connect (13 to 25 s
-measured) is what that budget cannot afford, so EngineHost owns the one loaded
-engine and the one build in flight for the life of the process, and a Session
-is only a view onto it.
+The engine outlives the connection. The comma reconnects at every handover,
+inside modeld's 60 s budget and after a re-enumeration seen at 70 s, and
+reloading a 770 MB plan costs 13 to 25 s of that. So EngineHost owns the loaded
+engine and the build in flight for the life of the process.
 """
 from __future__ import annotations
 
@@ -80,10 +76,9 @@ class Request:
 class EngineHost:
   """Process-wide owner of the loaded engine and of the build in flight.
 
-  Sessions come and go; this does not. Everything that touches `loaded` does
-  so under `lock`: the job thread swaps engines in and out while the request
-  loop is running frames, and freeing pinned memory a frame's numpy views are
-  still laid over is a segfault, not an exception.
+  Everything that touches `loaded` holds `lock`: the job thread swaps engines
+  while the request loop runs frames, and freeing pinned memory a frame's views
+  are laid over segfaults rather than raising.
   """
 
   def __init__(self, cache: EngineCache, telemetry: Telemetry | None = None):
@@ -100,10 +95,9 @@ class EngineHost:
   def status(self, sha256: str | None, frame_skip: int | None = None) -> dict:
     """The engine state for one model, in the shape ENGINE_RESP carries.
 
-    frame_skip is part of the identity, not decoration: the spec handed back
-    is stamped with the value the client asked for, so an engine loaded under
-    a different one is not the engine this client wants. Matching on the sha
-    alone would answer "ready" and serve it the other client's spec.
+    frame_skip is part of the identity: the spec handed back is stamped with the
+    value asked for, so matching on the sha alone would answer ready and serve
+    another client's spec.
     """
     with self.lock:
       return self._status(sha256, frame_skip)
@@ -140,8 +134,8 @@ class EngineHost:
           and self.loaded.spec.frame_skip == req.frame_skip):
         return self._ready(self.loaded)
       if self.job is not None and self.job.state == 'building':
-        # Either it is this model, and the client simply attaches to the build
-        # that is already running, or another build owns the GPU right now.
+        # Either this model's build, which the client attaches to, or another
+        # build that owns the GPU right now.
         return self._status(req.sha256, req.frame_skip)
     entry = self.cache.entry(req.sha256)
     model_path = self.cache.model_path(req.sha256)
@@ -163,22 +157,13 @@ class EngineHost:
   def preload(self) -> None:
     """Start loading whatever was loaded last, before a client asks for it.
 
-    The engine survives a reconnect and a suspend, so the common paths never
-    pay for a load. A fresh process does: the server comes up, waits for a
-    gadget, and only deserializes the plan when the first client calls
-    ensure_engine. At an ignition-on cold start that is jetlinkd's slot minus
-    jetlinkd - manager runs it offroad only - so the wait lands on modeld's
-    join, at the end, after the comma has already been waiting out the
-    Jetson's boot. 6 s for a 766 MB plan, more for a larger one.
+    A fresh process would otherwise deserialize the plan (6 s for 766 MB) on the
+    first ensure_engine, which at a cold ignition lands on modeld's join. From
+    the gadget-less poll loop it overlaps the Jetson's boot instead. Guessing
+    wrong costs one unload; `request` swaps as it does for any other change.
 
-    Started from the poll loop while it has no gadget, so the deserialize
-    overlaps the boot rather than following it. Guessing wrong costs idle
-    memory and one unload: `request` swaps to the model actually asked for,
-    exactly as it does for any other change.
-
-    Only a plan whose sidecar carries a spec is preloaded. Deriving one means
-    parsing the ONNX, which is real work to do on a guess, and a plan that old
-    is going to be re-provisioned anyway.
+    Only a plan whose sidecar carries a spec: deriving one means parsing the
+    ONNX, too much work to do on a guess.
     """
     remembered = self.cache.last_loaded()
     if remembered is None:
@@ -202,11 +187,11 @@ class EngineHost:
                 entry, self.cache.model_path(sha256), spec)
 
   def _spec_on_disk(self, entry: CacheEntry, model_path: Path, frame_skip: int) -> ModelSpec | None:
-    """The spec for a cached plan, from its sidecar or, failing that, the ONNX.
+    """The spec for a cached plan, from its sidecar or failing that the ONNX.
 
-    Plans built before the sidecar carried a spec still load if the model file
-    is around to derive one from; otherwise the client is asked to upload,
-    after which the existing plan is reused rather than rebuilt.
+    A plan whose sidecar predates specs still loads if the model file is there
+    to derive one from; otherwise the client uploads and the existing plan is
+    reused, not rebuilt.
     """
     if entry.exists:
       try:
@@ -236,25 +221,24 @@ class EngineHost:
            spec: ModelSpec | None) -> None:
     engine = None
     try:
-      # One engine resident at a time. A build needs the memory, and a load of
-      # a different model would otherwise hold two 1.7 GB engines for a moment
-      # on a board with 8 GB.
+      # One engine resident at a time: a build needs the memory, and two 1.7 GB
+      # engines do not fit in 8 GB even for a moment.
       self._unload()
       if not job.load_only:
         if spec is None:
           self._progress('parse', 0.0, 'reading model metadata', force=True)
           spec = self._derive_spec(model_path, req.frame_skip)
         self._build(model_path, entry.plan_path, {'spec': spec.to_dict()})
-        # Never let the sweep take the plan we just wrote: offroad the clock
-        # can be behind every plan already on disk.
+        # Offroad the clock can be behind every plan on disk, so the one just
+        # written has to be protected from the sweep.
         self.cache.prune(protect=entry.plan_path)
         self.cache.sweep_temp()
       assert spec is not None
       try:
         meta = entry.meta()
       except (OSError, ValueError):
-        # A plan from before sidecars carried specs, or one whose sidecar went
-        # missing. Rewrite it rather than failing a build that already ran.
+        # A sidecar that predates specs, or one that went missing. Rewrite it
+        # rather than fail a build that already ran.
         meta = {}
       if 'spec' not in meta:
         entry.write_meta({**meta, 'spec': spec.to_dict()})
@@ -285,8 +269,7 @@ class EngineHost:
     from jetlink.queues import PolicyQueues
     queues = PolicyQueues(spec)
     _check_shapes(engine, spec)
-    # One warm run so the first real frame is not the one that pays for
-    # lazily-initialised CUDA state.
+    # one warm run, so the first real frame does not pay for lazy CUDA state
     host_inputs = {n: engine.host_input(n) for n in engine.inputs}
     warped = np.zeros(spec.warped_shape, np.uint8)
     packed = np.zeros(spec.packed_nelem, np.float32)
@@ -337,8 +320,8 @@ class EngineHost:
 
 
 def _check_shapes(engine, spec: ModelSpec) -> None:
-  """The engine is ground truth for what will execute; the spec came from the
-  file. Disagreement means the plan on disk is not this model's."""
+  """The engine is what will execute and the spec came from the file, so
+  disagreement means the plan on disk is not this model's."""
   for name, shape in engine.input_shapes.items():
     want = spec.input_shapes.get(name)
     if want is None:
@@ -411,11 +394,9 @@ class Session:
         self._error(msg.seq, type(e).__name__, str(e))
 
   def handle(self, msg: Message) -> None:
-    # The comma's USB controller occasionally sends a request twice; see
-    # FfsTransport.write_chunk. The client numbers requests from 1 and never
-    # reuses one on a connection, so anything at or below the last seq is the
-    # replay, already answered. Running a frame twice would push the same
-    # image into the history queues twice, silently.
+    # dwc3 occasionally sends a request twice (see FfsTransport.write_chunk).
+    # Seqs never repeat on a connection, so anything at or below the last one is
+    # a replay; running it would push the same image into the queues twice.
     if msg.seq <= self.last_seq:
       log.warning("dropping replayed message type=%d seq=%d (last %d)", msg.msg_type, msg.seq, self.last_seq)
       return
@@ -483,10 +464,8 @@ class Session:
     with open(path, mode) as f:
       f.seek(offset)
       f.write(data)
-    # Deliberately silent. The client streams chunks without reading between
-    # them, and over USB a gadget only accepts data while its peer has a read
-    # posted - so a progress write here stalls for the whole transfer timeout
-    # on every attempt. The client reports its own upload progress anyway.
+    # Silent on purpose: the client streams chunks without reading between
+    # them, so a progress write here stalls for the whole transfer timeout.
 
   def on_upload_done(self, msg: Message) -> None:
     req = self.request
@@ -520,9 +499,9 @@ class Session:
     t0 = time.perf_counter()
     spec = loaded.spec
     if msg.payload.nbytes != spec.infer_req_nbytes:
-      # The offsets below come from our spec, not from the wire. A client with
-      # a different model would otherwise have its scalars read out of the
-      # middle of the image, and the result would look perfectly finite.
+      # The offsets below come from the spec, not the wire: a client on another
+      # model would have its scalars read out of the image, and the result would
+      # look perfectly finite.
       self._send(P.Msg.INFER_RESP, msg.seq,
                  (P.pack_infer_resp(0, P.Status.BAD_SHAPE, 0, 0, 0),))
       return
@@ -543,14 +522,10 @@ class Session:
     outputs = loaded.engine.run()
     out = next(iter(outputs.values())).reshape(-1)
 
-    # asarray, not astype: a no-op when the engine already outputs float32,
-    # instead of a 74 KB copy and an allocation every frame. Check finiteness on
-    # the result - isfinite is ~7x faster on float32 than on float16, and the
-    # non-finites map across the cast exactly.
-    #
-    # openpilot treats a non-finite big-model output as a hard failure and drops
-    # to the small model. Checking here saves the comma rescanning 18452 floats
-    # and keeps the reason in the response.
+    # asarray, not astype: a no-op when the engine already outputs float32.
+    # isfinite is ~7x faster on float32 and the non-finites map across exactly.
+    # openpilot drops to the small model on a non-finite output either way, so
+    # checking here saves the comma rescanning 18452 floats to find out.
     out32 = np.asarray(out, dtype=np.float32)
     status = P.Status.OK if np.all(np.isfinite(out32)) else P.Status.NOT_FINITE
 
@@ -564,9 +539,8 @@ class Session:
     send_us = int((time.perf_counter() - send_started) * 1e6)
     self.frames += 1
     if total_us > SLOW_FRAME_US or send_us > 10_000:
-      # After the reply, so the log write never delays it. The comma logs the
-      # same frame split by its own stages; together they say which end, and
-      # which stage of it, a slow frame belongs to.
+      # After the reply, so the log never delays it. The comma logs the same
+      # frame by its own stages; together they place a slow frame.
       log.warning("slow frame %d: gpu %.1f queue %.1f total %.1f send %.1f ms", frame_id,
                   loaded.engine.last_gpu_us / 1e3, queue_us / 1e3, total_us / 1e3, send_us / 1e3)
 
@@ -575,8 +549,8 @@ class Session:
     d = json.loads(bytes(msg.payload) or b'{}')
     reason = str(d.get('reason', ''))
     log.warning("shutdown requested by the client: %s", reason or 'no reason given')
-    # Reply first. The host acts on the flag within milliseconds and stops the
-    # container on its way down, and the client is waiting for this.
+    # Reply first: the host acts on the flag within milliseconds and stops the
+    # container on its way down.
     self._send_json(P.Msg.SHUTDOWN_RESP, msg.seq, {'ok': True, 'detail': 'powering off'})
     request_poweroff(self.host.cache.root, reason)
 

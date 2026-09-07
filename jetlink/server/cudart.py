@@ -85,10 +85,9 @@ def device_name(device: int = 0) -> tuple[str, int, int]:
 
 
 # --- CUDA graphs -----------------------------------------------------------
-#
-# Capturing the whole per-frame sequence (H2D, enqueue, D2H) into a graph and
-# replaying it removes the per-launch CPU work, which is both latency and
-# jitter. Safe here only because every buffer is preallocated and never moves.
+# Replaying the per-frame sequence (H2D, enqueue, D2H) as a graph removes the
+# per-launch CPU work, which is both latency and jitter. Safe only because every
+# buffer is preallocated and never moves.
 
 cudaStreamCaptureModeThreadLocal = 1
 

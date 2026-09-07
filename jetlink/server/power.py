@@ -6,19 +6,14 @@ See the LICENSE file in the root directory for more details.
 
 Powering the Jetson off on the comma's say-so.
 
-The comma has a battery policy of its own: hardwared shuts the device down
-below 11.8 V or after 30 hours parked. A Jetson on an always-on feed does not
-know a battery exists, and even asleep it draws something, so when the comma
-decides the battery needs protecting it tells the Jetson to go too. Off is
-off: nothing but a DC cycle or the power button brings it back, which is why
-this is a separate request from sleeping (see sleep.py) and why the comma
-only sends it from its own shutdown path.
+hardwared shuts the comma down below 11.8 V or after 30 hours parked, and a
+Jetson on an always-on feed draws even asleep, so it goes too. Off is off: only
+a DC cycle or the button brings it back, which is why this is separate from
+sleeping (see sleep.py) and only the comma's shutdown path sends it.
 
-The server runs in a container and cannot power the host off. It drops a
-flag file on the shared cache volume and a host-side path unit
-(scripts/jetlink-poweroff.path) does the real work. Two things keep that
-from becoming a boot loop: the host script deletes the flag before it powers
-off, and it ignores a flag older than the current boot.
+The container cannot power the host off, so it drops a flag file for a host-side
+path unit (scripts/jetlink-poweroff.path). Not a boot loop: the host script
+deletes the flag before powering off and ignores one older than the boot.
 """
 from __future__ import annotations
 
@@ -51,8 +46,8 @@ def request_poweroff(cache_root: str | Path, reason: str = '') -> bool:
 
 
 def clear_stale_flag(cache_root: str | Path) -> None:
-  """At startup. A flag that survived a boot means the host unit is not
-  installed, and it must not be honoured by one installed later."""
+  """At startup: a flag that survived a boot means the host unit is not
+  installed, and one installed later must not honour it."""
   path = flag_path(cache_root)
   try:
     if path.exists():

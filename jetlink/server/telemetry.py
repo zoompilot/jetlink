@@ -4,15 +4,12 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-Jetson health, shaped to fit openpilot's `chestnutState`.
+Jetson health, shaped to fit openpilot's chestnutState.
 
-The comma publishes whatever we return here as chestnutState, so the existing
-sidebar, alerts and logging work unchanged and the Jetson reads as an attached
-accelerator. Field names therefore mirror ChestnutState in log.capnp; the
-mapping from Tegra sysfs is documented per field below.
-
-Everything is read from sysfs rather than tegrastats: no subprocess per poll,
-and it works unprivileged inside the container.
+The comma publishes this as chestnutState, so the sidebar, alerts and logging
+work unchanged and the Jetson reads as an attached accelerator; field names
+mirror ChestnutState in log.capnp. Read from sysfs rather than tegrastats: no
+subprocess per poll, and it works unprivileged inside the container.
 """
 from __future__ import annotations
 
@@ -29,9 +26,9 @@ HWMON = Path('/sys/class/hwmon')
 class CachedTelemetry:
   """One sensor worker per server, with bounded refresh rate and sample age.
 
-  Sensor IO never holds the snapshot lock. Inference does not wait for a stuck
-  read, and reconnects do not spawn more workers. Age starts before sampling, so a slow
-  sensor read cannot make old measurements look fresh when it finally returns.
+  Sensor IO never holds the snapshot lock, so inference cannot wait on a stuck
+  read and reconnects spawn no more workers. Age starts before sampling, or a
+  slow read would look fresh when it finally returns.
   """
 
   def __init__(self, source, period: float = 0.1, max_age: float = 1.0):
@@ -87,9 +84,8 @@ class CachedTelemetry:
 
 
 def _read(path: Path, default=None):
-  # Broad except on purpose: the cv*-thermal zones on an Orin Nano have no
-  # sensor wired up and reading them raises a TypeError out of the codec layer,
-  # not an OSError. A telemetry read must never take the server down.
+  # Broad on purpose: the Orin Nano's cv*-thermal zones have no sensor wired up
+  # and raise TypeError out of the codec layer, not OSError.
   try:
     return path.read_text().strip()
   except Exception:

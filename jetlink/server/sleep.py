@@ -6,30 +6,20 @@ See the LICENSE file in the root directory for more details.
 
 Suspend the Jetson when nobody is talking to it.
 
-On an always-on supply the Jetson sits at ~7 W idle, which over a long park is
-a flat battery. Deep suspend keeps the loaded engine resident, so the wake
-path is ~6 s to a kernel and no plan reload, against ~65 s for a cold boot.
+On an always-on supply the box idles at ~7 W, a flat battery over a long park.
+Deep suspend keeps the engine resident: ~6 s back, against ~65 s for a cold boot
+and a plan reload.
 
-USB is the wake source and either edge wakes it: the comma presenting the
-gadget, and the comma dropping it. The second is what makes this a loop
-rather than a "go to sleep" command from the comma. Ignition-off pulls the
-gadget and wakes us, so the only sane policy is: awake with no gadget for
-SLEEP_AFTER seconds means nobody wants us, sleep again. The same rule handles
-the reverse, a mid-drive disconnect longer than the timeout, because the next
-enumeration is a wake.
+USB is the wake source and both edges wake it, so this is a loop rather than a
+command from the comma: ignition-off pulls the gadget and wakes the box, and no
+gadget for SLEEP_AFTER means sleep again. Writing /sys/power/state blocks until
+resume, so the poll loop continues where it stopped and the engine host, the
+CUDA context and libusb all survive.
 
-Writing /sys/power/state blocks until resume, so the server process simply
-stops in the middle of its poll loop and continues from there. The engine
-host, the CUDA context and the libusb state all survive; measured on the
-bench 2026-09-04 (31.2 ms mean over 90 s after a resume, no reload).
-
-Not every attempt sleeps. The freezer can fail (a process that will not
-freeze; a bench ssh session did it) and the kernel then returns EBUSY without
-sleeping, or a wake edge can land between our check and the write. Neither is
-detectable from the write's return value alone, so the suspend_stats success
-counter is the proof, and a failed attempt backs off rather than hammering
-the freezer, which stops every process on the box for its 20 s timeout each
-time it tries.
+Not every attempt sleeps: the freezer can return EBUSY, and a wake edge can land
+between the check and the write, neither of them visible in the write's return
+value. suspend_stats is the proof, and a failure backs off rather than freezing
+the box again 20 s later.
 """
 from __future__ import annotations
 
@@ -40,9 +30,8 @@ from pathlib import Path
 
 log = logging.getLogger('jetlink.sleep')
 
-# Longer than the gadget's re-enumeration at the jetlinkd/modeld handover,
-# observed at 45 to 70 s. Sleeping inside that gap costs the next connect a
-# resume.
+# Longer than the handover's re-enumeration, observed at 45 to 70 s: sleeping
+# inside that gap costs the next connect a resume.
 SLEEP_AFTER = 120.0
 
 RETRY_MIN = 10.0
@@ -52,17 +41,10 @@ RETRY_MAX = 300.0
 # and still have failed to freeze.
 FREEZER_TIMEOUT = 20.0
 
-# How long a sleep may last with nothing else waking us. USB is the wake
-# source and it is not guaranteed: on 2026-09-04 the comma presented the
-# gadget to a sleeping Jetson and got a bus reset and no enumeration, held
-# there through four connect cycles, and neither a second bind nor a
-# wake-on-LAN magic packet brought it back - the box needed its button. In
-# the car that is a whole drive on the small model with no way to recover,
-# because the only thing that could ask is the comma and it is already
-# asking. An RTC alarm is the one wake source that does not depend on the
-# path that just failed, so arm one before every sleep and bound the outage
-# to this. The cost is a wake and SLEEP_AFTER awake per period, ~7 W for
-# 120 s in 30 min, well under a tenth of a watt averaged.
+# The USB wake is not guaranteed: a sleeping Jetson answered a bind with a bus
+# reset and no enumeration through four connect cycles and needed its button,
+# which in the car is a whole drive on the small model. An RTC alarm does not
+# depend on the path that just failed, and costs under a tenth of a watt.
 WAKE_BACKSTOP = 1800.0
 RTC = '/sys/class/rtc/rtc0'
 
@@ -72,8 +54,7 @@ HUB_CLASS = '09'
 
 
 def _boottime() -> float:
-  # Counts through a suspend, unlike CLOCK_MONOTONIC, so the difference across
-  # the write is how long we were actually asleep.
+  # counts through a suspend, unlike CLOCK_MONOTONIC, so it measures the sleep
   clock = getattr(time, 'CLOCK_BOOTTIME', None)
   return time.clock_gettime(clock) if clock is not None else time.monotonic()
 
@@ -171,8 +152,8 @@ class Sleeper:
     except OSError as e:
       self._disarm_backstop(armed)
       if e.errno in (errno.EACCES, errno.EPERM, errno.EROFS, errno.ENOENT):
-        # Configuration, not weather: /sys/power is not writable in here.
-        # run.sh and the unit mount it read-write; see docs/transport.md.
+        # Configuration, not weather: run.sh and the unit mount /sys/power
+        # read-write; see docs/transport.md.
         log.error("cannot write %s (%s); sleep disabled", self.power / 'state', e)
         self.enabled = False
         self.failed += 1
@@ -186,8 +167,8 @@ class Sleeper:
     asleep = _boottime() - t0
     after = self._read_int('suspend_stats/success')
     if before >= 0 and after <= before:
-      # The write returned cleanly but the counter did not move: we never
-      # left. Happens when a wake edge lands during the freeze.
+      # A clean return with the counter unmoved: a wake edge landed during the
+      # freeze and the box never left.
       log.warning("suspend returned after %.1f s without sleeping (%s)",
                   asleep, self._failure())
       self.failed += 1
@@ -197,30 +178,18 @@ class Sleeper:
     return True
 
   def _check_usb_wakeup(self) -> list[str]:
-    """Refuse to sleep quietly if nothing can wake us.
+    """Arm remote wakeup on every hub, and say so loudly when it cannot.
 
-    The comma is the gadget and hangs off the onboard Realtek hub, so a
-    connect on a downstream port has to be signalled up by that hub before the
-    root hub or tegra-xusb ever hear about it. Those three ship with wakeup
-    enabled; the SuperSpeed hub does not, and at SuperSpeed it is the one in
-    our path. Measured 2026-09-04 with it disarmed: the comma presented the
-    gadget to a sleeping Jetson and got a bus reset with no SET_ADDRESS, its
-    UDC sat at "default" through four connect cycles and fifteen minutes, a
-    wake-on-LAN did not reach us either, and the box took its button. Armed,
-    the same test resumed 4 s after the bind.
+    The comma hangs off the onboard Realtek hub, which has to signal a connect
+    up before the root hub or tegra-xusb hear about it, and which ships disarmed
+    while those do not. Disarmed, a sleeping Jetson answered a bind with a bus
+    reset and needed its button; armed, it resumed 4 s after the bind. Which hub
+    carries the gadget depends on the negotiated speed, and the USB 2 one ships
+    armed, so check them all.
 
-    Arming them is the host's job - `99-jetlink-usb-wakeup.rules` at boot and
-    `jetlink-wake-setup.sh` from the unit's ExecStartPre - because `/sys` is
-    mounted read-only in this container and the write from in here is a no-op
-    under both shipped configurations. So try, because a deployment that
-    mounts it read-write exists, and say so loudly when it fails: a line in
-    the log is the difference between finding this in a minute and finding it
-    after a drive.
-
-    Which hub carries us depends on the negotiated speed - at 480 Mbps it is
-    the USB 2.0 hub, which happens to ship armed - so check every hub rather
-    than the one we can see. That speed dependence is why this looked like it
-    worked before.
+    Arming belongs to the host (99-jetlink-usb-wakeup.rules, and the unit's
+    ExecStartPre) because /sys is read-only here; try anyway, for a deployment
+    that mounts it read-write.
     """
     disarmed = []
     try:
@@ -235,11 +204,9 @@ class Sleeper:
         if wakeup.read_text().strip() != 'disabled':
           continue
       except OSError:
-        # Not a hub we can judge: this directory also holds interfaces
-        # ("2-1:1.0"), which have bInterfaceClass and no bDeviceClass at all,
-        # so reading it raises. Treating that as a hub we failed to arm named
-        # six interfaces in an error that told the reader to go fix a udev
-        # rule that was already installed and already working.
+        # Not a hub: this directory also holds interfaces ("2-1:1.0"), which
+        # have no bDeviceClass, so the read raises. Counting those as failures
+        # named six interfaces in an error about a rule that was working.
         continue
       try:
         wakeup.write_text('enabled\n')
@@ -253,12 +220,11 @@ class Sleeper:
     return disarmed
 
   def _arm_backstop(self) -> bool:
-    """Set an RTC alarm so a wake we do not control still happens.
+    """Set an RTC alarm, so a wake the USB edge misses still happens.
 
-    Against the RTC's own count, not the wall clock: this box boots with an
-    unset clock and only learns the time from NTP, which in the car never
-    happens, so since_epoch may be years out and it does not matter as long
-    as both sides of the comparison come from the same counter.
+    Against the RTC's own count, not the wall clock: this box boots unset and
+    never sees NTP in the car, so since_epoch may be years out and only both
+    sides coming from the same counter matters.
     """
     if self.backstop <= 0:
       return False

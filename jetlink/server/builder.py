@@ -6,14 +6,12 @@ See the LICENSE file in the root directory for more details.
 
 ONNX -> TensorRT engine, with progress.
 
-A serialized TensorRT plan is not portable: it is specific to the TensorRT
-version, the GPU architecture and the build flags. The cache key encodes all
-three, so moving to a new JetPack or a different Jetson rebuilds rather than
-silently loading something that will not run.
+A plan is specific to the TensorRT version, the GPU architecture and the build
+flags, so the cache key encodes all three: a new JetPack or a different Jetson
+rebuilds instead of loading something that cannot run.
 
-The build takes ~160 s for the big model, which is why progress is streamed
-back to the comma rather than reported at the end - it shows up there the same
-way a model download and compile does.
+The build takes ~160 s for the big model, so progress is streamed back to the
+comma, where it shows up the way a model download does.
 """
 from __future__ import annotations
 
@@ -35,27 +33,23 @@ log = logging.getLogger('jetlink.builder')
 ProgressFn = Callable[[str, float, str], None]
 
 DEFAULT_CACHE = Path(os.environ.get('JETLINK_CACHE', '/mnt/data/jetlink'))
-# Ceiling, not an allocation: TensorRT picks tactics that fit inside it. On an
-# 8 GB Orin the old flat 4 GB let it choose tactics that, on top of the parsed
-# weights, walked the builder into the OOM killer on a 1.76 GB model. Size it
-# from what the machine actually has free instead.
+# A ceiling, not an allocation: TensorRT picks tactics that fit inside it. A
+# flat 4 GB on an 8 GB Orin met the OOM killer on a 1.76 GB model, so size it
+# from what is free.
 MAX_WORKSPACE_BYTES = 4 << 30
 MIN_WORKSPACE_BYTES = 256 << 20
 WORKSPACE_FRACTION = 0.4
-# Every model in the registry gets to keep its plan. Rebuilding one costs
-# minutes and a plan costs under 2 GB against a 900 GB disk, so the old cap of
-# two turned an A/B between three models into a rebuild every switch.
+# One per registry entry: a rebuild costs minutes and a plan under 2 GB of a
+# 900 GB disk, so a smaller cap makes an A/B rebuild on every switch.
 KEEP_PLANS = 6
 
 
 def available_bytes() -> int:
-  """Memory a TensorRT workspace can actually live in.
+  """Memory a TensorRT workspace can live in.
 
-  MemAvailable is the honest number - free plus what the kernel would reclaim.
-  Swap deliberately does not count: on Tegra the GPU shares system RAM and its
-  allocations are pinned, so they cannot page out. Counting the 25 GB of swap
-  this Jetson happens to have would hand back the old flat 4 GB every time and
-  walk the builder into the same OOM the sizing exists to avoid.
+  MemAvailable, so free plus what the kernel would reclaim. Swap does not count:
+  on Tegra the GPU's allocations are pinned system RAM and cannot page out, and
+  this box has 25 GB of swap to be fooled by.
   """
   try:
     with open('/proc/meminfo') as f:
@@ -82,10 +76,9 @@ def _sanitize(s: str) -> str:
 def device_tag() -> str:
   """Identifies the hardware a plan is valid for.
 
-  A serialized plan is tied to the GPU architecture it was built for, so the
-  compute capability is the part that actually matters; the device name makes
-  the cache filename readable. Taken from CUDA rather than /proc/device-tree,
-  which is not mounted inside the container.
+  The compute capability is the part that matters; the name makes the cache
+  filename readable. From CUDA, not /proc/device-tree, which the container has
+  no mount for.
   """
   try:
     from jetlink.server import cudart
@@ -111,17 +104,13 @@ class CacheEntry:
     self.meta_path.write_text(json.dumps(meta, indent=2))
 
 
-# What the server loaded last, so a fresh process can start deserializing it
-# before a client asks. Beside the caches rather than in them: it describes the
-# server's history, not a plan.
+# What the server loaded last, so a fresh process can preload it. Beside the
+# caches rather than in them: it describes the server, not a plan.
 LAST_LOADED = 'last-loaded.json'
 
-# TensorRT's tactic timing cache. Every build times candidate kernels for each
-# layer, and most of those timings do not depend on the model: a warm cache cut
-# a Lebowski build from 254 s to 173 s, measured 2026-09-04. Keyed by TensorRT
-# version and GPU arch like the plans are, because a timing from another
-# version or another chip is not a timing at all. Advisory: a corrupt or stale
-# one costs a slow build, never a wrong engine, so every path here fails open.
+# Kernel timings mostly do not depend on the model: a warm cache cut a Lebowski
+# build from 254 s to 173 s. Keyed like the plans, because a timing from another
+# version or chip is not one. Advisory, so every path here fails open.
 TIMING_CACHE = 'timing'
 
 
@@ -167,9 +156,8 @@ class EngineCache:
   def remember_loaded(self, sha256: str, frame_skip: int) -> None:
     """Record what is loaded, for the next process to preload.
 
-    frame_skip goes with it because the spec a client is served is stamped
-    with the one it asked for, so preloading under a different value would
-    hand the next client a spec it did not request.
+    frame_skip goes with it: the spec served is stamped with it, so preloading
+    under another value hands the next client a spec it did not ask for.
     """
     try:
       (self.root / LAST_LOADED).write_text(json.dumps({'sha256': sha256, 'frame_skip': frame_skip}))
@@ -190,11 +178,9 @@ class EngineCache:
   def prune(self, keep: int = KEEP_PLANS, protect: Path | None = None) -> None:
     """Keep the newest few plans; each is ~770 MB.
 
-    `protect` is never pruned, whatever its timestamp says. A Jetson with no
-    network and no RTC battery boots at 1970, so a plan built offroad carries
-    an mtime older than every plan built before it. Sorted by mtime that makes
-    the build that just finished the first one deleted, and the caller's next
-    read of its sidecar dies on FileNotFoundError.
+    `protect` is never pruned whatever its mtime says: this box boots at 1970
+    without NTP, so a plan built offroad looks older than everything on disk and
+    a fresh build would be the first one deleted.
     """
     plans = [p for p in self.engines.glob('*.plan') if protect is None or p != protect]
     plans.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -205,9 +191,8 @@ class EngineCache:
   def sweep_temp(self, max_age: float = 6 * 3600) -> None:
     """Drop build directories a crashed or killed build left behind.
 
-    build_engine stages the plan in a TemporaryDirectory inside engines/, so a
-    build the link tears down mid-flight leaks one. They are invisible to
-    prune(), which only globs *.plan.
+    build_engine stages the plan in a TemporaryDirectory inside engines/, which
+    prune() does not glob.
     """
     now = time.time()
     for d in self.engines.glob('tmp*'):
@@ -255,11 +240,10 @@ class _Monitor(trt.IProgressMonitor):
 
 
 def _load_timing_cache(config, path: str | Path | None):
-  """Seed the builder's tactic timings from a previous build, if we have any.
+  """Seed the builder's tactic timings from a previous build.
 
-  Fails open on everything: a cache written by another TensorRT version makes
-  `create_timing_cache` reject it, and a truncated one from a killed build
-  reads as garbage. Either way the build runs, it just runs cold.
+  Fails open: another TensorRT version's cache is rejected and a killed build's
+  is truncated, and either way the build runs, just cold.
   """
   if path is None:
     return None
@@ -284,8 +268,8 @@ def _save_timing_cache(cache, path: str | Path | None) -> None:
   try:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    # Same atomic dance as the plan: a build killed mid-write would otherwise
-    # leave a truncated cache for the next one to read.
+    # Atomic like the plan: a build killed mid-write would leave a truncated
+    # cache for the next one to read.
     tmp = p.with_suffix(p.suffix + '.tmp')
     tmp.write_bytes(memoryview(cache.serialize()))
     tmp.replace(p)
@@ -314,8 +298,8 @@ def build_engine(onnx_path: str | Path, out_path: str | Path,
   logger = trt.Logger(trt.Logger.WARNING)
   trt.init_libnvinfer_plugins(logger, '')
 
-  # Imported here, not at module scope: it pulls in the onnx package, which the
-  # server needs to build and a comma running the tests does not have.
+  # Not at module scope: pulls in the onnx package, which a comma running the
+  # tests does not have.
   from jetlink.onnx_patch import patch_file
 
   with tempfile.TemporaryDirectory(dir=str(out_path.parent)) as tmp:

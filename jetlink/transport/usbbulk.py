@@ -6,10 +6,9 @@ See the LICENSE file in the root directory for more details.
 
 USB host side of the link: libusb bulk transfers to a FunctionFS gadget.
 
-On a comma+Jetson pair this is the *Jetson* end. A host needs no kernel driver
-at all - libusb goes through usbfs - which is what lets this work on a stripped
-L4T rootfs with no gadget modules. openpilot already drives the panda and
-chestnut the same way, so `usb1` is not a new dependency.
+On a comma+Jetson pair this is the Jetson end. A host needs no kernel driver,
+libusb going through usbfs, which is what makes a stripped L4T rootfs workable.
+openpilot drives the panda and chestnut through usb1 already.
 """
 from __future__ import annotations
 
@@ -23,11 +22,9 @@ from jetlink.transport.base import LinkError, StreamTransport
 JETLINK_VID = 0x1209
 JETLINK_PID = 0x0001
 
-# NB the endpoint addresses are discovered, never assumed. FunctionFS treats
-# the addresses in the gadget's descriptors as logical and renumbers them when
-# it binds, so a gadget that declares 0x01/0x82 can appear to the host as
-# 0x01/0x81. Reading a hardcoded address that does not exist fails with a bare
-# LIBUSB_ERROR_IO and looks exactly like a broken cable.
+# Endpoint addresses are discovered, never assumed: FunctionFS renumbers them at
+# bind, so a declared 0x01/0x82 can appear as 0x01/0x81. A hardcoded address
+# that does not exist fails with LIBUSB_ERROR_IO and looks like a bad cable.
 USB_ENDPOINT_DIR_IN = 0x80
 USB_TRANSFER_TYPE_BULK = 0x02
 MAX_PACKET = 1024   # SuperSpeed bulk
@@ -41,11 +38,9 @@ class UsbBulkTransport(StreamTransport):
   packet_size = MAX_PACKET
   read_chunk = READ_CHUNK
   rx_align = P.GADGET_TX_ALIGN
-  # A bulk IN read has to be posted for a whole packet, so the buffer needs a
-  # packet of headroom beyond the message itself. Without it a message whose
-  # length is not a packet multiple *and* big enough to resize the buffer ends
-  # with a few bytes of room, which rounds down to zero packets and stalls the
-  # read for good. Only the model upload is ever that big.
+  # A bulk IN read is posted for whole packets, so the buffer needs a packet of
+  # headroom: without it a message that resizes the buffer can end with room for
+  # zero packets and stall the read for good.
   read_slack = MAX_PACKET
 
   def __init__(self, handle, context=None, timeout_ms: int = DEFAULT_TIMEOUT_MS,
@@ -75,11 +70,9 @@ class UsbBulkTransport(StreamTransport):
       if device is None:
         raise LinkError(f"no jetlink gadget at {vid:04x}:{pid:04x}")
       ep_in, ep_out = _find_bulk_endpoints(device, interface)
-      # libusb_open itself can fail with EIO on a device that is enumerated but
-      # not answering - which is exactly what a FunctionFS gadget looks like
-      # when the process owning its endpoints has exited. Everything in here
-      # has to come back as LinkError, or it escapes the server's accept loop
-      # and takes the process down instead of retrying.
+      # An enumerated gadget whose owning process has exited fails open with
+      # EIO. Everything here must surface as LinkError, or it escapes the
+      # server's accept loop and kills the process instead of retrying.
       handle = device.open()
       handle.claimInterface(interface)
     except LinkError:
@@ -135,10 +128,8 @@ class UsbBulkTransport(StreamTransport):
       return 0
     if self._zero_copy_reads:
       try:
-        # bulkRead() allocates a 256 KB buffer, slices it, and hands back a
-        # copy - about 768 KB of allocation and 918 KB of memcpy per frame on
-        # the receive path, which is exactly what RxBuffer exists to avoid.
-        # create_binary_buffer over `dest` writes straight into it.
+        # bulkRead allocates and copies: ~768 KB allocated and 918 KB memcpy a
+        # frame. create_binary_buffer over `dest` writes straight into it.
         buf, _ = usb1.create_binary_buffer(dest[:n])
         return self.handle._bulkTransfer(self.ep_in, buf, n, self._ms(timeout))
       except usb1.USBErrorTimeout as e:

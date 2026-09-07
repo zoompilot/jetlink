@@ -4,18 +4,12 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-Derives every size on the wire from the model's own ONNX metadata.
+Every size on the wire, derived from the model's ONNX metadata.
 
-Both ends compute this independently from the same file and compare the model
-hash at handshake, so there is exactly one source of truth for shapes and no
-version skew between comma and Jetson can go unnoticed.
-
-The layout mirrors `get_policy_npy_shapes` / `make_input_queues` from
-openpilot *master*'s selfdrive/modeld/compile_modeld.py, which computes
-`feat_dim = math.prod(fb[2:])`. Note some forks still carry an older copy using
-`fb[2]`, which is wrong for the big model's 4-D features_buffer (1,32,32,512):
-it gives 32 where the answer is 16384. Keep this in step with upstream master;
-`tests/test_queues.py` is what catches the drift.
+Mirrors get_policy_npy_shapes / make_input_queues in openpilot master's
+selfdrive/modeld/compile_modeld.py. feat_dim is prod(fb[2:]); older forks use
+fb[2], which gives 32 rather than 16384 for the big model's (1,32,32,512)
+features_buffer. tests/test_queues.py catches the drift.
 """
 from __future__ import annotations
 
@@ -134,9 +128,8 @@ class ModelSpec:
     return INFER_RESP_SIZE + self.output_nbytes
 
   # -- the wire form of a spec ---------------------------------------------
-  #
-  # One encoder and one decoder, because both ends and the benchmark need this
-  # and three hand-written copies would drift the moment a field is added.
+  # One encoder and one decoder: both ends and the bench need this, and copies
+  # would drift the moment a field is added.
 
   def to_dict(self) -> dict:
     return {
