@@ -41,6 +41,8 @@ comma's board only; jetlink publishes nothing on them. Runtime state travels in 
 `ModelDataV2SP` fields; Jetson telemetry goes to swaglog until maintainers assign a
 `customReserved` slot. `validate_sp_cereal_upstream.py` passes.
 
+**Two review findings fixed before this PR.** A lost link latches a native `bigModelFailed` plus the sunnypilot `bigModelLinkLost` every tick until the driver disengages, because the main state machine only reads native events and cancels a soft disable the tick its event vanishes. jetlinkd restores the VM sysctls only when the link is turned off, not at the ignition handoff where manager stops it; ratio-mode limits are restored through their ratio keys because the kernel silently skips a write of 0.
+
 **Behaviour the tests pin.** The joining state returns at once with the small model
 driving and joins in the background; promotion needs fresh, valid, disengaged
 `selfdriveState`/`carState`/`carControl`; a failure after promotion demotes in place,

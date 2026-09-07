@@ -199,3 +199,16 @@ and the 180 s live bench are outstanding, as is the sysctl-restore line in a rea
   `develop-big-model-fixes` into develop and `jetson-trt` when ready, run section 6 items 9
   and 10 with the Jetson up, and decide whether the fitted-board-untrained-PCIe fall-through to
   `accelerators.ready()` (pinned by a test) is the wanted reading of the selection line.
+
+### Bench validation 2026-09-07 (after the user's "fully validate" request)
+Record: `docs/validation-2026-09-07.md`. Comma updated through git fetch/checkout of the pushed
+`jetson-trt` (three reboots: 5d2431150a, 175ceae4e6, 03574347a0), jetlink checkout rsynced to
+`/data/openpilot/jetlink_repo`, `JetlinkEnabled=1` set explicitly (the new opt-in rule). 40 of
+the 43 rows PASS or PASS-by-test; E2 and the missing-package alert are NOT RUN; B4/C5/C7/C9 are
+PARTIAL (unit-pinned, not sampled inside the ui/selfdrived processes). Review findings from
+Codex confirmed and fixed: link-loss soft disable was one tick and SP-only; sysctls were
+restored at the ignition handoff. Found on the bench and fixed: zero-valued sysctls cannot be
+restored by writing 0 (ratio keys), tinygrad's compile pool inherited FIFO 54 on core 7, the
+write watchdog likewise, the bench summary crashed on the new state column. Master's own
+`bigModelFailed` is also edge-triggered for one tick (same cancel path); not changed here,
+flagged for the user.
