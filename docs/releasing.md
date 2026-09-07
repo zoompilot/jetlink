@@ -28,12 +28,12 @@ builds or an installation attempt during a driving boot.
 
 ## Prepare the pair
 
-1. Commit and test Jetlink. Export a clean tree from that commit, not a dirty
-   worktree. Run `python3 scripts/verify_release.py .` from that tree.
-2. Put the exact revision, source digest and protocol version into the fork's
-   release lock, then commit and test the fork. The digest includes package
-   Python sources, immediate script files, pyproject and Dockerfile; it excludes
-   logs, tests and documentation. Any runtime source edit requires a new lock.
+1. Commit and test Jetlink. The fork pins the package as the `jetlink_repo`
+   submodule, so the commit sha is the release identity; there is no separate
+   lock file any more.
+2. Bump the submodule pointer in the fork (`git -C jetlink_repo checkout <sha>`,
+   commit the gitlink), then commit and test the fork. Any runtime source edit
+   is a new sha and a new pointer.
 3. On the Jetson, build the image from the locked source. Record
    `docker image inspect --format '{{.Id}}' <tested-tag>` alongside the fork
    revision, source digest, JetPack/TRT, model hashes and validation results.
@@ -47,9 +47,9 @@ builds or an installation attempt during a driving boot.
 ## Install while parked, with stable bench power
 
 - Stop the affected processes before changing package ownership or symlinks.
-  Export/copy the locked tree into a **new staging directory** outside the
-  updater-managed fork. Verify it against the fork lock there first:
-  `python3 <staging>/scripts/verify_release.py <staging> <fork>/openpilot/sunnypilot/accelerators/jetlink/release.json`.
+  Export/copy the pinned tree into a **new staging directory** outside the
+  updater-managed fork. Verify it is the pinned sha first:
+  `git -C <staging> rev-parse HEAD` must equal `git -C <fork> rev-parse HEAD:jetlink_repo`.
 - Preserve the existing `/data/jetlink_repo` as a named rollback directory.
   Move the verified staging directory into that path on the same filesystem.
   Do not rsync over a package that running processes may still import.
