@@ -340,9 +340,8 @@ def test_a_stale_poweroff_flag_is_removed_at_startup(tmp_path):
 def test_wrong_sized_request_is_rejected(link):
   """A client on a different model must be told, not silently fed garbage.
 
-  The server reads `packed` at an offset derived from its own spec, so a
-  mismatched request would have the scalars and the 16384-float hidden state
-  read out of the middle of the image - and the result would look finite.
+  The server reads `packed` at an offset from its own spec, so a mismatched
+  request reads the scalars out of the middle of the image, and looks finite.
   """
   client, session, engine, spec = link
   seq = client._next_seq()
@@ -406,10 +405,9 @@ def test_sweep_temp_drops_only_stale_build_dirs(tmp_path):
 
 
 class TestPreload:
-  """A fresh server process has no engine loaded, and the first client pays the
-  deserialize. Offroad jetlinkd absorbs that, but at an ignition-on cold start
-  manager runs no jetlinkd, so it lands on modeld's join - at the end, after
-  the comma has already waited out the Jetson's boot."""
+  """A fresh server process has no engine loaded and the first client pays the
+  deserialize. Offroad jetlinkd absorbs that; at an ignition-on cold start there
+  is no jetlinkd and it lands on modeld's join instead."""
 
   def _cache(self, tmp_path, spec, with_spec=True):
     cache = EngineCache(tmp_path)
@@ -498,10 +496,9 @@ class TestPreload:
 
 
 class TestTimingCache:
-  """TensorRT re-times candidate kernels on every build. Most of those timings
-  do not depend on the model: a warm cache cut a Lebowski build from 254 s to
-  173 s. It is advisory, so every path here has to fail open - a bad cache
-  costs a slow build, never a wrong engine."""
+  """TensorRT re-times candidate kernels on every build; a warm cache cut a
+  Lebowski build from 254 s to 173 s. Advisory, so every path fails open: a bad
+  cache costs a slow build, never a wrong engine."""
 
   class FakeCache:
     def __init__(self, blob=b'timings'):

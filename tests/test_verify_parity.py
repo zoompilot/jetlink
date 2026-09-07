@@ -6,12 +6,10 @@ See the LICENSE file in the root directory for more details.
 
 The parity gate's statistics, on synthetic heads.
 
-Shapes follow Cinque Terre's spec: plan is 990 values, one hypothesis of 33
-rows by 15 columns for mu and again for std; wide_from_device_euler is 3 mu
-and 3 std; lead_prob is three logits. The noise is float16 sized (~0.01
-absolute), which is what two float16 implementations disagree by. The gate
-must ride through that on columns and slices too small or too flat to
-correlate, and still fail a column that is wired wrong.
+Shapes follow Cinque Terre's spec: plan is 990 values, 33 rows by 15 columns for
+mu and again for std; euler is 3 and 3; lead_prob is three logits. The noise is
+float16 sized, ~0.01 absolute. The gate must ride through that on columns too
+small or too flat to correlate, and still fail a column that is wired wrong.
 """
 import importlib.util
 import io
@@ -33,9 +31,8 @@ SPEC = SimpleNamespace(output_slices={'plan': PLAN, 'wide_from_device_euler': EU
 N_FRAMES = 20
 
 
-# Scale of each plan column, from the model's own predicted std on the 2026-09-05
-# capture: metres, m/s, m/s^2, radians and rad/s do not share a magnitude, which
-# is the whole reason columns are checked one at a time.
+# Scale of each plan column, from the model's own predicted std: metres, m/s,
+# radians and rad/s do not share a magnitude, which is why columns are checked alone.
 PLAN_SCALE = np.array([150, 1, 0.05, 15, 0.05, 0.05, 0.3, 0.01, 0.01, 0.0006, 0.005, 0.01, 0.004, 0.006, 0.009],
                       np.float32)
 
@@ -66,9 +63,8 @@ def fp16_noisy(frames, seed=1):
   """What the other float16 implementation returns: every value off by a tenth
   of a percent of its own magnitude, then rounded to float16.
 
-  Proportional, not uniform: measured 2026-09-05, an output near zero carries
-  noise near zero (roll, 1e-6 rad, disagreed by 1e-7) because the noise is the
-  final layer's accumulation order and scales with that output's weights.
+  Proportional, not uniform: the noise is the final layer's accumulation order,
+  so an output near zero carries noise near zero (roll, 1e-6 rad, off by 1e-7).
   """
   rng = np.random.default_rng(seed)
   out = []

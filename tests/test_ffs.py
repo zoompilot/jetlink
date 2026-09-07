@@ -6,10 +6,9 @@ See the LICENSE file in the root directory for more details.
 
 The FunctionFS transport against FIFOs standing in for the endpoint files.
 
-What matters here is the one thing the kernel will not give us: FunctionFS
-reads block regardless of O_NONBLOCK once the host has enabled the endpoint,
-so a deadline can only be honoured if the read is somewhere else. A FIFO with
-nothing written to it blocks a reader exactly the same way.
+FunctionFS reads block regardless of O_NONBLOCK once the host has enabled the
+endpoint, so a deadline is only honoured if the read is somewhere else. A FIFO
+with nothing written to it blocks a reader the same way.
 """
 from __future__ import annotations
 
@@ -36,12 +35,9 @@ def mount(tmp_path):
 def test_no_endpoint_is_opened_before_a_host_has_enabled_it(mount):
   """The one that costs the gadget until the comma is rebooted.
 
-  ffs_epfile_io does not fail on an endpoint no host has enabled, it sleeps in
-  wait_event_interruptible until a signal that never comes, and unbinding does
-  not wake it. The thread stuck there holds the struct file, so ffs->opened
-  never drops and every later ffs_ep0_open answers EBUSY - for jetlinkd and the
-  next drive's modeld too, not just this process. Opening ep0 and nothing else
-  until a host is actually there is what keeps that from happening.
+  ffs_epfile_io sleeps on an endpoint no host has enabled, and unbind does not
+  wake it. The stuck thread holds the struct file, so every later ffs_ep0_open
+  answers EBUSY, jetlinkd and the next drive's modeld included.
   """
   t = FfsTransport(str(mount))
   try:
@@ -62,8 +58,7 @@ def test_recv_times_out_while_the_kernel_read_is_blocked(mount):
     with pytest.raises(LinkTimeout):
       t.recv(timeout=0.2)
     assert time.monotonic() - t0 < 1.0, "the deadline must not wait on the blocked read"
-    # Started by that first recv, not by the constructor, and still parked in
-    # its read, which is exactly where it should be.
+    # started by that first recv, not the constructor, and still parked in its read
     assert t._reader is not None and t._reader.is_alive()
   finally:
     t.close()
@@ -72,9 +67,8 @@ def test_recv_times_out_while_the_kernel_read_is_blocked(mount):
 def test_data_written_by_the_host_arrives_through_the_reader(mount):
   t = FfsTransport(str(mount))
   try:
-    # The transport opens its endpoint files on the first read or write, and a
-    # FIFO standing in for one blocks the writer until somebody is reading it.
-    # The real ep1 is not a FIFO and needs none of this.
+    # a FIFO standing in for ep1 blocks its writer until somebody reads; the
+    # real ep1 does not
     t._ensure_epfiles()
     payload = np.arange(3000, dtype=np.float32)
     host = os.open(mount / 'ep1', os.O_WRONLY)
@@ -197,12 +191,9 @@ def test_a_host_that_disconnects_mid_session_ends_the_link_at_once(tmp_path, mon
 
 
 def test_the_watchdog_drops_the_link_so_a_stuck_write_can_return(mount, monkeypatch):
-  """FunctionFS writes cannot time out: the request sits on the endpoint until
-  the host drains it. A hello to a Jetson that has enumerated but whose server
-  is not reading blocked three minutes on a drive 2026-09-05, and the join loop
-  cannot retry what it is blocked inside. Unbinding the UDC is the only lever,
-  and it works here because the endpoint is enabled - unlike a read on an
-  endpoint no host ever enabled, which unbind does not touch (_ensure_epfiles).
+  """FunctionFS writes cannot time out: the request sits on the endpoint until the
+  host drains it, and the join loop cannot retry what it is blocked inside.
+  Unbinding works here only because the endpoint is enabled (see _ensure_epfiles).
   """
   t = FfsTransport(str(mount))
   try:
@@ -211,8 +202,7 @@ def test_the_watchdog_drops_the_link_so_a_stuck_write_can_return(mount, monkeypa
     t._abort_write()
     assert t._write_aborted and unbound, "the watchdog must drop the link, not just flag it"
 
-    # Once aborted, the write reports our own doing rather than retrying
-    # through the host-ready grace period.
+    # once aborted, the write reports our own doing, not the host-ready grace period
     t._ensure_epfiles()
     os.close(t.ep_in)
     t.ep_in = -1                      # any failure will do; the flag decides the message
@@ -346,10 +336,9 @@ def test_reader_affinity_survives_a_platform_without_the_call(monkeypatch):
 
 
 def test_send_resets_the_write_quantum_each_message(monkeypatch):
-  """A prior ENOMEM shrink must not persist. Once write_chunk is halved, a
-  request larger than the shrunk size splits across two writes and re-arms the
-  dwc3 double-TRB replay; each new message must start at the full quantum again
-  so the split window is only the frames actually under memory pressure."""
+  """A prior ENOMEM shrink must not persist: a split write re-arms the dwc3
+  double-TRB replay, so each message starts at the full quantum again and only
+  the frames under memory pressure are ever split."""
   t = _bare_transport()
   t.write_chunk = 256 * ffs.SS_MAX_PACKET   # as if _shrink_write had halved it once
   monkeypatch.setattr(ffs.StreamTransport, 'send', lambda self, *a, **k: None)
@@ -383,9 +372,8 @@ def test_reader_widens_when_inherited_mask_is_several_cores(monkeypatch):
 
 
 def test_read_buffers_are_recycled_not_reallocated():
-  """The hot receive path must not allocate a fresh buffer per read: under
-  memory pressure that allocation reclaims (prepare 24 ms on the 2026-09-06
-  bench). A fully consumed buffer returns to the reader's pool for reuse."""
+  """The hot receive path must not allocate per read: under memory pressure that
+  allocation reclaims, 24 ms on the bench. A consumed buffer returns to the pool."""
   from collections import deque
   t = _bare_transport(ep_out=0, _read_size=ffs.READ_CHUNK, _queued=4,
                       _reader_error=None, _closing=False, _chunks=deque(), _free=deque(),

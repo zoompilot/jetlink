@@ -8,27 +8,21 @@ See the LICENSE file in the root directory for more details.
 Check a built engine against a reference output.
 
 Runs on the Jetson, inside the server image. Feeds fixed inputs straight to the
-engine (bypassing the queues, which tests/test_queues.py covers, and the link,
-which verify_parity.py covers) and compares with a reference produced by
-onnxruntime on another machine.
+engine, bypassing the queues (tests/test_queues.py) and the link
+(verify_parity.py), and compares with a reference from onnxruntime elsewhere.
 
-Without --spec the only correlation available is over the whole output vector,
-and 16384 of its 18452 values are hidden_state, so a wrong head hides behind a
-right recurrence. That mode proves load, shape and finiteness, nothing more.
-With the model spec each output slice and each column within it is checked,
-the same test verify_parity.py makes, on the one frame this has: a column with
-one value per frame cannot be correlated, so verify_parity's multi-frame
-capture is where columns are really judged.
+Without --spec the correlation is over the whole vector, 16384 of whose 18452
+values are hidden_state, so a wrong head hides behind a right recurrence: that
+mode proves load, shape and finiteness only. --spec checks each output slice and
+column, but on one frame; verify_parity's multi-frame capture is where columns
+are really judged.
 
     python3 scripts/verify_engine.py --engine <plan> --inputs <dir> --ref ref_out.npy --spec spec.json
 
---capture answers a different question: did the comma receive what the engine
-computed? It replays a verify_parity capture (in_warped_*, in_packed_* and the
-out_link_* the comma got back) through the same PolicyQueues, pinned inputs
-and CUDA graph the server uses, and demands the engine's output equal the
-link's bit for bit. Passing means every difference verify_parity then shows
-against onnxruntime is inference precision, not transport. Used 2026-09-05 to
-rule the USB path out of a per-column parity failure: 16 of 16 frames identical.
+--capture asks instead whether the comma received what the engine computed. It
+replays a verify_parity capture through the same PolicyQueues, pinned inputs and
+CUDA graph the server uses and demands bit identity with out_link_*, which leaves
+every remaining difference against onnxruntime as inference precision.
 
     python3 scripts/verify_engine.py --engine <plan> --capture <dir from verify_parity capture>
 """
@@ -43,8 +37,7 @@ import numpy as np
 
 from jetlink.server.engine import TrtEngine
 
-# Sibling script: python puts this file's directory first on sys.path, and the
-# image ships scripts/ whole.
+# sibling script: python puts this file's directory first on sys.path
 from verify_parity import MIN_CORR, load_spec_file, report_slices
 
 
@@ -55,8 +48,7 @@ def replay_capture(engine: TrtEngine, d: Path) -> int:
   spec = load_spec_file(d / 'spec.json')
   queues = PolicyQueues(spec)
   host_inputs = {n: engine.host_input(n) for n in engine.inputs}
-  # Same warm-up as EngineHost._warm: one zero frame, then the graph capture,
-  # so the replay runs the kernels the server runs.
+  # same warm-up as EngineHost._warm, so the replay runs the kernels the server runs
   queues.step_into(np.zeros(spec.warped_shape, np.uint8), np.zeros(spec.packed_nelem, np.float32), host_inputs)
   engine.run()
   if engine.capture_graph():
@@ -69,8 +61,7 @@ def replay_capture(engine: TrtEngine, d: Path) -> int:
     return 1
   bad = 0
   for i in range(n):
-    # in_packed_i already carries the hidden state the link returned for frame
-    # i-1: capture writes it after patching, so the server saw exactly this.
+    # in_packed_i already carries the hidden state the link returned for frame i-1
     queues.step_into(np.load(d / f'in_warped_{i}.npy'), np.load(d / f'in_packed_{i}.npy'), host_inputs)
     out = np.asarray(next(iter(engine.run().values())).reshape(-1), np.float32)
     link = np.load(d / f'out_link_{i}.npy').reshape(-1)
@@ -140,8 +131,8 @@ def main() -> int:
         return 2
       print(f'OK: every slice and every column at or above corr {MIN_CORR}')
     else:
-      # A low whole-vector number is a certain failure. A high one proves
-      # nothing about the heads, which are the 2068 values that steer.
+      # a low whole-vector number is a certain failure; a high one proves nothing
+      # about the 2068 head values that steer
       print('no --spec: this checks load, shape and finiteness only. The whole-vector '
             'correlation is mostly hidden_state and passes with a wrong head; pass '
             '--spec to compare per slice.')
@@ -149,9 +140,8 @@ def main() -> int:
         print('CORRELATION TOO LOW', file=sys.stderr)
         return 2
 
-  # The server captures the per-frame sequence into a CUDA graph and replays
-  # it, so that is the path worth timing; run() enqueues per frame until then.
-  # capture_graph wants a warm run first, which infer() above was.
+  # the server replays a CUDA graph, so that is the path worth timing;
+  # capture_graph wants a warm run first, which infer() above was
   if engine.capture_graph():
     engine.run()  # first replay, so the loop below is the steady state
     print('cuda graph: captured, timing graph replay as the server runs it')

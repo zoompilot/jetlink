@@ -1,39 +1,34 @@
-# systemd unit for the Jetson. Install to /etc/systemd/system/ and enable:
-# Set /etc/jetlink/server.env to a verified immutable image ID first; see
-# docs/releasing.md. Then: sudo systemctl enable --now jetlink-server
+# systemd unit for the Jetson. Set /etc/jetlink/server.env to a verified
+# immutable image ID first (docs/releasing.md), then install to
+# /etc/systemd/system/ and: sudo systemctl enable --now jetlink-server
 #
-# The Jetson is the USB host, so there is no gadget to set up on this side -
-# it just needs /dev/bus/usb. The comma runs the gadget (see docs/transport.md).
+# The Jetson is the USB host, so there is nothing to set up on this side beyond
+# /dev/bus/usb; the comma runs the gadget (docs/transport.md).
 #
-# --sleep-after assumes the Jetson is on an always-on supply: with no gadget
-# for that long it deep-suspends and the next USB edge wakes it, engine still
-# loaded. That needs /sys/power writable, hence the second /sys mount. On a
-# switched supply the flag is harmless (power goes before the timeout does).
+# --sleep-after assumes an always-on supply: with no gadget for that long the box
+# deep-suspends and the next USB edge wakes it, engine still loaded. That needs
+# /sys/power writable, hence the second /sys mount.
 #
-# The USB edge only wakes us if the hub the gadget hangs off is armed for
-# remote wakeup, and the SuperSpeed one ships disarmed. 99-jetlink-usb-wakeup
-# .rules does that at boot; ExecStartPre does it again here because a re-flash
-# loses the rule silently and the failure costs a whole drive. It has to be on
-# the host: /sys is read-only in the container.
+# That edge only wakes us if the hub the gadget hangs off is armed for remote
+# wakeup, and the SuperSpeed one ships disarmed. 99-jetlink-usb-wakeup.rules does
+# it at boot; ExecStartPre repeats it because a re-flash loses the rule silently.
+# It has to be on the host: /sys is read-only in the container.
 #
-# jetson_clocks pins the clocks and turns DVFS off. nvpmodel sets the ceiling;
-# this is what makes the part actually sit at it, and without it the GPU ramps
-# between frames on a workload that is idle 16 ms in every 50. It is not
-# persistent - there is no unit for it and a reboot loses it - so it goes here,
-# where a reboot is exactly when it gets reapplied. Leading `-` because a board
-# without the tool is not a reason to refuse to serve.
+# jetson_clocks pins the clocks and turns DVFS off, so the part sits at the
+# nvpmodel ceiling instead of ramping between frames that are idle 16 ms in every
+# 50. It does not survive a reboot, which is why it is here. Leading `-` because
+# a board without the tool can still serve.
 #
-# rtc0 is bind-mounted read-write, resolved rather than hardcoded because it
-# is a PMIC RTC on one board and a Tegra one on another, so that
-# Sleeper can arm its wake backstop. Without it the alarm is a warning and
-# the USB edge is the only way back. --mount rather than -v: the resolved path
-# contains colons (bpmp:i2c) and -v reads those as field separators.
+# rtc0 is bind-mounted read-write so Sleeper can arm its wake backstop; without
+# it the alarm is a warning and the USB edge is the only way back. Resolved
+# rather than hardcoded (PMIC RTC on one board, Tegra on another), and --mount
+# rather than -v because that path contains colons (bpmp:i2c).
 [Unit]
 Description=jetlink inference server
 After=docker.service
 Requires=docker.service
-# The engine cache lives on /mnt/data. If docker starts before that mount is
-# up, -v creates the directory on the 3.7 GB rootfs and the first plan fills it.
+# without the mount up, -v creates the cache dir on the 3.7 GB rootfs and the
+# first plan fills it
 RequiresMountsFor=/mnt/data/jetlink
 
 [Service]

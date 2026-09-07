@@ -4,14 +4,12 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-The one test that matters for correctness: jetlink's numpy history buffers must
-produce exactly what openpilot's tinygrad ones do.
+jetlink's numpy history buffers must produce exactly what openpilot's tinygrad
+ones do.
 
-jetlink moves img_q / big_img_q / feat_q / desire_q off the comma and onto the
-Jetson, reimplementing shift-and-sample in numpy. If that reimplementation ever
-drifts from openpilot's, the model silently sees the wrong history and the car
-drives on it. So compare against the real tinygrad functions, imported from
-openpilot, over a run long enough for the ring to wrap several times.
+img_q / big_img_q / feat_q / desire_q are reimplemented in numpy on the Jetson,
+and drift means the model silently sees the wrong history. Compared against the
+real tinygrad functions over a run long enough for every ring to wrap twice.
 
 Run with openpilot and tinygrad importable:
     PYTHONPATH=/path/to/sunnypilot:/path/to/sunnypilot/tinygrad_repo pytest tests/test_queues.py
@@ -66,12 +64,9 @@ class TinygradReference:
     img = spec.input_shapes['img']
     self.fs = fs
 
-    # Derive the shapes from openpilot's own formulae rather than reusing
-    # jetlink's properties, so this really is an independent reference. These
-    # mirror upstream master's compile_modeld.get_policy_npy_shapes /
-    # make_input_queues. NB the copy of compile_modeld checked out in this fork
-    # still uses fb[2] instead of prod(fb[2:]) and is wrong for a 4-D
-    # features_buffer; upstream master is the correct one.
+    # Derived from openpilot's own formulae rather than jetlink's properties, so
+    # this is an independent reference. Mirrors upstream master's
+    # get_policy_npy_shapes; this fork's checkout still has the 3-D fb[2] bug.
     feat_dim = math.prod(fb[2:])
     assert feat_dim == spec.feat_dim, f"spec.feat_dim {spec.feat_dim} != openpilot's {feat_dim}"
     n_frames = img[1] // 6

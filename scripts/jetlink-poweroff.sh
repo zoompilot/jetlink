@@ -1,9 +1,7 @@
 #!/bin/sh
-# Power the Jetson off because the comma asked (jetlink/server/power.py).
-# Run by jetlink-poweroff.service when the flag appears (its stdout is the
-# unit's journal; logger does not reach journald on this L4T). Install to
-# /usr/local/bin. The flag is deleted before the poweroff so the next boot
-# does not find it, and a flag from before this boot is ignored either way.
+# Power the Jetson off because the comma asked (jetlink/server/power.py). Run by
+# jetlink-poweroff.service when the flag appears; install to /usr/local/bin.
+# Speaks through stdout because logger does not reach journald on this L4T.
 FLAG="${1:-/mnt/data/jetlink/poweroff}"
 DRY_RUN="$(dirname "$FLAG")/poweroff-dry-run"
 

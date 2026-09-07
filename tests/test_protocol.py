@@ -124,9 +124,7 @@ def test_timeout_midmessage_does_not_desync():
   """A missed deadline must cost a frame, not the stream.
 
   The buffer keeps whatever arrived, so the next recv resumes the same message
-  instead of trying to read a header out of the middle of a payload. Before the
-  framing was shared this was three separate implementations and this bug lived
-  in one of them.
+  instead of reading a header out of the middle of a payload.
   """
   a, b = make_pair()
   try:
@@ -281,9 +279,8 @@ def test_absurd_length_is_rejected_before_allocating():
 
 def test_frame_timeout_is_a_link_failure():
   """A frame that does not come back inside FRAME_TIMEOUT means the far end is
-  gone, and modeld must fall back the way it does when a chestnut stops
-  answering. It is a LinkError, not a LinkTimeout: nothing upstream should be
-  tempted to treat it as recoverable, and the client says so by latching.
+  gone, so modeld falls back as it does for a chestnut. LinkError and not
+  LinkTimeout, latched, so nothing upstream treats it as recoverable.
   """
   from jetlink.client import JetlinkClient
 
@@ -434,10 +431,9 @@ class _PacketTransport(StreamTransport):
 
 
 class TestOversizeMessageDoesNotStall:
-  """A message that outgrows the buffer and is not a whole number of packets
-  used to leave a few bytes of room, which rounds down to zero packets. The
-  reader then spun on a core forever while the writer blocked on the tail.
-  Only the model upload is ever big enough to hit it."""
+  """A message that outgrows the buffer and is not a whole number of packets must
+  not round down to zero packets: the reader then spins forever while the writer
+  blocks on the tail. Only the model upload is ever big enough to hit it."""
 
   def _framed(self, body_len: int) -> bytes:
     header = P.pack_header(P.Msg.UPLOAD_CHUNK, 1, body_len, 0)

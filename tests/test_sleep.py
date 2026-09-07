@@ -192,10 +192,9 @@ def test_serve_loop_sleeps_only_on_absence(tmp_path, clock, monkeypatch):
 
 
 def test_an_rtc_alarm_is_armed_before_sleeping_and_cleared_after(tmp_path, clock):
-  """The USB edge is the wake source and it is not guaranteed: on 2026-09-04 a
-  sleeping Jetson took a bus reset from the comma's gadget and never
-  enumerated, through four connect cycles and a wake-on-LAN, and needed its
-  button. The alarm is the wake that does not depend on that path."""
+  """The USB edge is the wake source and it is not guaranteed: a sleeping Jetson
+  has taken a bus reset, never enumerated, and needed its button. The alarm is
+  the wake that does not depend on that path."""
   r = rtc(tmp_path, since_epoch=1_700_000_000)
   s = Kernel(after=1, power=power(tmp_path), rtc=r, backstop=1800)
   clock[0] += 10
@@ -249,9 +248,8 @@ def test_a_hub_that_cannot_be_armed_is_reported_loudly(tmp_path, clock, caplog):
 
 def test_usb_interfaces_are_not_mistaken_for_unarmable_hubs(tmp_path, clock, caplog):
     """/sys/bus/usb/devices holds interfaces ("2-1:1.0") next to devices. They
-    carry bInterfaceClass and no bDeviceClass, so the read raises, and counting
-    that as a hub we could not arm produced an error naming six interfaces and
-    telling the reader to install a rule that was already working."""
+    carry bInterfaceClass and no bDeviceClass, so a read that raises there must
+    not count as a hub that could not be armed."""
     import logging
     u = usb(tmp_path, hubs=(('2-1', 'enabled'),), other=())
     for iface in ('2-1:1.0', '1-0:1.0'):
@@ -267,11 +265,9 @@ def test_usb_interfaces_are_not_mistaken_for_unarmable_hubs(tmp_path, clock, cap
 
 
 def test_hubs_are_armed_for_remote_wakeup_before_sleeping(tmp_path, clock):
-  """The 2026-09-04 failure: the SuperSpeed hub the comma hangs off ships with
-  wakeup disabled, so presenting the gadget got a bus reset and no
-  enumeration, the UDC sat at "default" for fifteen minutes, and the box took
-  its button. Which hub carries us depends on the negotiated speed, so arm
-  every one rather than the one we happen to see."""
+  """The SuperSpeed hub the comma hangs off ships with wakeup disabled, so
+  presenting the gadget got a bus reset and no enumeration. Which hub carries us
+  depends on the negotiated speed, so arm every one."""
   u = usb(tmp_path)
   s = Kernel(after=1, power=power(tmp_path), rtc=rtc(tmp_path), usb=u, backstop=0)
   clock[0] += 10

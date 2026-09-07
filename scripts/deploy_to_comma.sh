@@ -5,15 +5,13 @@
 #
 # Push this package to a comma for testing, and set up the USB gadget.
 #
-# Mirrors how openpilot carries its other Python submodules: the repo lands at
-# <openpilot>/jetlink_repo and a symlink <openpilot>/jetlink points into its
-# package dir, exactly as launch_chffrplus.sh does for tinygrad and opendbc.
-# PYTHONPATH is the openpilot root, so `import jetlink` then just works.
+# The repo lands at <openpilot>/jetlink_repo with a symlink <openpilot>/jetlink
+# into its package dir, as launch_chffrplus.sh does for tinygrad and opendbc.
 #
 #   scripts/deploy_to_comma.sh comma@192.168.1.143
 #
-# Note the openpilot updater does `fetch` + `reset --hard` + `clean`, which
-# deletes untracked files. Set DisableUpdates=1 on the device while testing.
+# The openpilot updater's reset --hard + clean deletes untracked files, so set
+# DisableUpdates=1 on the device while testing.
 set -euo pipefail
 
 HOST="${1:?usage: deploy_to_comma.sh user@host [dest]}"
@@ -28,8 +26,7 @@ rsync -a --delete \
 
 root="$(dirname "$DEST")"
 echo "==> linking $root/jetlink -> $(basename "$DEST")/jetlink"
-# ln -sfn refuses to replace a real directory, so clear one if a previous
-# install left it behind.
+# ln -sfn refuses to replace a real directory, so clear one an older install left
 ssh "$HOST" "[ -d '$root/jetlink' ] && [ ! -L '$root/jetlink' ] && rm -rf '$root/jetlink'; \
              ln -sfn '$(basename "$DEST")/jetlink' '$root/jetlink'"
 

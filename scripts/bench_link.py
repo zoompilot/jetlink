@@ -5,12 +5,10 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-Measure the round trip the car actually depends on.
+Measure the round trip the car depends on.
 
-Bandwidth was never the question - 520 KB/frame at 20 Hz is 85 Mbit/s against
-USB 3's 5 Gbit/s. Jitter is. modeld has a 50 ms budget per frame and the model
-alone takes ~21 ms, so what matters is the whole distribution, not the mean.
-This sends real-sized payloads at the real rate and reports the tail.
+Jitter is the question, not bandwidth: modeld has 50 ms a frame and the model
+takes ~21 ms of it. Sends real-sized payloads at the real rate and reports the tail.
 
     # against a Jetson on the LAN
     python3 scripts/bench_link.py --host 192.168.1.87 --onnx big_model.onnx --n 400
@@ -33,8 +31,7 @@ import numpy as np
 from jetlink.client import JetlinkClient
 from jetlink.spec import ModelSpec, spec_from_onnx
 
-# modeld's per-frame budget (MODEL_RUN_FREQ = 20). A frame past it is a frame
-# modeld counts as dropped, and frameDropPerc > 1 soft-disables.
+# modeld's per-frame budget; a frame past it is dropped, and frameDropPerc > 1 soft-disables
 FRAME_BUDGET_MS = 50.0
 
 
@@ -50,10 +47,8 @@ def load_spec(args) -> ModelSpec | None:
 def _wait_for_host(timeout: float) -> None:
   """Block until a USB host has configured us.
 
-  The gadget has to be bound before anything can enumerate it, and binding is
-  what opening the transport does - so the wait belongs after the open, not
-  before it. Until a host attaches, the UDC reports "not attached" and every
-  read would simply time out.
+  Opening the transport is what binds the gadget, so the wait belongs after the
+  open: until a host attaches every read just times out.
   """
   udcs = list(Path('/sys/class/udc').glob('*/state'))
   deadline = time.monotonic() + timeout
@@ -101,17 +96,14 @@ def main() -> int:
   if args.usb:
     client = JetlinkClient.open_usb()
   elif args.ffs:
-    # On a comma the comma is the gadget: opening this writes the descriptors
-    # and binds the UDC, so the Jetson can enumerate us.
+    # opening this writes the descriptors and binds the UDC, so the Jetson can enumerate us
     client = JetlinkClient.open_ffs(args.ffs_mount, gadget=args.gadget)
   else:
     client = JetlinkClient.open_tcp(args.host, args.port)
   try:
     return _run(args, client)
   finally:
-    # Always hand the endpoints back. A FunctionFS owner that dies without
-    # closing leaves the gadget bound with nothing servicing it, and the next
-    # teardown can wedge the driver.
+    # a FunctionFS owner that dies leaves the gadget bound with nothing servicing it
     client.close()
 
 
@@ -158,8 +150,7 @@ def _run(args, client) -> int:
     lat.append((t_done - t) * 1e3)
     send_ms.append((t_sent - t) * 1e3)
     recv_ms.append((t_done - t_sent) * 1e3)
-    # Feed the hidden state back exactly as modeld does, so the queues see a
-    # realistic sequence rather than a constant.
+    # feed the hidden state back as modeld does, so the queues see a real sequence
     packed[-(hidden.stop - hidden.start):] = out[hidden]
     g_us, q_us, t_us = client.last_timings
     gpu.append(g_us / 1e3)
@@ -174,11 +165,8 @@ def _run(args, client) -> int:
   print(f"  mean {a.mean():6.2f}  min {a.min():6.2f}  p50 {pct(a,50):6.2f}  "
         f"p90 {pct(a,90):6.2f}  p99 {pct(a,99):6.2f}  max {a.max():6.2f}")
   print(f"  jitter: p99-p50 {pct(a,99)-pct(a,50):5.2f}  stdev {a.std():5.2f}")
-  # What the split means depends on the transport. A FunctionFS write, and a
-  # libusb bulk write, return once the host has taken the data, so on USB
-  # "send" is the request on the wire and "recv" is the server plus the reply.
-  # A TCP send is a copy into the socket buffer and returns at once, so there
-  # "send" is a memcpy and the whole wire cost lands in "recv".
+  # a USB write returns once the host has taken the data, so send is wire time there;
+  # a TCP send is a memcpy and the whole wire cost lands in recv
   snd, rcv = np.array(send_ms[10:]), np.array(recv_ms[10:])
   if args.host:
     print("  split (TCP): send is the copy into the socket buffer; both directions of wire time are in recv")

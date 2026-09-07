@@ -7,8 +7,7 @@ See the LICENSE file in the root directory for more details.
 Just enough of tensorrt and cuda-python to import the server off a Jetson.
 
 The server modules touch these at import time (dtype tables, a base class for
-the build progress monitor), so the protocol and session logic cannot be tested
-anywhere else without them. Install with install_stubs() before importing
+the build progress monitor). Install with install_stubs() before importing
 anything under jetlink.server.
 """
 from __future__ import annotations

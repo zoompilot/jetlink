@@ -1,19 +1,16 @@
 #!/bin/bash
 # Arm every USB hub for remote wakeup, from the host.
 #
-# The comma is the gadget and hangs off the onboard Realtek hub, so a connect
-# on a downstream port has to be signalled up by that hub before the root hub
-# or tegra-xusb hear about it. Those ship enabled; the SuperSpeed hub does
-# not, and at SuperSpeed it is the one in our path. Without this the Jetson
-# never wakes when the comma presents the gadget - measured 2026-09-04, the
-# comma's UDC sat at "default" for fifteen minutes and the box took its button.
+# The gadget hangs off the onboard Realtek hub, which has to signal a connect up
+# before the root hub or tegra-xusb hear it. That hub ships with wakeup disabled
+# and at SuperSpeed it is the one in our path, so without this the comma
+# presenting the gadget never wakes a sleeping Jetson.
 #
-# 99-jetlink-usb-wakeup.rules does this at boot. This runs again from the
-# server unit's ExecStartPre, because that rule lives on the host filesystem
-# and a re-flash loses it silently, at the cost of a whole drive.
+# 99-jetlink-usb-wakeup.rules does this at boot; this runs again from the server
+# unit's ExecStartPre, because a re-flash loses that rule silently.
 #
-# On the host and not in the container on purpose: /sys is mounted read-only
-# in there, so the same writes from inside are a no-op.
+# On the host, not in the container: /sys is read-only in there and the same
+# writes are a no-op.
 set -u
 armed=0
 for dev in /sys/bus/usb/devices/*/; do

@@ -7,34 +7,18 @@ See the LICENSE file in the root directory for more details.
 
 Does the link return the same numbers the model would?
 
-bench_link.py proves the round trip is fast enough. It says nothing about
-whether the answer is right, and a TensorRT engine that runs at 20 Hz while
-producing subtly wrong outputs steers the car with no error anywhere. This
-compares what comes back over the cable against onnxruntime on the unmodified
-ONNX, per output slice and per column within a slice, so a regression lands on
-a named head rather than in an 18452-wide vector.
+Compares what comes back over the cable against onnxruntime on the unmodified
+ONNX, per output slice and per column, so a regression lands on a named head
+rather than in an 18452-wide vector. That covers onnx_patch's UINT8->FP16
+surgery, the TensorRT build, the wire format and the output slicing. Not the
+queues: reference() runs the same PolicyQueues, so a queue bug cancels out on
+both sides, and tests/test_queues.py is the queue check.
 
-What is independently checked, and what is not. The reference is onnxruntime
-on the ONNX the engine was built from, so everything the server does to that
-graph and to its output is covered: the UINT8->FP16 surgery in onnx_patch, the
-TensorRT build and its FP16 accumulation, the wire format and the output
-slicing. The queues are not. reference() feeds onnxruntime through the same
-jetlink.queues.PolicyQueues the server runs, so a queue bug is applied
-identically on both sides and cannot show up here. tests/test_queues.py is the
-queue check: it compares against openpilot's own tinygrad implementation and
-passes on the comma, where both are importable.
-
-What the numbers can resolve. The graph is float16 end to end (weights, the
-output tensor, the reference's own output), so TensorRT and onnxruntime are
-two float16 implementations that differ in accumulation order, not a half
-precision engine against a full precision truth. Measured on Cinque Terre,
-2026-09-05: the disagreement is roughly an absolute 0.005 to 0.03 across the
-2068 head values, with lead x (~130 m) worst at 0.875, seven float16 steps. A
-column whose values spread less than that cannot be judged by correlation,
-and a slice of three values cannot be judged by correlation on one frame; see
-MIN_SAMPLES and CONSTANT_FRACTION. The transport was ruled out the same day by
-`verify_engine.py --capture`, which replays a capture through the plan on the
-Jetson and demands the bytes the comma received, bit for bit.
+The graph is float16 end to end, so this is two float16 implementations
+differing in accumulation order, not half against full precision: expect an
+absolute 0.005 to 0.03 across the head values. MIN_SAMPLES and
+CONSTANT_FRACTION say what a correlation can judge from that, and
+`verify_engine.py --capture` rules the transport out bit for bit.
 
     # 1. on the comma, over the cable (stop jetlinkd first, it owns the link).
     #    the server returns the spec of a model it already has, so only the
@@ -58,39 +42,23 @@ import numpy as np
 
 from jetlink.spec import ModelSpec
 
-# Two float16 implementations of a 40-layer network, so exact equality is not
-# the bar. Correlation is: it moves the moment a head is wired up wrong,
-# transposed or fed a stale queue, all of which an absolute tolerance would
-# wave through.
+# Correlation, not an absolute tolerance: it moves on a wrong head, a transposed
+# column or a stale queue, all of which a tolerance would wave through.
 MIN_CORR = 0.999
 
-# Correlation needs samples. Per frame, lead_prob is three logits and every
-# pose, euler and road_transform column is one value: three points correlate at
-# 0.998 over float16 rounding, and one point correlates at exactly 1.0 with
-# anything, which is how those columns went unchecked until 2026-09-05. Slices
-# and columns are gated on all captured frames pooled, a column with fewer
-# pooled values than this is reported but not gated, and only a slice at least
-# this wide is gated per frame as well. Measured on the 2026-09-05 capture, the
-# one-value-per-frame columns read 0.95 pooled over 4 frames and 0.9993 over
-# 16, so capture's default is 32 frames and compare warns below 16.
+# Correlation needs samples: one point correlates at 1.0 with anything, and pose,
+# euler and road_transform columns are one value a frame. Gated on all frames pooled,
+# anything thinner reported but not gated; those columns read 0.95 over 4, 0.9993 over 16.
 MIN_SAMPLES = 16
 
-# A column whose reference values spread less than this fraction of its slice
-# is constant at float16 resolution (2^-11 relative). wide_from_device_euler's
-# roll is ~1e-6 rad beside pitch and yaw of ~7, and correlating its rounding
-# noise against the reference's read 0.9877. Such a column is held to an
-# absolute error inside that same fraction of the slice spread instead.
+# A column spreading less than this fraction of its slice is constant at float16
+# resolution, so correlating it is noise against noise (euler's roll is ~1e-6 rad
+# beside pitch and yaw of ~7, and read 0.9877). Held to absolute error instead.
 CONSTANT_FRACTION = 1e-3
 
-# How openpilot's Parser reads each regression head (parse_model_outputs.py):
-# the raw slice is `hypotheses` blocks of [mu | std | selection], mu and std
-# each a matrix whose last axis is `columns` wide. That last axis is where the
-# units mix: a plan row is position in metres (up to ~200) beside velocity,
-# acceleration, orientation and rate, and the stds beside all of them. A
-# whole-slice correlation is set by whichever column is largest, so each is
-# checked on its own. The spec only carries the flat slices, which is why the
-# layout lives here. A head whose slice fits none of its listed layouts is
-# compared whole, and says so.
+# How openpilot's Parser reads each head (parse_model_outputs.py): `hypotheses`
+# blocks of [mu | std | selection], the last axis `columns` wide. Units mix on that
+# axis, so a whole-slice correlation is set by the largest column; each is checked alone.
 MDN_LAYOUTS = {
   'plan': [(0, 0, 15), (5, 1, 15)],
   'lane_lines': [(0, 0, 2)],
@@ -118,10 +86,8 @@ def load_spec(args) -> ModelSpec | None:
 def make_inputs(spec: ModelSpec, n: int, seed: int = 0) -> list[tuple[np.ndarray, np.ndarray]]:
   """Deterministic stand-in frames, identical on both sides.
 
-  Structured rather than uniform noise: white noise drives a vision network
-  into activations no road ever produces, which is where FP16 and FP32 diverge
-  most and least usefully. Gradients and moving blobs keep it in range while
-  still exercising every channel.
+  Gradients and moving blobs rather than white noise, which drives a vision
+  network into activations no road ever produces.
   """
   rng = np.random.default_rng(seed)
   h, w = spec.model_hw
@@ -142,17 +108,12 @@ def make_inputs(spec: ModelSpec, n: int, seed: int = 0) -> list[tuple[np.ndarray
       if name == 'traffic_convention':
         packed[off:off + size] = np.array([1.0, 0.0][:size])
       elif name == 'action_t':
-        # Lateral and longitudinal action horizons, in seconds: modeld sends
-        # the actuator delays plus a frame, 0.2 to 0.4 s on a real car. This
-        # used to ramp 0.05 s a frame, which at 32 frames asked for a 1.6 s
-        # horizon; by frame 20 the plan ran backwards at -74 m and the two
-        # float16 implementations disagreed by metres there. Bounded, so the
-        # model stays in distribution however many frames are captured.
+        # Action horizons in seconds; modeld sends 0.2 to 0.4 s on a real car.
+        # Bounded, not ramped: past ~1 s the plan runs backwards, out of distribution.
         packed[off:off + size] = np.array([0.25 + 0.1 * np.sin(0.5 * i), 0.35 + 0.1 * np.cos(0.5 * i)][:size])
       elif name == 'desire':
-        # A pulse every eighth frame, cycling through the seven real desires;
-        # index 0 is "none" and modeld zeroes it. One pulse a frame was not a
-        # drive anyone takes.
+        # a pulse every eighth frame through the seven real desires; index 0 is
+        # "none" and modeld zeroes it
         if i % 8 == 0:
           packed[off + 1 + (i // 8) % (size - 1)] = 1.0
       off += size
@@ -189,17 +150,15 @@ def capture(args) -> int:
   try:
     hello = client.hello(timeout=60.0)  # the jetson may still be re-enumerating
     print(f"server: trt {hello['trt_version']} on {hello['device']}")
-    # No ONNX on this end: a model the server does not have is a build job,
-    # not a parity check.
+    # a model the server does not have is a build job, not a parity check
     spec = client.ensure_engine(sha256, nbytes, build_timeout=300.0)
-    # reference and compare need the same slices this capture was made with.
+    # reference and compare need the slices this capture was made with
     (out / 'spec.json').write_text(json.dumps(spec.to_dict()))
     frames = make_inputs(spec, args.n, args.seed)
 
     hid = hidden_slice(spec)
     for i, (warped, packed) in enumerate(frames):
-      # The hidden state must carry between frames exactly as modeld carries
-      # it, or frame 2 onward compares two different recurrences.
+      # carry the hidden state as modeld does, or frame 2 on compares two recurrences
       result = client.infer(warped, packed, frame_id=i, reset=(i == 0))
       np.save(out / f'in_warped_{i}.npy', warped)
       np.save(out / f'in_packed_{i}.npy', packed)
@@ -249,10 +208,8 @@ def reference(args) -> int:
   d = Path(args.dir)
 
   sess = ort.InferenceSession(args.onnx, providers=['CPUExecutionProvider'])
-  # The ONNX is untouched, so its image inputs are still UINT8 - that is the
-  # whole point of comparing against it - while the queues hand back the FP16
-  # the patched graph wants. 0..255 is exact in both, so the cast is lossless.
-  # The other inputs are whatever the graph says they are.
+  # The untouched ONNX still wants UINT8 images where the queues hand back FP16.
+  # 0..255 is exact in both, so the cast is lossless.
   dtypes = _ort_feed_dtypes(sess)
   queues = PolicyQueues(spec)
   queues.reset()
@@ -266,9 +223,8 @@ def reference(args) -> int:
   for i in range(n):
     warped = np.load(d / f'in_warped_{i}.npy')
     packed = np.load(d / f'in_packed_{i}.npy').copy()
-    # Everything but the recurrence is the captured input, so both sides see
-    # the same desire and action. The hidden state is our own previous output:
-    # feeding the link's back would hide exactly the drift we are looking for.
+    # the hidden state is our own previous output; feeding the link's back would
+    # hide the drift this is looking for
     if prev_hidden is not None:
       packed[-(hid.stop - hid.start):] = prev_hidden
     feed = queues.step(warped, packed)
@@ -287,8 +243,7 @@ def reference(args) -> int:
 
 def _corr(a: np.ndarray, b: np.ndarray) -> float:
   if a.std() == 0 and b.std() == 0:
-    # Nothing varies on either side. A head the model holds constant, or a
-    # one-value column, is a pass, not a division by zero.
+    # a head the model holds constant is a pass, not a division by zero
     return 1.0
   if a.std() == 0 or b.std() == 0:
     return 1.0 if np.allclose(a, b) else 0.0
@@ -324,10 +279,9 @@ def _frames(x) -> list[np.ndarray]:
 def report_slices(spec: ModelSpec, links, refs) -> dict[str, bool]:
   """One line per output slice with every frame pooled. Returns whether each passed.
 
-  A slice passes when its pooled correlation and every column's clear MIN_CORR.
-  A column flatter than CONSTANT_FRACTION of its slice is judged on absolute
-  error within that fraction instead, because correlation over what is left of
-  it is rounding noise against rounding noise.
+  A slice passes when its pooled correlation and every column's clear MIN_CORR. A
+  column flatter than CONSTANT_FRACTION is judged on absolute error instead, because
+  correlating what is left of it is rounding noise against rounding noise.
   """
   links, refs = _frames(links), _frames(refs)
   passed = {}
@@ -391,9 +345,8 @@ def compare(args) -> int:
     links.append(link[:m])
     refs.append(ref[:m])
 
-  # Per frame, the whole-slice correlation: a stale queue or a dropped reset
-  # shows on the frame it happens to. Slices too small to correlate on one
-  # frame are only gated pooled, below.
+  # Per frame: a stale queue or a dropped reset shows on the frame it happens to.
+  # Slices too small to correlate on one frame are gated pooled, below.
   frame_fail: dict[str, float] = {}
   for i, (link, ref) in enumerate(zip(links, refs)):
     print(f"\nframe {i}: corr {_corr(link, ref):.6f}  max abs {np.abs(link - ref).max():.4f}")

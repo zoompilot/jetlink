@@ -1,21 +1,16 @@
 #!/usr/bin/env bash
-# Run the server. Defaults to TCP for bench.
+# Run the server. Defaults to TCP for bench; in the car pass --transport usb,
+# and --sleep-after 120 on an always-on supply (jetlink/server/sleep.py). The
+# Jetson is the USB host, which is why /dev/bus/usb is visible in here.
 #
-# In the car pass --transport usb: the Jetson is the USB *host* and the comma is
-# the gadget, which is why /dev/bus/usb has to be visible in here. See
-# docs/transport.md for why the roles are that way round.
+# /sys/power is mounted read-write over the read-only /sys so --sleep-after can
+# write /sys/power/state, and rtc0's real directory so Sleeper can arm its wake
+# backstop. Resolved rather than hardcoded (PMIC RTC on one board, Tegra on
+# another), and --mount not -v because that path contains colons (bpmp:i2c).
 #
-# /sys/power is mounted read-write on top of the read-only /sys so that
-# --sleep-after can write /sys/power/state, and rtc0's real directory so that
-# Sleeper can arm its wake backstop. Resolved rather than hardcoded: rtc0 is a
-# PMIC RTC on one board and a Tegra one on another. --mount, not -v, because
-# the resolved path contains colons (bpmp:i2c) and -v cannot parse those. On an always-on supply
-# pass --transport usb --sleep-after 120; see jetlink/server/sleep.py.
-#
-# Arming the hubs for remote wakeup is NOT done from in here - /sys is
-# read-only in the container. It is scripts/99-jetlink-usb-wakeup.rules at
-# boot and scripts/jetlink-wake-setup.sh at server start, both on the host.
-# Without it the comma presenting the gadget does not wake a sleeping Jetson.
+# Arming the hubs for remote wakeup is not done from in here: /sys is read-only
+# in the container. 99-jetlink-usb-wakeup.rules and jetlink-wake-setup.sh do it
+# on the host, and without it the gadget does not wake a sleeping Jetson.
 set -euo pipefail
 IMAGE="${IMAGE:-jetlink:latest}"
 CACHE="${JETLINK_CACHE_HOST:-/mnt/data/jetlink}"
