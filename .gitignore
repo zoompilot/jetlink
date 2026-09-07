@@ -6,3 +6,6 @@ build/
 dist/
 *.plan
 *.onnx
+
+docs/assets/
+docs/upstreaming-options*.md
