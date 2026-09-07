@@ -835,6 +835,14 @@ The rule generalises: make the context before modeld goes realtime, never
 re-nice a thread afterwards. `joining._background_priority` is the same rule
 for the threads we create ourselves, and `ffs.py` for the reader.
 
+The library's own threads do not rely on the caller getting that right. The
+write guard (`transport/watchdog.py`) and the close helper in `ffs.py` call
+`transport.priority.background_thread()` first thing and drop to SCHED_OTHER 0
+on every core themselves, so a realtime creator cannot lend them its priority.
+A live bench had found `jetlink-write-guard` at FIFO 54 on core 7: it waits on
+a Condition, and a wake at equal FIFO priority takes the frame loop's core
+until it blocks again.
+
 ### Measured, Orin Nano Super 8 GB, TensorRT 10.3 FP16, SuperSpeed
 
 modeld execution time is end to end with cores pinned as onroad.

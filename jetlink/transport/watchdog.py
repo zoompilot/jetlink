@@ -6,9 +6,10 @@ See the LICENSE file in the root directory for more details.
 """
 from __future__ import annotations
 
-import os
 import threading
 import time
+
+from jetlink.transport.priority import background_thread
 
 
 class WriteWatchdog:
@@ -50,16 +51,10 @@ class WriteWatchdog:
       self._cv.notify()
 
   def _run(self) -> None:
-    # A caller may be modeld's FIFO frame thread. The watchdog is not a
-    # realtime task and must never inherit that priority.
-    if hasattr(os, 'sched_setscheduler'):
-      try:
-        os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))
-        os.sched_setaffinity(0, set(range(os.cpu_count() or 1)))
-      except OSError:
-        # A restricted runtime may refuse affinity changes; dropping a
-        # privileged scheduler policy is permitted on the supported device.
-        pass
+    # The creator may be modeld's SCHED_FIFO 54 frame thread, and this thread
+    # inherits its policy and core pin. A 10 Hz wake at equal FIFO priority on
+    # that core takes it from the frame loop until we block again.
+    background_thread()
     with self._cv:
       while not self._closed:
         if self._deadline is None:

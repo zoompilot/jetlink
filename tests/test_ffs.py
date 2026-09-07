@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 from jetlink import protocol as P
-from jetlink.transport import ffs
+from jetlink.transport import ffs, priority
 from jetlink.transport.base import LinkError, LinkTimeout
 from jetlink.transport.ffs import FfsTransport
 
@@ -321,7 +321,7 @@ def test_reader_widens_its_cpu_affinity_off_the_pinned_core(monkeypatch):
   def setaffinity(_pid, mask):
     calls['mask'] = set(mask)
 
-  monkeypatch.setattr(ffs, 'os', SimpleNamespace(cpu_count=lambda: 8,
+  monkeypatch.setattr(priority, 'os', SimpleNamespace(cpu_count=lambda: 8,
                                                  sched_getaffinity=getaffinity,
                                                  sched_setaffinity=setaffinity))
   _bare_transport()._widen_affinity()
@@ -331,7 +331,7 @@ def test_reader_widens_its_cpu_affinity_off_the_pinned_core(monkeypatch):
 def test_reader_affinity_is_a_noop_when_already_unpinned(monkeypatch):
   from types import SimpleNamespace
   calls = {}
-  monkeypatch.setattr(ffs, 'os', SimpleNamespace(
+  monkeypatch.setattr(priority, 'os', SimpleNamespace(
     cpu_count=lambda: 8,
     sched_getaffinity=lambda _pid: set(range(8)),
     sched_setaffinity=lambda _pid, mask: calls.setdefault('set', True)))
@@ -341,7 +341,7 @@ def test_reader_affinity_is_a_noop_when_already_unpinned(monkeypatch):
 
 def test_reader_affinity_survives_a_platform_without_the_call(monkeypatch):
   from types import SimpleNamespace
-  monkeypatch.setattr(ffs, 'os', SimpleNamespace(cpu_count=lambda: 8))  # no sched_* (macOS)
+  monkeypatch.setattr(priority, 'os', SimpleNamespace(cpu_count=lambda: 8))  # no sched_* (macOS)
   _bare_transport()._widen_affinity()  # must not raise
 
 
@@ -374,7 +374,7 @@ def test_reader_widens_when_inherited_mask_is_several_cores(monkeypatch):
   every core rather than excluding one (there is no single frame-loop core)."""
   from types import SimpleNamespace
   calls = {}
-  monkeypatch.setattr(ffs, 'os', SimpleNamespace(
+  monkeypatch.setattr(priority, 'os', SimpleNamespace(
     cpu_count=lambda: 8,
     sched_getaffinity=lambda _pid: {0, 1, 2, 3},   # four cores online, unpinned
     sched_setaffinity=lambda _pid, mask: calls.__setitem__('mask', set(mask))))

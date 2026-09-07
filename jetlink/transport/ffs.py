@@ -29,6 +29,7 @@ from collections import deque
 
 from jetlink import protocol as P
 from jetlink.transport.base import LinkError, LinkTimeout, StreamTransport, take
+from jetlink.transport.priority import background_thread, widen_affinity
 from jetlink.transport.watchdog import WriteWatchdog
 
 # --- FunctionFS ABI -------------------------------------------------------
@@ -443,26 +444,11 @@ class FfsTransport(StreamTransport):
     config_realtime_process(7, 54), and any thread created from a thread that
     inherited that gets SCHED_FIFO 54 *and* the single-core pin. Sharing that
     core with the frame loop serialises them - a read that has completed on the
-    endpoint cannot be taken off it until the loop next blocks. Simply widening
-    the mask to every core was measured not to help: the balancer keeps waking
-    this thread on the core it last ran, next to the loop. So when the
-    inherited mask is a single core, run on every *other* core instead; the
-    frame loop keeps its core to itself and a completed read is serviced at
-    once elsewhere. The priority is left to _raise_reader_priority below.
-    jetlink must not import openpilot, so this open-codes what
-    common.realtime.set_core_affinity would do.
+    endpoint cannot be taken off it until the loop next blocks. See
+    priority.widen_affinity for the mask policy. The priority is left to
+    _raise_reader_priority below.
     """
-    try:
-      everything = set(range(os.cpu_count() or 1))
-      inherited = os.sched_getaffinity(0)
-      if len(inherited) == 1 and everything - inherited:
-        os.sched_setaffinity(0, everything - inherited)   # off the frame-loop core
-      elif everything - inherited:
-        os.sched_setaffinity(0, everything)               # unpinned already; just widen
-    except (OSError, AttributeError):
-      # No affinity call (macOS), or a kernel that will not move us. The
-      # priority still lets a completed read preempt normal work on our core.
-      pass
+    widen_affinity()
 
   def _raise_reader_priority(self) -> None:
     """Run the reader at realtime priority so a completed read is taken off the
@@ -664,6 +650,9 @@ class FfsTransport(StreamTransport):
 
 
 def _close_quietly(fd: int) -> None:
+  # Runs on its own thread when a read never came back; that thread inherits
+  # the creator's scheduling, which in modeld is the frame loop's.
+  background_thread()
   try:
     os.close(fd)
   except OSError:
