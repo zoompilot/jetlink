@@ -15,7 +15,7 @@ the FunctionFS gadget, the Jetson the host; TensorRT on the Jetson, the camera w
 comma). The design rule throughout is **chestnut untouched, jetlink added**: comma's board
 keeps its code at master's locations byte for byte, and jetlink is an `elif` beside it.
 
-What a maintainer should see in the upstream-owned files (11 files, +90/-2):
+What a maintainer should see in the upstream-owned files (12 files, +86/-2):
 
 | File | Change |
 |---|---|
@@ -66,4 +66,4 @@ the shutdown handshake with a Jetson that does not answer; both need the hardwar
 - `models/manager.py` is untouched: master has no default-model bootstrap to skip.
 - Capnp ordinals: `OnroadEventSP` `bigModelAvailable @26`, `bigModelLinkLost @27`;
   `ModelDataV2SP` `@3`..`@5` plus the `AcceleratorState` enum.
-- The submodule points at `zephleggett/jetlink`; the package is MIT.
+- The submodule points at `zoompilot/jetlink`; the package is MIT.
