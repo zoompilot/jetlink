@@ -295,10 +295,16 @@ settling window, and gains one call into
 messages only, never a param: `bigModelAvailable` on the field rising while
 `modelV2.big` is false, `bigModelLoading` NO_ENTRY only while
 `acceleratorState == joining` and `modelV2` is not alive (a late join never
-keeps the driver out), and a sunnypilot `bigModelLinkLost` soft disable on
-`modelV2.big` falling while engaged. That last one is tracked only while
-`acceleratorState != none`, so a chestnut fall raises the native
-`bigModelFailed` and never both.
+keeps the driver out), and on `modelV2.big` falling while engaged a latched
+loss: the native `bigModelFailed` and the sunnypilot `bigModelLinkLost` on
+every tick until the driver disengages. Both, because the main state machine
+consumes native events only, and `bigModelFailed` is comma's own "big model
+gone, small model driving" soft disable; `bigModelLinkLost` is what MADS reads
+and what carries the "reconnecting if it comes back" guidance. Latched,
+because `state.py` cancels a soft disable the tick its event disappears, so
+the one-tick edge this used to be never disabled anything. The fall is only
+counted while `acceleratorState != none`, so a chestnut fall raises the native
+`bigModelFailed` once and the adapter says nothing.
 
 The joining state writes no params at all now. `ChestnutLoading` and
 `ChestnutActive` describe a load that happens once and is then over; ours never
@@ -342,13 +348,17 @@ vm.min_free_kbytes        128 MB
 ```
 
 They used to be applied at boot with no param gate and no way back. Now
-`jetlinkd.run()` applies them when the link is enabled and puts them back on
-the way out, including the "disabled, releasing the link" branch: the stock
-values are read once into `/dev/shm/jetlink-sysctl-prev` before the first
-change and never overwritten, so a second run records our own values as stock
-under no circumstances. A SIGKILL skips the restore and leaves them until
-reboot; the record survives in tmpfs so the next run still knows what to put
-back.
+`jetlinkd` applies them when the link is enabled and puts them back only in
+the "disabled, releasing the link" branch, never on exit. The settings are
+for the drive and the daemon is not: manager stops it at ignition, which is
+exactly when the contention they were measured against starts, so a restore
+in `run()`'s `finally` (which is what it was) handed modeld stock values on
+every drive. A reboot resets them; disable and SIGKILL are the two ways they
+change while the device is up. Apply is idempotent on every start, and the
+stock values are read once into `/dev/shm/jetlink-sysctl-prev` before the
+first change and never overwritten, so a later run records our own values as
+stock under no circumstances; the record survives in tmpfs so a disable after
+any number of restarts still knows what to put back.
 
 64/32 was the earlier set, from `docs/drive-2026-09-05-ba-latency.md`. Under a
 500 MB memory hog plus five CPU workers, 64/32 let one 104 ms frame through and

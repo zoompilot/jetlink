@@ -168,9 +168,16 @@ never a param:
   join would otherwise do.
 - **`bigModelLinkLost`** SOFT_DISABLE plus a permanent alert on `modelV2.big`
   falling while engaged. The plan just went from ~200 m to ~5 m under the
-  driver. Disengaged, the small model simply carries on and nothing is said.
-  The edge is tracked only while `acceleratorState != none`, so a chestnut fall
-  raises the native `bigModelFailed` and never both.
+  driver. The loss is latched until the driver disengages, and every tick of
+  it raises the native `bigModelFailed` as well: the main state machine
+  consumes native events only and cancels a soft disable the tick its event
+  goes away, so a one-tick sunnypilot event never disabled anything.
+  `bigModelFailed` is comma's own "big model gone, small model driving" soft
+  disable and does the disabling; `bigModelLinkLost` is what MADS reads and
+  what carries the reconnecting guidance. Disengaged, the small model simply
+  carries on and nothing is said. The fall is counted only while
+  `acceleratorState != none`, so a chestnut fall raises the native
+  `bigModelFailed` once and the adapter adds nothing.
 
 The "Big Model Ready" chime is backend-neutral: it fires on `modelV2.big`
 rising while `modelV2` is alive and valid, which is the only signal that a big
@@ -303,12 +310,15 @@ vm.min_free_kbytes        128 MB
 ```
 
 They belong to `jetlinkd`, not to boot. It applies them when the link is
-enabled and puts them back on the way out, including the "disabled, releasing
-the link" branch. The stock values are read once into
-`/dev/shm/jetlink-sysctl-prev` before the first change and never overwritten,
-so a second run cannot record our own values as stock. A SIGKILL skips the
-restore and leaves them until reboot; the record survives in tmpfs, so the next
-run still knows what to put back.
+enabled and puts them back only in the "disabled, releasing the link" branch,
+never on exit: the settings are for the drive and the daemon is not. manager
+stops it at ignition, so a restore on the way out stripped the values exactly
+when driving started. A reboot resets them; a disable and a SIGKILL are the two
+ways they change while the device is up. Apply is idempotent on every start,
+and the stock values are read once into `/dev/shm/jetlink-sysctl-prev` before
+the first change and never overwritten, so a later run cannot record our own
+values as stock; the record survives in tmpfs, so a disable after any number
+of restarts still knows what to put back.
 
 ## The modules (`sunnypilot/accelerators/jetlink/`)
 
