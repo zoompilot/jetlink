@@ -574,11 +574,14 @@ the small model looks like from the outside.
 
 Before blaming the link, check which modeld is even running. jetlink lives in
 stock `modeld`, and manager runs that only while `get_active_model_runner()` is
-`stock`. With `JetlinkEnabled` true *and* `JetlinkModel` set,
-`uses_stock_runner()` is true and `get_active_bundle()` returns None, so the
-answer is `stock` whatever bundle is stored: that is the override, and it is
-why the models panel names the default small model rather than the stored one.
-Configured any less than that and the stored bundle decides again, and every
+`stock`. With `JetlinkEnabled` true, `uses_stock_runner()` is true and
+`get_active_bundle()` returns None, so the answer is `stock` whatever bundle
+is stored: that is the override, and it is why the models panel names the
+default small model rather than the stored one. `JetlinkModel` is not part of
+the gate: it defaults through `selected_model()`, so an enabled device with no
+model set still provisions and reports `ready()`, and gating on it too left
+that device on `modeld_tinygrad` under a custom small bundle (measured on the
+comma). With the toggle off the stored bundle decides again, and every
 bundle the sunnypilot model manager offers has `runner = tinygrad`, so a custom
 model moves manager to `modeld_tinygrad` (`sunnypilot/modeld_v2`), which knows
 nothing about jetlink: the Jetson provisions, `ready()` is true, the UI says

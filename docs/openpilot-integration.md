@@ -275,10 +275,15 @@ So `accelerators/jetlink/setup.sh` reads the param through
 true: no gadget, no sysctls, no override. A params library not built yet reads
 as off.
 
-`uses_stock_runner()` is `JetlinkEnabled is True and JetlinkModel is set`.
-Configuration, deliberately not `ready()` and not `link_configured()`: a Jetson
-that boots late must not change which modeld manager runs in the middle of a
-drive, but a device that is merely capable must not take the override either.
+`uses_stock_runner()` is `JetlinkEnabled is True`, and nothing else. Not
+`JetlinkModel`: the model choice defaults through `selected_model()`, so an
+enabled device with no model set still provisions and reports `ready()`, and
+any enabled link has to keep manager on stock modeld or jetlink never runs.
+Gating on the model too left exactly that device on `modeld_tinygrad` under a
+custom small bundle. Configuration, deliberately not `ready()` and not
+`link_configured()`: a Jetson that boots late must not change which modeld
+manager runs in the middle of a drive, but a device that is merely capable
+must not take the override either.
 
 Under the override manager runs stock modeld, which loads the default small
 model and never reads the stored qcom bundle. `models.helpers.effective_small_bundle()`
