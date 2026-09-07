@@ -360,6 +360,16 @@ first change and never overwritten, so a later run records our own values as
 stock under no circumstances; the record survives in tmpfs so a disable after
 any number of restarts still knows what to put back.
 
+The record also carries `vm.dirty_ratio` and `vm.dirty_background_ratio`,
+because stock AGNOS runs the dirty limits in ratio mode and both `*_bytes`
+keys read 0, and 0 cannot be written back. Measured on the comma (kernel
+4.9): after our apply, `sudo sysctl -w vm.dirty_bytes=0` returns 0 and the
+value stays 16777216, and a direct `/proc/sys` write does the same, because
+`proc_doulongvec_minmax` silently skips a value below `dirty_bytes_min` (two
+pages). Writing the ratio key is what zeroes the bytes key, so a recorded 0
+restores by writing the recorded ratio key instead; a non-zero recorded value
+restores by the bytes key as before, and `min_free_kbytes` is unaffected.
+
 64/32 was the earlier set, from `docs/drive-2026-09-05-ba-latency.md`. Under a
 500 MB memory hog plus five CPU workers, 64/32 let one 104 ms frame through and
 128/16 did not, which is why the newer set wins.
@@ -834,6 +844,21 @@ window. Anything that starts using libusb in that process would have found it.
 The rule generalises: make the context before modeld goes realtime, never
 re-nice a thread afterwards. `joining._background_priority` is the same rule
 for the threads we create ourselves, and `ffs.py` for the reader.
+
+The same trap one layer up, found by the next live-bench thread dump: three
+more FIFO 54 threads on core 7, `Thread-1 (_handle_workers)`,
+`Thread-2 (_handle_tasks)` and `Thread-3 (_handle_results)`. Those are
+`multiprocessing.pool`'s handler threads, and the owner is tinygrad's compile
+pool (`tinygrad/engine/worker.py`, `get_worker_pool()`, gated on `PARALLEL
+!= 0` and not a daemon process), created on the first kernel compile. On the
+jetlink path that is the warp JIT's first call inside `make_model_state`,
+after `config_realtime_process`; the same dump with the link off shows only
+the main thread realtime, because the stock small-model path never compiles
+there. So `init_device()` calls `get_worker_pool()` right after the device
+comes up, in `prepare()`, before modeld goes realtime: the handler threads
+and the worker processes then inherit SCHED_OTHER on every core. It is in
+its own try/except that logs and continues, because an older tinygrad
+without the module or `PARALLEL=0` is not a reason to refuse the accelerator.
 
 The library's own threads do not rely on the caller getting that right. The
 write guard (`transport/watchdog.py`) and the close helper in `ffs.py` call
