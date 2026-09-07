@@ -34,7 +34,7 @@ See [validation status](docs/release-readiness.md) for remaining qualification w
 
 | Component | Tested configuration |
 | --- | --- |
-| Device | comma 3X with a build that includes the Jetlink integration |
+| Device | comma 3X or comma 4 with a build that includes the Jetlink integration |
 | Inference server | NVIDIA Jetson Orin Nano Super, 8 GB |
 | Software | JetPack 6.1 / L4T r36.4, TensorRT 10.3; Docker with NVIDIA runtime |
 | Connection | USB 3 Type-A to Type-C data cable |
