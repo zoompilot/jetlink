@@ -435,18 +435,22 @@ class FfsTransport(StreamTransport):
   def _widen_affinity(self) -> None:
     """Move the reader off the one core modeld pinned its frame loop to.
 
-    On the comma this thread is created from modeld's frame thread, which has
-    run config_realtime_process(7, 54): a thread started after that inherits
-    SCHED_FIFO 54 *and* the single-core pin. Sharing that core with the frame
-    loop serialises them - a read that has completed on the endpoint cannot be
-    taken off it until the loop next blocks. Simply widening the mask to every
-    core was measured not to help: the balancer keeps waking this thread on the
-    core it last ran, next to the loop. So when the inherited mask is a single
-    core, run on every *other* core instead; the frame loop keeps its core to
-    itself and a completed read is serviced at once elsewhere. The priority is
-    left alone. A no-op where nothing pinned us (the mask is already several
-    cores - jetlinkd offroad, or any host). jetlink must not import openpilot,
-    so this open-codes what common.realtime.set_core_affinity would do.
+    This thread is created wherever the first read or write happens, because
+    that is where _ensure_epfiles runs. On the comma that is normally the
+    caller's background thread (the joining state's join loop, or jetlinkd),
+    which has already dropped to SCHED_OTHER on every core, so this is usually
+    a no-op. It is the case where it is not that costs frames: modeld runs
+    config_realtime_process(7, 54), and any thread created from a thread that
+    inherited that gets SCHED_FIFO 54 *and* the single-core pin. Sharing that
+    core with the frame loop serialises them - a read that has completed on the
+    endpoint cannot be taken off it until the loop next blocks. Simply widening
+    the mask to every core was measured not to help: the balancer keeps waking
+    this thread on the core it last ran, next to the loop. So when the
+    inherited mask is a single core, run on every *other* core instead; the
+    frame loop keeps its core to itself and a completed read is serviced at
+    once elsewhere. The priority is left to _raise_reader_priority below.
+    jetlink must not import openpilot, so this open-codes what
+    common.realtime.set_core_affinity would do.
     """
     try:
       everything = set(range(os.cpu_count() or 1))
@@ -464,10 +468,11 @@ class FfsTransport(StreamTransport):
     """Run the reader at realtime priority so a completed read is taken off the
     endpoint at once, not behind whatever else the comma is running.
 
-    This thread is created during warmup, before modeld makes itself realtime,
-    so it inherits SCHED_OTHER at priority 0 - measured on the device. read_wait
-    brackets the whole readv, including the time this thread waits on the run
-    queue to return once the transfer is done, and under recording plus onroad
+    The thread that creates this one has dropped realtime deliberately (see the
+    caller's background priority helper), so what this inherits is SCHED_OTHER
+    at priority 0 - measured on the device. read_wait brackets the whole readv,
+    including the time this thread waits on the run queue to return once the
+    transfer is done, and under recording plus onroad
     load that wait was 17 ms mean and 23 ms max, landing straight on read_wait
     and over budget - the residual that looked like a kernel allocation stall
     but is scheduling. The reader only copies a chunk and notifies before it

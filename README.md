@@ -173,10 +173,11 @@ across none of the three.
 
 ## Using it with openpilot
 
-See [`docs/openpilot-integration.md`](docs/openpilot-integration.md). jetlink is
-one backend behind an accelerator layer, so core openpilot never names it: the
-patch to upstream is a few dozen lines across eight files, and `modeld.py` comes
-out 75 lines shorter than it went in.
+See [`docs/openpilot-integration.md`](docs/openpilot-integration.md). jetlink
+sits behind `openpilot/sunnypilot/accelerators/`, a module of functions with one
+implementation: comma's chestnut board stays native at upstream's own lines, and
+the patch to openpilot's own files is 99 insertions and 3 deletions across 12
+files. Nothing in it touches a chestnut code path.
 
 ## Licence
 
