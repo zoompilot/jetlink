@@ -224,3 +224,18 @@ blocks 28 -> 18 words on average. Every changed .py on every branch proven code-
 with docstrings stripped; non-UI suites green (UI suites cannot open a window in this session:
 raylib segfaults in `_calculate_auto_scale`; they passed before the comment-only change).
 Comma checkout synced to `819465081d` without a reboot (comments only). Pin f00bcda everywhere.
+
+### The link toggle offered where the package is, and live (2026-09-07)
+Writing the tester guide found that a fresh device could not turn the link on from the UI:
+`link_toggle_meaningful()` (2026-09-02, under the auto rule) waited for `present()`, and the
+opt-in gate on `setup.sh` (2026-09-06) meant no gadget until enabled, so no enumeration, so
+never present. Worse, a flip of the toggle did nothing until a reboot: manager started jetlinkd
+on the param but the gadget only existed from boot. Fork: `accelerators.installed()` (a stat on
+the submodule) joins the visibility gate, matching the chestnut slot that is offered without a
+board; `link_status()` puts what the USB-C port sees under the toggle (`present()`, then the CC
+pin upstream's `ui_state` already reads); `jetlinkd.ensure_gadget()` runs `setup_gadget.sh`
+through `sudo -n` when there is no `ep0`, retried once a minute, reason to the offroad alert as
+at boot. Tests: tici and mici panels (visibility, status line), daemon (created before the
+link, left alone when present, failure not retried per tick, PC and TCP skip it), helpers
+(script invocation, result). 205 accelerator and 94 UI tests green on the Mac; not yet on the
+bench. Guide step 3 is now a tap.

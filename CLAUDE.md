@@ -103,6 +103,30 @@ AGNOS the updater builds in the staging overlay, so it is normally there by
 the time the launcher runs). `helpers.enabled()` is `bool(_get(P_ENABLED))`
 and nothing else.
 
+The toggle that sets it is offered wherever the submodule is checked out
+(`accelerators.installed()`, a stat on `jetlink_repo/jetlink`), the way the
+chestnut Big Model slot is offered whether or not a board is fitted. It used
+to wait for `present()`, which on a fresh device could never come: with the
+link off there is no gadget for a Jetson to enumerate, so the toggle waited
+for the thing it enables and the first enable took an ssh session. Under
+the toggle, `link_status()` says what the comma sees on its USB-C port: a
+Jetson through `present()`, otherwise the CC pin
+(`typec_cc_orientation`, which upstream's `ui_state` already reads), which
+knows a plugged-in host from an empty port but not a Jetson from a laptop,
+and says nothing on a kernel that does not expose it.
+
+Turning it on takes effect at once. manager starts jetlinkd on the param
+(the daemon's `should_run`), and `jetlinkd.ensure_gadget()` runs
+`scripts/setup_gadget.sh` through the same `sudo -n` the boot path uses when
+the link was off at boot and there is no `ep0` to open. Before that a flip
+of the toggle did nothing visible until the next reboot: the daemon started,
+found no gadget and logged a failed open every 5 s. A setup that fails is
+retried once a minute, with the reason in `/dev/shm/jetlink-gadget` for the
+offroad alert as at boot; a device that cannot run the script (a PC, TCP
+configured) goes straight to `open_link`, which says why. Turning it off
+already worked live: the disable branch releases the link, restores the
+sysctls and exits, leaving the gadget created but unbound.
+
 ### Upstream files touched
 
 A hundred lines across a dozen files, none of them inside a chestnut code path.
@@ -224,6 +248,8 @@ Every function in `accelerators/__init__.py` is a thin call into `backend.py`.
 the UI at 5 Hz and must stay cheap.
 
 ```
+installed()           the submodule is checked out. What makes the link worth offering in the
+                      UI; a stat, because the UI asks at 5 Hz.
 present()             a Jetson is attached, or dormant and known to be there. USB-independent,
                       because the comma is the gadget and enumerates nothing.
 ready()               params only: enabled, no gadget error, and the cached spec, the
@@ -636,7 +662,7 @@ Jetson cannot be a gadget (above). Writing `host` to the role switch flips the d
 role but not the CC resistors, so you get two hosts and both ends driving VBUS.
 
 **Use a USB-A port on the Jetson.** They hang off the onboard Realtek hub, so the
-gadget appears one hop down at `2-1.2`.
+gadget appears one hop down at `2-1.<port>`.
 
 ### Power the comma from its own supply
 
@@ -662,7 +688,67 @@ cat /sys/bus/usb/devices/2-1.2/speed           # 5000
 ```
 
 `speed=5000` or `super-speed` is the only proof the cable and both ports are USB 3.
-480 means you are on a USB 2 path and the transport cost roughly doubles.
+480 means you are on a USB 2 path and the transport cost roughly doubles. The
+port number after `2-1.` is whichever USB-A port the cable is in; `2-1.4` on the
+bench since 2026-09-06.
+
+### What a bad cable looks like
+
+The 2026-09-07 drives, after a longer USB cable went in. Every mid-drive loss
+of the large model that evening and night, fourteen of them and six in the
+twelve minutes of route `000001d9`, was the comma's USB port letting go of the
+host, not a stall: modeld logged `host dropped the gadget configuration` or
+`gadget write failed: [Errno 19] No such device`, the Jetson logged
+`usb 2-1.4: USB disconnect` with no xhci or over-current line before it, the
+Jetson's telemetry sat at 47 to 68 C and 12.6 W throughout, and a 14 minute
+drive earlier the same evening on the same code ran the large model without
+one drop. Under traffic the drops came 1 to 4 minutes apart; a link carrying
+only the 10 s keepalive pings held for a whole drive.
+
+Two shapes in the comma's kernel log, both physical:
+
+- `usbpd usbpd0: USB Type-C disconnect` then `DWC3 in low power mode`: the CC
+  pin lost its pull-up. With a legacy USB-A to USB-C cable that pull-up is a
+  resistor to the host's VBUS, so this is the plug losing contact in the
+  comma's port or VBUS from the Jetson's USB-A port dropping. The port then
+  sees nothing until CC returns; on 2026-09-07 it stayed gone for 49 minutes
+  with the Jetson awake and came back the second the Jetson resumed from
+  suspend and re-powered its ports.
+- `android_work: sent uevent USB_STATE=DISCONNECTED` with no usbpd line: CC
+  held and the SuperSpeed link went on its own. Each came back at
+  `super-speed config #1` 5 to 10 s later, which is the comma's own demote,
+  backoff and rebind, not a host reset.
+
+The transport now says which. An ENODEV or host-gone failure on the read or
+write path carries the UDC state while the gadget is still bound: `(udc: not
+attached)` is CC or VBUS gone, `default` or `addressed` a link being
+re-enumerated, `suspended` a bus the host put to sleep. The join
+thread logs `jetlink: link lost, port sees no host (cc 0)` or `port sees a
+host (cc N)` from `typec_cc_orientation` at each drop and counts them; from
+`DROPS_TO_BLAME_CABLE` on, the accelerator status in the UI reads `link
+dropped N times this drive, check the USB cable`.
+
+The comma's kernel log for a drive is in the rlog: `operatingSystemLog`
+messages carry journald's JSON, `MESSAGE` and `SYSLOG_IDENTIFIER=kernel`
+included, so the `usbpd`, `dwc3` and `USB_STATE` lines can be read off a
+route after the device rebooted, which the comma's own journal (boot 0 only)
+cannot. The Jetson's journal is persistent but not to be trusted for in-car
+boots: its clock is stale there (below), journald is at its 150 MB cap and
+vacuums by timestamp, and the drives of 2026-09-08 01:47 and 03:54 have no
+Jetson journal at all. Align what there is on `usb 2-1.4: new SuperSpeed USB
+device` and `USB disconnect` pairs.
+
+What a drop costs the driver, measured on route `000001d9`: a
+`bigModelFailed` soft disable latched until the next disengagement, a
+rejoin 6.6 s later, and a fallback frame of 186 to 211 ms, two or three
+dropped camera frames. Three is `frameDropPerc` 1.47%, which is
+`modeldLagging` and a second soft disable for the same cable; two is 0.99%
+and nothing. The frame is logged as `jetlink: fallback frame N ms: link,
+demote, small model`, so the next drive says whether the time is the kernel
+declaring the link dead or ours. Five of the 6.6 s were `REJOIN_DELAY`; a
+link that had held for `STABLE_SECONDS` now retries after
+`REJOIN_DELAY_QUICK`, 1 s, since the host re-enumerates a rebound gadget in
+about half a second.
 
 ### No FunctionFS preflight in setup_gadget.sh
 
