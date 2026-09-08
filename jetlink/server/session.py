@@ -250,7 +250,10 @@ class EngineHost:
         # when there is one, else let the client upload again.
         log.warning("discarding %s: %s", entry.path.name, e)
         entry.remove()
-        if job.load_only and not (model_path.is_file() and model_path.stat().st_size == req.nbytes):
+        # A preload names no size (it is a guess from last-loaded.json); a
+        # client's request does, and the model has to match it.
+        have = model_path.is_file() and (req.nbytes == 0 or model_path.stat().st_size == req.nbytes)
+        if job.load_only and not have:
           raise RuntimeError(f"artifact invalid and the model is not on disk: {e}") from e
         spec = self._build_job(req, entry, model_path, spec)
         self._write_spec(entry, spec)
