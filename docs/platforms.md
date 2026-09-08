@@ -249,7 +249,7 @@ Read it this way:
 
 - **tinygrad is correct and over budget on this machine.** 66 ms against a
   50 ms frame, every frame. The kernels account for 32 ms of it and the rest
-  is per-kernel launch overhead across 393 launches (`docs/multi-platform-plan.md`),
+  is per-kernel launch overhead across 393 launches,
   which a faster GPU only partly removes. A newer Mac is expected under budget
   and has to be measured, not assumed.
 - **CoreML on the GPU is correct, under budget, and the Mac default.** 43 ms

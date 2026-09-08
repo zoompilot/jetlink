@@ -186,7 +186,7 @@ The comma side does have to let go: a parked comma stays awake for up to 30
 hours holding the gadget, and with the gadget held the Jetson never sleeps.
 jetlinkd releases it once the engine is ready and a minute has passed since
 ignition-off (`DORMANT_HOLD` in the fork), and presents it again only for
-work or for the shutdown below. See docs/openpilot-integration.md.
+work or for the shutdown below. The compatible integration manages this release automatically.
 
 ### Powering off with the comma
 

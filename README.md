@@ -10,7 +10,7 @@ back 20 times per second. The other computer has no CAN access.
 
 **Experimental:** you need an openpilot build with Jetlink integration to use it
 with your comma. Installing this repository alone does not add model selection
-or switching. See [validation status](docs/release-readiness.md).
+or switching. See [validation status](docs/status.md).
 
 ## Start here
 
@@ -85,8 +85,7 @@ Recorded bench results on Orin Nano Super 8 GB, TensorRT 10.3 FP16, over USB 3:
 Full modeld timings include local image processing, transport, inference, and
 output parsing during recorded-segment replay. The frame budget is 50 ms;
 Lebowski leaves little margin. These short bench runs do not establish sustained
-performance under heat or load. See [latency analysis](docs/drive-2026-09-05-latency.md)
-and [bench validation](docs/validation-2026-09-07.md).
+performance under heat or load. See [status and known limitations](docs/status.md).
 
 ## Help and further reading
 
@@ -94,8 +93,7 @@ and [bench validation](docs/validation-2026-09-07.md).
 - [Platform setup and benchmarks](docs/platforms.md)
 - [Cables, networking, and power](docs/transport.md)
 - [Updates and rollback](docs/releasing.md)
-- [openpilot integration for fork maintainers](docs/openpilot-integration.md)
-- [Validation status and remaining work](docs/release-readiness.md)
+- [Validation status and remaining work](docs/status.md)
 
 ## License
 
