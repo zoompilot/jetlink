@@ -10,15 +10,23 @@ readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Zeph Leggett" }]
 requires-python = ">=3.10"
-# numpy only. The client additionally needs `usb1` for the USB transport, and
-# the server needs tensorrt + cuda-python, which ship in the Jetson image
-# rather than from PyPI.
+# numpy only. The client additionally needs `usb1` for the USB transport; the
+# server needs one inference runtime, chosen by the extras below.
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
 usb = ["libusb1>=3.0"]
+# The Jetson image: TensorRT and CUDA come with JetPack, so only their neighbours.
 server = ["onnx>=1.16", "cuda-python>=12.6,<13"]
-dev = ["pytest>=7"]
+# A desktop or laptop NVIDIA GPU: TensorRT from PyPI, 11.x at the time of writing.
+trt = ["onnx>=1.16", "tensorrt-cu12>=10.3", "cuda-python>=12.6,<13"]
+# Apple silicon (CoreML) and a fallback anywhere else (CUDA or CPU providers).
+ort = ["onnx>=1.16", "onnxruntime>=1.22"]
+# Metal, and any GPU tinygrad drives.
+tinygrad = ["tinygrad>=0.11"]
+# Telemetry from a desktop NVIDIA GPU.
+nvml = ["nvidia-ml-py>=12"]
+dev = ["pytest>=7", "ruff", "onnx>=1.16"]
 
 [project.scripts]
 jetlink-server = "jetlink.server.main:main"

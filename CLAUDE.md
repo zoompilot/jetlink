@@ -609,6 +609,68 @@ compiled, and `modelV2.big` is never set because the process that would set it
 is not running. `ModelRunnerTypeCache` caches the answer, so clear it whenever
 either param changes by hand; `select_model()` and the link toggle already do.
 
+## Backends: the server off the Jetson
+
+`docs/platforms.md` is the reference. The shape:
+
+```
+jetlink/server/
+  backends/base.py      Backend and Engine protocols, ArtifactInvalid
+  backends/trt/         TensorRT: engine.py, cudart.py, build.py, moved from server/, keys unchanged
+  backends/tinygrad/    build.py (OnnxRunner + TinyJit, pickled), engine.py, owner.py
+  backends/ort/         onnxruntime: CoreML on a Mac, CUDA or CPU elsewhere
+  cache.py              EngineCache, out of builder.py; the key is <sha16>.<backend tag>
+  platform.py           is_jetson, default_cache_dir, available_bytes, gpu_name
+  builder.py, engine.py, cudart.py   shims at the old import paths, one release
+```
+
+What the Jetson must never notice: the TensorRT tag is `trt<version>.<device>`
+byte for byte, so `<oid16>.trt10.3.0.Orin-sm87.plan` loads without a rebuild;
+the timing cache is `timing.trt10.3.0.Orin-sm87.cache` as before; no build flag
+changed on TensorRT 10. `tests/test_trt_backend.py` pins the key. TensorRT 11
+(PyPI) dropped weak typing and `BuilderFlag.FP16`, so the build asks for a
+strongly typed network there and precision follows the fp16 ONNX; untested on
+hardware.
+
+The hello gains `backend`, `runtime_version` and keeps `trt_version` only from
+the TensorRT backend. The fork logs it and nothing else reads it.
+
+`ArtifactInvalid` from `Backend.load` means the file is wrong (a pickle from
+another tinygrad, an empty CoreML cache): the host deletes it and rebuilds
+from the ONNX if it has one, else answers `need_upload`. TensorRT never raises
+it: a plan that will not deserialize is a memory or device fault, and 770 MB
+is not deleted for that.
+
+### tinygrad on Metal is one thread
+
+A JIT unpickled on one thread segfaults when replayed from another, and a
+thread that has used Metal segfaults in objc's autorelease-pool drain as it
+exits (crash report: `AutoreleasePoolPage::releaseUntil` under
+`_pthread_exit`). The server loads on a job thread that exits and runs frames
+on the session thread, so every tinygrad call goes through the daemon thread
+in `backends/tinygrad/owner.py`, which never exits. Do not run tinygrad from
+anywhere else in the server process, including a test.
+
+### onnxruntime is one process
+
+`InferenceSession()` holds the GIL for its whole duration (a 1 ms ticker
+thread ran three times across twenty session creations; a CoreML build logged
+no progress in ten minutes). In-process that freezes the request loop, the
+pings and the accept for as long as CoreML compiles, so the session lives in
+a spawned worker (`backends/ort/worker.py`) with the frame's inputs and
+outputs in shared memory. Keep it that way; do not "simplify" it back into
+the server process.
+
+### Mac numbers, 2026-09-07, M1 Pro
+
+tinygrad METAL: 66 ms a frame, parity passed on every slice, 13 s build, 1 s
+load. Over the 50 ms budget on that machine; a faster Mac has to be measured.
+onnxruntime CoreML on the GPU (`CPUAndGPU`): 39 ms, parity passed, but ten
+minutes to create the session in every process, and onnxruntime's model cache
+did not shorten it. With the Neural Engine (`ALL`) it is 25 ms and wrong
+(correlation 0.91 to 0.97), so the backend pins the GPU. tinygrad is the
+default on a Mac for the one-second start; `--backend ort` is the opt-in.
+
 ## The cable
 
 ### The comma is the gadget and the Jetson is the host, and it cannot be reversed

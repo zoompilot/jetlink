@@ -102,6 +102,23 @@ wake configured. For a setup without suspend, remove `--sleep-after 120` from
 the installed unit before starting it. See [power management](docs/transport.md#always-on-supply-and-suspend)
 for wake behavior and limitations.
 
+## Other hosts
+
+The server is not tied to the Jetson. It runs on any machine with one of its
+backends: TensorRT on an NVIDIA GPU, tinygrad on Apple silicon, onnxruntime as
+a fallback. The comma side is unchanged; the protocol, queues and client are
+the same, and the server tells the comma what it is in the hello.
+
+| Host | Backend | Frame, big model | Status |
+| --- | --- | ---: | --- |
+| Jetson Orin Nano Super | TensorRT 10.3 | 20 ms GPU, 31 ms in modeld | validated on the car |
+| Linux or Windows (WSL2), NVIDIA GPU | TensorRT 11 from PyPI | expected under the Jetson | not yet run |
+| Apple silicon | tinygrad on Metal | 66 ms on an M1 Pro | parity passed; over the 50 ms budget on that machine |
+| Apple silicon | onnxruntime CoreML, GPU only | 39 ms on an M1 Pro | parity passed; ten-minute session start |
+
+[Platforms](docs/platforms.md) has the install steps, the measurements and the
+risks; `scripts/run-mac.sh` serves from a Mac.
+
 ## Bench test over Ethernet
 
 A Linux machine with Python 3.10+ can test inference without the driving-software
