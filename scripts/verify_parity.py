@@ -149,7 +149,8 @@ def capture(args) -> int:
 
   try:
     hello = client.hello(timeout=60.0)  # the jetson may still be re-enumerating
-    print(f"server: trt {hello['trt_version']} on {hello['device']}")
+    print(f"server: {hello.get('backend', 'trt')} {hello.get('runtime_version', hello.get('trt_version'))} "
+          f"on {hello['device']}")
     # a model the server does not have is a build job, not a parity check
     spec = client.ensure_engine(sha256, nbytes, build_timeout=300.0)
     # reference and compare need the slices this capture was made with

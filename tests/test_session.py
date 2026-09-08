@@ -6,33 +6,29 @@ See the LICENSE file in the root directory for more details.
 
 End-to-end: a real client talking to a real Session over a real socket.
 
-Only the TensorRT engine is faked. Everything else - framing, the infer
-request/response encoding, the history queues, the hidden-state feedback, the
-piggybacked telemetry - is the code that will run in the car. This is the test
-that covers the paths the car would otherwise be the first to execute.
+Only the engine is faked, behind the backend seam. Everything else - framing,
+the infer request/response encoding, the history queues, the hidden-state
+feedback, the piggybacked telemetry - is the code that will run in the car.
+This is the test that covers the paths the car would otherwise be the first to
+execute, and it imports no inference runtime at all.
 """
 from __future__ import annotations
 
-import os
 import threading
 import time
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-from tests.fake_trt import install_stubs
-
-install_stubs()
-
-from jetlink import protocol as P                          # noqa: E402
-from jetlink.client import JetlinkClient                   # noqa: E402
-from jetlink.queues import PolicyQueues                    # noqa: E402
-from jetlink.server.builder import EngineCache             # noqa: E402
-from jetlink.server.session import EngineHost, Job, Loaded, Request, Session  # noqa: E402
-from jetlink.spec import ModelSpec                         # noqa: E402
-from jetlink.transport.base import LinkError               # noqa: E402
-from jetlink.transport.tcp import TcpTransport             # noqa: E402
+from jetlink import protocol as P
+from jetlink.client import JetlinkClient
+from jetlink.queues import PolicyQueues
+from jetlink.server.cache import EngineCache
+from jetlink.server.session import EngineHost, Job, Loaded, Request, Session
+from jetlink.spec import ModelSpec
+from jetlink.transport.base import LinkError
+from jetlink.transport.tcp import TcpTransport
+from tests.fake_backend import FakeBackend, FakeEngine
 
 BIG = {
   'img': (1, 12, 128, 256), 'big_img': (1, 12, 128, 256),
@@ -50,11 +46,7 @@ def make_spec() -> ModelSpec:
 
 
 @pytest.mark.parametrize('identity', ['../escape', '/tmp/escape', '', 'a'*63, 'z'*64])
-def test_model_identity_cannot_escape_the_cache(tmp_path, identity):
-  cache = EngineCache(tmp_path)
-  for resolve in (cache.entry, cache.model_path):
-    with pytest.raises(ValueError, match='SHA-256'):
-      resolve(identity)
+def test_a_request_for_a_bad_model_identity_is_refused(identity):
   with pytest.raises(ValueError, match='SHA-256'):
     Request(identity, 100, 4)
 
@@ -93,41 +85,16 @@ def test_invalid_inference_response_abandons_the_stream(kind):
     client.infer_begin(bytes(spec.warped_nbytes), bytes(spec.packed_nbytes), frame_id=8)
 
 
-class FakeEngine:
-  """Returns something deterministic that depends on the inputs, so a wiring
-  mistake between the queues and the engine cannot pass unnoticed."""
+class FakeSensor:
+  """Health as a Jetson's sysfs would report it; the server no longer reads
+  zeros off a host with no sensors."""
 
-  def __init__(self, spec: ModelSpec):
-    self.spec = spec
-    self.inputs = {k: None for k in spec.input_shapes}
-    self._host = {k: np.zeros(v, np.float16) for k, v in spec.input_shapes.items()}
-    self._out = np.zeros(spec.output_nelem, np.float16)
-    self.last_gpu_us = 1234
-    self.calls = 0
-    self.nonfinite = False
-
-  def host_input(self, name):
-    return self._host[name]
-
-  def run(self):
-    self.calls += 1
-    # Fold a couple of inputs into the output so the test can verify the queues
-    # actually fed the engine. Sample rather than reduce: a float16 sum over
-    # 393216 elements overflows to inf, which the server correctly rejects.
-    self._out[:] = self._host['img'][0, 0, 0, 0]
-    self._out[0] = self._host['features_buffer'][0, 0, 0, 0]
-    self._out[1] = np.float16(self.calls)
-    self._out[2] = self._host['img'][0, 6, 0, 0]
-    if self.nonfinite:
-      self._out[5] = np.float16('nan')
-    return {'outputs': self._out}
-
-  def close(self):
-    pass
+  def read(self):
+    return {'temp_c': 48.5, 'power_w': 7.2, 'gpu_load_pct': 12}
 
 
 def ready_session(spec, transport, engine=None, cache='/tmp/jetlink-test-cache'):
-  host = EngineHost(EngineCache(cache))
+  host = EngineHost(EngineCache(cache, FakeBackend(spec)), telemetry=FakeSensor())
   session = Session(transport, host)
   engine = engine or FakeEngine(spec)
   host.loaded = Loaded(spec.sha256, spec, engine, PolicyQueues(spec),
@@ -274,7 +241,7 @@ def test_not_ready_is_reported_rather_than_crashing():
   client_t = TcpTransport.connect('127.0.0.1', port)
   server_t, _ = TcpTransport.accept(srv)
   srv.close()
-  session = Session(server_t, EngineHost(EngineCache('/tmp/jetlink-test-cache')))  # nothing loaded
+  session = Session(server_t, EngineHost(EngineCache('/tmp/jetlink-test-cache', FakeBackend())))  # nothing loaded
   threading.Thread(target=session.serve_forever, daemon=True).start()
 
   client = JetlinkClient(client_t, deadline=10.0)
@@ -352,67 +319,15 @@ def test_wrong_sized_request_is_rejected(link):
   assert engine.calls == 0, "the engine must not have run on a malformed request"
 
 
-# -- the engine cache -------------------------------------------------------
-
-def _plan(cache: EngineCache, name: str, mtime: float) -> Path:
-  """A plan and its sidecar, stamped at `mtime`."""
-  plan = cache.engines / f"{name}.plan"
-  plan.write_bytes(b'plan')
-  plan.with_suffix('.json').write_text('{}')
-  os.utime(plan, (mtime, mtime))
-  return plan
-
-
-def test_prune_keeps_the_newest_plans(tmp_path):
-  cache = EngineCache(tmp_path)
-  for i in range(4):
-    _plan(cache, f"m{i}", 1_000_000 + i)
-  cache.prune(keep=2)
-  left = sorted(p.stem for p in cache.engines.glob('*.plan'))
-  assert left == ['m2', 'm3']
-  assert not (cache.engines / 'm0.json').exists()
-
-
-def test_prune_never_drops_the_plan_just_built(tmp_path):
-  """The Jetson boots at 1970 with no network, so a fresh plan can be the
-  oldest file on disk. Pruning by mtime would delete the build that just
-  finished and leave the caller reading a sidecar that no longer exists."""
-  cache = EngineCache(tmp_path)
-  _plan(cache, 'old_a', 2_000_000)
-  _plan(cache, 'old_b', 2_000_001)
-  fresh = _plan(cache, 'fresh', 1)          # 1970, but it is the new one
-
-  cache.prune(keep=2, protect=fresh)
-
-  assert fresh.is_file()
-  assert fresh.with_suffix('.json').is_file()
-  assert len(list(cache.engines.glob('*.plan'))) == 2
-
-
-def test_sweep_temp_drops_only_stale_build_dirs(tmp_path):
-  cache = EngineCache(tmp_path)
-  stale = cache.engines / 'tmpstale'
-  fresh = cache.engines / 'tmpfresh'
-  for d in (stale, fresh):
-    d.mkdir()
-    (d / 'engine.plan').write_bytes(b'x')
-  os.utime(stale, (time.time() - 7 * 3600, time.time() - 7 * 3600))
-
-  cache.sweep_temp()
-
-  assert not stale.exists()
-  assert fresh.exists()
-
-
 class TestPreload:
   """A fresh server process has no engine loaded and the first client pays the
   deserialize. Offroad jetlinkd absorbs that; at an ignition-on cold start there
   is no jetlinkd and it lands on modeld's join instead."""
 
   def _cache(self, tmp_path, spec, with_spec=True):
-    cache = EngineCache(tmp_path)
+    cache = EngineCache(tmp_path, FakeBackend(spec))
     entry = cache.entry(spec.sha256)
-    entry.plan_path.write_bytes(b'plan')
+    entry.path.write_bytes(b'plan')
     meta = {'spec': spec.to_dict()} if with_spec else {'trt_version': 'x'}
     entry.write_meta(meta)
     cache.remember_loaded(spec.sha256, spec.frame_skip)
@@ -420,7 +335,7 @@ class TestPreload:
 
   @pytest.mark.parametrize('requested_sha', ['b' * 64, 'c' * 64])
   def test_request_during_load_returns_without_locking_out_completion(self, tmp_path, requested_sha):
-    host = EngineHost(EngineCache(tmp_path))
+    host = EngineHost(EngineCache(tmp_path, FakeBackend()))
     host.job = Job('b' * 64, load_only=True)
     result = []
     worker = threading.Thread(target=lambda: result.append(
@@ -444,18 +359,11 @@ class TestPreload:
     assert started == [(spec.sha256, True, spec.frame_skip)]
 
   def test_nothing_is_preloaded_without_a_marker(self, tmp_path):
-    host = EngineHost(EngineCache(tmp_path))
+    host = EngineHost(EngineCache(tmp_path, FakeBackend()))
     started = []
     host._start = lambda *a: started.append(a)
     host.preload()
     assert started == []
-
-  def test_inventory_requires_a_compatible_plan_and_spec(self, tmp_path):
-    spec = make_spec()
-    cache = self._cache(tmp_path, spec)
-    assert cache.inventory() == [spec.sha256]
-    cache.entry(spec.sha256).plan_path.unlink()
-    assert cache.inventory() == []
 
   def test_a_plan_whose_sidecar_has_no_spec_is_left_alone(self, tmp_path):
     # Deriving one means parsing the ONNX, which is real work to do on a guess.
@@ -482,7 +390,7 @@ class TestPreload:
     frame_skip got the spec the previous one asked for. A preload guesses the
     frame_skip from the marker, which makes that mismatch reachable."""
     spec = make_spec()
-    host = EngineHost(EngineCache(tmp_path))
+    host = EngineHost(EngineCache(tmp_path, FakeBackend()))
     engine = FakeEngine(spec)
     host.loaded = Loaded(spec.sha256, spec, engine, PolicyQueues(spec),
                          {n: engine.host_input(n) for n in spec.input_shapes})
@@ -495,78 +403,9 @@ class TestPreload:
     assert other['state'] != 'ready' or started, "served a spec the client did not ask for"
 
 
-class TestTimingCache:
-  """TensorRT re-times candidate kernels on every build; a warm cache cut a
-  Lebowski build from 254 s to 173 s. Advisory, so every path fails open: a bad
-  cache costs a slow build, never a wrong engine."""
-
-  class FakeCache:
-    def __init__(self, blob=b'timings'):
-      self.blob = blob
-
-    def serialize(self):
-      return self.blob
-
-  class FakeConfig:
-    def __init__(self, raises=None):
-      self.raises = raises
-      self.seeded = None
-      self.set_with = None
-
-    def create_timing_cache(self, blob):
-      if self.raises:
-        raise self.raises
-      self.seeded = blob
-      return TestTimingCache.FakeCache()
-
-    def set_timing_cache(self, cache, ignore_mismatch):
-      self.set_with = (cache, ignore_mismatch)
-
-  def test_a_previous_cache_seeds_the_build(self, tmp_path):
-    from jetlink.server import builder as B
-    p = tmp_path / 'timing.cache'
-    p.write_bytes(b'previous')
-    cfg = self.FakeConfig()
-    cache = B._load_timing_cache(cfg, p)
-    assert cfg.seeded == b'previous'
-    assert cfg.set_with is not None and cache is not None
-
-  def test_a_missing_cache_still_builds(self, tmp_path):
-    from jetlink.server import builder as B
-    cfg = self.FakeConfig()
-    assert B._load_timing_cache(cfg, tmp_path / 'nope.cache') is not None
-    assert cfg.seeded == b''   # empty seed, build runs cold
-
-  def test_a_cache_tensorrt_rejects_does_not_fail_the_build(self, tmp_path):
-    # A cache from another TensorRT version, or truncated by a killed build.
-    from jetlink.server import builder as B
-    p = tmp_path / 'timing.cache'
-    p.write_bytes(b'garbage')
-    cfg = self.FakeConfig(raises=RuntimeError('version mismatch'))
-    assert B._load_timing_cache(cfg, p) is None
-
-  def test_the_cache_is_written_atomically(self, tmp_path):
-    from jetlink.server import builder as B
-    p = tmp_path / 'sub' / 'timing.cache'
-    B._save_timing_cache(self.FakeCache(b'fresh'), p)
-    assert p.read_bytes() == b'fresh'
-    # No .tmp left for the next build to mistake for a cache.
-    assert list(p.parent.glob('*.tmp')) == []
-
-  def test_an_unwritable_cache_is_not_an_error(self, tmp_path):
-    from jetlink.server import builder as B
-    B._save_timing_cache(self.FakeCache(), tmp_path / 'nodir' / 'x' / 'c.cache')
-    B._save_timing_cache(None, tmp_path / 'c.cache')   # nothing to write
-
-  def test_the_cache_is_keyed_like_the_plans(self, tmp_path):
-    from jetlink.server.builder import EngineCache
-    name = EngineCache(tmp_path).timing_cache().name
-    # A timing from another TensorRT version or another chip is not a timing.
-    assert name.startswith('timing.trt') and name.endswith('.cache')
-
-
 def test_slow_reply_send_is_logged_even_when_inference_is_fast(tmp_path, monkeypatch, caplog):
   from types import SimpleNamespace
+
   from jetlink.server import session as session_module
   from jetlink.transport.base import Message
 

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import numpy as np
 import tensorrt as trt
 
-from jetlink.server import cudart
+from jetlink.server.backends.trt import cudart
 
 TRT_TO_NP = {
   trt.DataType.FLOAT: np.float32,
@@ -58,9 +58,15 @@ def _np_from_ptr(ptr: int, shape, dtype) -> np.ndarray:
 
 
 class TrtEngine:
-  def __init__(self, plan_path: str, log_severity=trt.Logger.WARNING):
+  def __init__(self, plan_path: str, log_severity=trt.Logger.WARNING, device: int | None = None):
     self.logger = trt.Logger(log_severity)
-    trt.init_libnvinfer_plugins(self.logger, '')
+    # Absent on a TensorRT that dropped the V2 plugin family; the driving
+    # models use no plugins either way.
+    init_plugins = getattr(trt, 'init_libnvinfer_plugins', None)
+    if init_plugins is not None:
+      init_plugins(self.logger, '')
+    if device is not None:
+      cudart.set_device(device)
     self.runtime = trt.Runtime(self.logger)
     with open(plan_path, 'rb') as f:
       self.engine = self.runtime.deserialize_cuda_engine(f.read())
@@ -107,15 +113,8 @@ class TrtEngine:
   # -- execution ------------------------------------------------------------
 
   def load_inputs(self, values: dict[str, np.ndarray]) -> None:
-    for name, value in values.items():
-      b = self.inputs.get(name)
-      if b is None:
-        raise KeyError(f"engine has no input {name!r}; has {sorted(self.inputs)}")
-      if int(np.prod(value.shape)) != int(np.prod(b.shape)):
-        raise ValueError(f"{name}: {value.shape} has {value.size} elements, "
-                         f"engine wants {b.shape} ({int(np.prod(b.shape))})")
-      # copyto casts if needed; the queues already produce the engine's dtype.
-      np.copyto(b.host, value.reshape(b.shape), casting='unsafe')
+    from jetlink.server.backends.base import load_inputs
+    load_inputs(self, values)
 
   def _enqueue(self) -> None:
     for b in self.inputs.values():
@@ -145,6 +144,15 @@ class TrtEngine:
       # Not fatal: fall back to enqueueing each frame.
       self.graph_exec = None
       return False
+
+  def warm(self) -> str:
+    """One plain run so lazy CUDA state is paid for, then the graph, then one
+    replay so the steady state is never the first thing a frame does."""
+    self.run()
+    if self.capture_graph():
+      self.run()
+      return 'cuda graph captured'
+    return 'cuda graph unavailable, enqueueing per frame'
 
   def run(self) -> dict[str, np.ndarray]:
     """Run one frame. Returns views over pinned output memory, valid until the next run."""
@@ -179,4 +187,3 @@ class TrtEngine:
       cudart.stream_destroy(self.stream)
     except Exception:
       pass
-

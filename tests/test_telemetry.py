@@ -1,6 +1,6 @@
 """Health IO must not own the inference thread or publish stale samples."""
-from types import SimpleNamespace
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -83,3 +83,47 @@ def test_failed_sensor_expires_health_and_can_retry(monkeypatch):
 def test_invalid_cache_limits(period, max_age):
   with pytest.raises(ValueError):
     telemetry.CachedTelemetry(None, period=period, max_age=max_age)
+
+
+def test_no_telemetry_is_an_empty_sample_not_zeros():
+  """An empty dict is what the client already treats as no health; zeros
+  would log a board at 0 C drawing nothing."""
+  assert telemetry.NoTelemetry().read() == {}
+
+
+def test_nvml_maps_onto_the_tegra_keys(monkeypatch):
+  import sys
+  import types
+
+  class NVMLError(Exception):
+    pass
+
+  calls = []
+  fake = types.SimpleNamespace(
+    NVMLError=NVMLError, NVML_TEMPERATURE_GPU=0, NVML_CLOCK_GRAPHICS=1,
+    nvmlInit=lambda: calls.append('init'),
+    nvmlDeviceGetHandleByIndex=lambda i: f'handle{i}',
+    nvmlDeviceGetEnforcedPowerLimit=lambda h: 115_000,
+    nvmlDeviceGetTemperature=lambda h, kind: 67,
+    nvmlDeviceGetPowerUsage=lambda h: 42_500,
+    nvmlDeviceGetUtilizationRates=lambda h: types.SimpleNamespace(gpu=83, memory=40),
+    nvmlDeviceGetClockInfo=lambda h, kind: 2100,
+    nvmlDeviceGetFanSpeed=lambda h: (_ for _ in ()).throw(NVMLError('no fan on a laptop')),
+  )
+  monkeypatch.setitem(sys.modules, 'pynvml', fake)
+  src = telemetry.NvmlTelemetry()
+  assert calls == ['init']
+  assert src.read() == {'temp_c': 67.0, 'power_w': 42.5, 'power_limit_w': 115.0,
+                        'gpu_load_pct': 83, 'gpu_clock_mhz': 2100, 'fan_pct': 0}
+
+
+def test_pick_source_prefers_tegra_then_nvml_then_nothing(monkeypatch):
+  import sys
+
+  from jetlink.server import platform
+  monkeypatch.setattr(platform, 'is_jetson', lambda: True)
+  assert isinstance(telemetry.pick_source('trt'), telemetry.Telemetry)
+  monkeypatch.setattr(platform, 'is_jetson', lambda: False)
+  monkeypatch.setitem(sys.modules, 'pynvml', None)   # import raises
+  assert isinstance(telemetry.pick_source('trt'), telemetry.NoTelemetry)
+  assert isinstance(telemetry.pick_source('ort'), telemetry.NoTelemetry)

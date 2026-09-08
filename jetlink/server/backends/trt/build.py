@@ -12,54 +12,40 @@ rebuilds instead of loading something that cannot run.
 
 The build takes ~160 s for the big model, so progress is streamed back to the
 comma, where it shows up the way a model download does.
+
+Two TensorRT generations are served from this one file. JetPack 6 ships 10.3
+and is what the car was validated on; nothing here changes what that builds.
+PyPI ships 11.x for desktop GPUs, which removed weakly typed networks and the
+per-precision builder flags with them: precision follows the ONNX, which is
+fp16 end to end, so the engine is the same and only the calls differ.
 """
 from __future__ import annotations
 
 import json
 import logging
-import os
-import re
 import shutil
 import tempfile
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
 import tensorrt as trt
 
+from jetlink.server.backends.base import ProgressFn, sanitize
+from jetlink.server.platform import available_bytes
+
 log = logging.getLogger('jetlink.builder')
 
-ProgressFn = Callable[[str, float, str], None]
-
-DEFAULT_CACHE = Path(os.environ.get('JETLINK_CACHE', '/mnt/data/jetlink'))
 # A ceiling, not an allocation: TensorRT picks tactics that fit inside it. A
 # flat 4 GB on an 8 GB Orin met the OOM killer on a 1.76 GB model, so size it
 # from what is free.
 MAX_WORKSPACE_BYTES = 4 << 30
 MIN_WORKSPACE_BYTES = 256 << 20
 WORKSPACE_FRACTION = 0.4
-# One per registry entry: a rebuild costs minutes and a plan under 2 GB of a
-# 900 GB disk, so a smaller cap makes an A/B rebuild on every switch.
-KEEP_PLANS = 6
 
-
-def available_bytes() -> int:
-  """Memory a TensorRT workspace can live in.
-
-  MemAvailable, so free plus what the kernel would reclaim. Swap does not count:
-  on Tegra the GPU's allocations are pinned system RAM and cannot page out, and
-  this box has 25 GB of swap to be fooled by.
-  """
-  try:
-    with open('/proc/meminfo') as f:
-      for line in f:
-        key, _, rest = line.partition(':')
-        if key == 'MemAvailable':
-          return int(rest.split()[0]) * 1024
-  except OSError:
-    pass
-  return 0
+# Kernel timings mostly do not depend on the model: a warm cache cut a Lebowski
+# build from 254 s to 173 s. Keyed like the plans, because a timing from another
+# version or chip is not one. Advisory, so every path here fails open.
+TIMING_CACHE = 'timing'
 
 
 def workspace_bytes() -> int:
@@ -69,11 +55,7 @@ def workspace_bytes() -> int:
   return max(MIN_WORKSPACE_BYTES, min(MAX_WORKSPACE_BYTES, int(free * WORKSPACE_FRACTION)))
 
 
-def _sanitize(s: str) -> str:
-  return re.sub(r'[^A-Za-z0-9._-]', '_', s)
-
-
-def device_tag() -> str:
+def device_tag(device: int = 0) -> str:
   """Identifies the hardware a plan is valid for.
 
   The compute capability is the part that matters; the name makes the cache
@@ -81,129 +63,49 @@ def device_tag() -> str:
   no mount for.
   """
   try:
-    from jetlink.server import cudart
-    name, cc_major, cc_minor = cudart.device_name()
-    return _sanitize(f"{name}-sm{cc_major}{cc_minor}")
+    from jetlink.server.backends.trt import cudart
+    name, cc_major, cc_minor = cudart.device_name(device)
+    return sanitize(f"{name}-sm{cc_major}{cc_minor}")
   except Exception:
     return 'unknown'
 
 
-@dataclass
-class CacheEntry:
-  plan_path: Path
-  meta_path: Path
-
-  @property
-  def exists(self) -> bool:
-    return self.plan_path.is_file() and self.meta_path.is_file()
-
-  def meta(self) -> dict:
-    return json.loads(self.meta_path.read_text())
-
-  def write_meta(self, meta: dict) -> None:
-    self.meta_path.write_text(json.dumps(meta, indent=2))
+def version_tag(device: int = 0) -> str:
+  """'trt10.3.0.Orin-sm87': the part of every cache key that is TensorRT's."""
+  return f"trt{sanitize(trt.__version__)}.{device_tag(device)}"
 
 
-# What the server loaded last, so a fresh process can preload it. Beside the
-# caches rather than in them: it describes the server, not a plan.
-LAST_LOADED = 'last-loaded.json'
-
-# Kernel timings mostly do not depend on the model: a warm cache cut a Lebowski
-# build from 254 s to 173 s. Keyed like the plans, because a timing from another
-# version or chip is not one. Advisory, so every path here fails open.
-TIMING_CACHE = 'timing'
+def timing_cache_path(engines_dir: str | Path, device: int = 0) -> Path:
+  return Path(engines_dir) / f"{TIMING_CACHE}.{version_tag(device)}.cache"
 
 
-class EngineCache:
-  def __init__(self, root: Path = DEFAULT_CACHE):
-    self.root = Path(root)
-    self.engines = self.root / 'engines'
-    self.models = self.root / 'models'
-    for d in (self.engines, self.models):
-      d.mkdir(parents=True, exist_ok=True)
+def strongly_typed_only() -> bool:
+  """TensorRT 11 dropped weak typing and BuilderFlag.FP16 with it."""
+  return not hasattr(trt.BuilderFlag, 'FP16')
 
-  def key(self, model_sha256: str) -> str:
-    self._validate_sha256(model_sha256)
-    return f"{model_sha256[:16]}.trt{_sanitize(trt.__version__)}.{device_tag()}"
 
-  def entry(self, model_sha256: str) -> CacheEntry:
-    k = self.key(model_sha256)
-    return CacheEntry(self.engines / f"{k}.plan", self.engines / f"{k}.json")
+def network_flags() -> int:
+  """The flags for create_network.
 
-  def model_path(self, model_sha256: str) -> Path:
-    self._validate_sha256(model_sha256)
-    return self.models / f"{model_sha256[:16]}.onnx"
+  0 on TensorRT 10: a weakly typed network with the FP16 flag set on the
+  config, which is the build the car was validated against. On 11 the network
+  is strongly typed whether asked or not; asking makes the intent visible and
+  keeps working should a later release grow a second mode again.
+  """
+  if not strongly_typed_only():
+    return 0
+  flag = getattr(getattr(trt, 'NetworkDefinitionCreationFlag', None), 'STRONGLY_TYPED', None)
+  return 0 if flag is None else 1 << int(flag)
 
-  @staticmethod
-  def _validate_sha256(value: str) -> None:
-    # Model identities arrive from the peer and become filesystem paths.
-    if re.fullmatch(r'[0-9a-f]{64}', value) is None:
-      raise ValueError('model identity must be a lowercase SHA-256 digest')
 
-  def inventory(self) -> list[str]:
-    """Model identities with plans compatible with this GPU and TensorRT."""
-    found = []
-    for meta in self.engines.glob('*.json'):
-      try:
-        sha = json.loads(meta.read_text())['spec']['sha256']
-        if (isinstance(sha, str) and re.fullmatch(r'[0-9a-f]{64}', sha)
-            and self.entry(sha).meta_path == meta and self.entry(sha).exists):
-          found.append(sha)
-      except (OSError, ValueError, KeyError, TypeError):
-        continue
-    return sorted(set(found))
-
-  def remember_loaded(self, sha256: str, frame_skip: int) -> None:
-    """Record what is loaded, for the next process to preload.
-
-    frame_skip goes with it: the spec served is stamped with it, so preloading
-    under another value hands the next client a spec it did not ask for.
-    """
-    try:
-      (self.root / LAST_LOADED).write_text(json.dumps({'sha256': sha256, 'frame_skip': frame_skip}))
-    except OSError:
-      pass   # a read-only cache still serves; it just cannot preload next time
-
-  def last_loaded(self) -> tuple[str, int] | None:
-    try:
-      d = json.loads((self.root / LAST_LOADED).read_text())
-      sha, skip = d['sha256'], int(d['frame_skip'])
-    except (OSError, ValueError, KeyError, TypeError):
-      return None
-    return (sha, skip) if re.fullmatch(r'[0-9a-f]{64}', sha) else None
-
-  def timing_cache(self) -> Path:
-    return self.engines / f"{TIMING_CACHE}.trt{_sanitize(trt.__version__)}.{device_tag()}.cache"
-
-  def prune(self, keep: int = KEEP_PLANS, protect: Path | None = None) -> None:
-    """Keep the newest few plans; each is ~770 MB.
-
-    `protect` is never pruned whatever its mtime says: this box boots at 1970
-    without NTP, so a plan built offroad looks older than everything on disk and
-    a fresh build would be the first one deleted.
-    """
-    plans = [p for p in self.engines.glob('*.plan') if protect is None or p != protect]
-    plans.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for p in plans[max(keep - (protect is not None), 0):]:
-      p.unlink(missing_ok=True)
-      p.with_suffix('.json').unlink(missing_ok=True)
-
-  def sweep_temp(self, max_age: float = 6 * 3600) -> None:
-    """Drop build directories a crashed or killed build left behind.
-
-    build_engine stages the plan in a TemporaryDirectory inside engines/, which
-    prune() does not glob.
-    """
-    now = time.time()
-    for d in self.engines.glob('tmp*'):
-      if not d.is_dir():
-        continue
-      try:
-        if now - d.stat().st_mtime < max_age:
-          continue
-        shutil.rmtree(d, ignore_errors=True)
-      except OSError:
-        pass
+def configure_precision(config, fp16: bool) -> str:
+  """Ask for fp16 the way this TensorRT allows. Returns what was done, for the log."""
+  if strongly_typed_only():
+    return 'strongly typed network; precision follows the ONNX'
+  if fp16:
+    config.set_flag(trt.BuilderFlag.FP16)
+    return 'fp16 enabled'
+  return 'fp32'
 
 
 class _Monitor(trt.IProgressMonitor):
@@ -296,7 +198,9 @@ def build_engine(onnx_path: str | Path, out_path: str | Path,
            workspace >> 20, available_bytes() >> 20)
 
   logger = trt.Logger(trt.Logger.WARNING)
-  trt.init_libnvinfer_plugins(logger, '')
+  init_plugins = getattr(trt, 'init_libnvinfer_plugins', None)
+  if init_plugins is not None:
+    init_plugins(logger, '')
 
   # Not at module scope: pulls in the onnx package, which a comma running the
   # tests does not have.
@@ -309,7 +213,7 @@ def build_engine(onnx_path: str | Path, out_path: str | Path,
     report('patch', 1.0, 'patched')
 
     builder = trt.Builder(logger)
-    network = builder.create_network(0)
+    network = builder.create_network(network_flags())
     parser = trt.OnnxParser(network, logger)
     report('parse', 0.0, 'parsing onnx')
     if not parser.parse_from_file(str(patched)):
@@ -318,8 +222,8 @@ def build_engine(onnx_path: str | Path, out_path: str | Path,
     report('parse', 1.0, f'{network.num_layers} layers')
 
     config = builder.create_builder_config()
-    if fp16:
-      config.set_flag(trt.BuilderFlag.FP16)
+    precision = configure_precision(config, fp16)
+    log.info("tensorrt %s: %s", trt.__version__, precision)
     config.builder_optimization_level = optimization_level
     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace)
     config.progress_monitor = _Monitor(report)
@@ -338,9 +242,11 @@ def build_engine(onnx_path: str | Path, out_path: str | Path,
     shutil.move(str(staged), str(out_path))
 
   meta = {
+    'backend': 'trt',
     'trt_version': trt.__version__,
     'device': device_tag(),
     'fp16': fp16,
+    'strongly_typed': strongly_typed_only(),
     'optimization_level': optimization_level,
     'build_seconds': round(time.time() - t0, 1),
     'onnx': onnx_path.name,

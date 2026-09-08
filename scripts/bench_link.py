@@ -112,8 +112,8 @@ def _run(args, client) -> int:
     _wait_for_host(args.wait_host)
 
   hello = client.hello()
-  print(f"server: trt {hello['trt_version']} on {hello['device']}, "
-        f"engine {hello['engine_state']}")
+  print(f"server: {hello.get('backend', 'trt')} {hello.get('runtime_version', hello.get('trt_version'))} "
+        f"on {hello['device']}, engine {hello['engine_state']}")
 
   spec = load_spec(args)
   if spec is not None:

@@ -4,18 +4,23 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-Jetson health, shaped to fit openpilot's chestnutState.
+Accelerator health, shaped to fit openpilot's chestnutState.
 
-The comma publishes this as chestnutState, so the sidebar, alerts and logging
-work unchanged and the Jetson reads as an attached accelerator; field names
-mirror ChestnutState in log.capnp. Read from sysfs rather than tegrastats: no
-subprocess per poll, and it works unprivileged inside the container.
+The comma logs this at 1 Hz (jetlinkTelemetry in swaglog), so the field names
+mirror ChestnutState in log.capnp. One source per platform: Tegra sysfs on a
+Jetson, read rather than tegrastats so there is no subprocess per poll and it
+works unprivileged inside the container; NVML on a desktop NVIDIA GPU; nothing
+on a Mac, where the sensors need privileges, and nothing is what the comma is
+told rather than zeros that read as a cold idle board.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from pathlib import Path
+
+log = logging.getLogger('jetlink.telemetry')
 
 THERMAL = Path('/sys/devices/virtual/thermal')
 GPU = Path('/sys/devices/platform/bus@0/17000000.gpu')
@@ -122,7 +127,7 @@ def _hwmon(name: str) -> Path | None:
 
 
 class Telemetry:
-  """Caches the sysfs paths once; polling is then a handful of small reads."""
+  """Tegra sysfs. Caches the paths once; polling is then a handful of small reads."""
 
   def __init__(self, power_limit_w: float = 25.0):
     self.ina = _hwmon('ina3221')
@@ -156,3 +161,68 @@ class Telemetry:
       'supply_mv': mv,
       'supply_ma': ma,
     }
+
+
+TegraTelemetry = Telemetry
+
+
+class NoTelemetry:
+  """A host with no sensors this process may read. An empty sample is what the
+  client already treats as "no health", so the comma logs nothing rather than
+  a board at 0 C drawing 0 W."""
+
+  def read(self) -> dict:
+    return {}
+
+
+class NvmlTelemetry:
+  """A desktop or laptop NVIDIA GPU through NVML (the nvidia-ml-py package).
+
+  The same keys as Tegra where the meaning matches. NVML gives fan speed as a
+  percentage and no memory temperature on consumer parts, so those are what
+  they are rather than dressed up as the Jetson's.
+  """
+
+  def __init__(self, index: int = 0):
+    import pynvml
+    self.nvml = pynvml
+    pynvml.nvmlInit()
+    self.handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+    try:
+      self.power_limit_w = pynvml.nvmlDeviceGetEnforcedPowerLimit(self.handle) / 1000.0
+    except pynvml.NVMLError:
+      self.power_limit_w = 0.0
+
+  def _try(self, fn, *args, default=0):
+    try:
+      return fn(self.handle, *args)
+    except self.nvml.NVMLError:
+      # Laptops report no fan and some parts no power; each is per call, so a
+      # missing one costs a zero, not the whole sample.
+      return default
+
+  def read(self) -> dict:
+    n = self.nvml
+    util = self._try(n.nvmlDeviceGetUtilizationRates, default=None)
+    return {
+      'temp_c': float(self._try(n.nvmlDeviceGetTemperature, n.NVML_TEMPERATURE_GPU)),
+      'power_w': round(self._try(n.nvmlDeviceGetPowerUsage) / 1000.0, 2),
+      'power_limit_w': self.power_limit_w,
+      'gpu_load_pct': int(util.gpu) if util is not None else 0,
+      'gpu_clock_mhz': int(self._try(n.nvmlDeviceGetClockInfo, n.NVML_CLOCK_GRAPHICS)),
+      'fan_pct': int(self._try(n.nvmlDeviceGetFanSpeed)),
+    }
+
+
+def pick_source(backend: str = ''):
+  """The telemetry source for this host: Tegra sysfs on a Jetson, NVML where it
+  initialises and the model runs on CUDA, otherwise nothing."""
+  from jetlink.server.platform import is_jetson
+  if is_jetson():
+    return Telemetry()
+  if backend in ('', 'trt', 'tinygrad', 'ort'):
+    try:
+      return NvmlTelemetry()
+    except Exception as e:
+      log.info("no NVML telemetry (%s)", e)
+  return NoTelemetry()

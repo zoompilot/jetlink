@@ -1,0 +1,6 @@
+# A Linux laptop or desktop serving as the USB host needs to open the comma's
+# gadget without root. libusb goes through usbfs, so this is the whole driver.
+#   sudo install -m 644 scripts/99-jetlink-host.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usb
+# 1209:0001 is the pid.codes test allocation the gadget presents (transport/usbbulk.py).
+SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="0001", MODE="0666", TAG+="uaccess"

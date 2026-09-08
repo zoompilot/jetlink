@@ -27,8 +27,9 @@ from pathlib import Path
 import numpy as np
 
 from jetlink import protocol as P
-from jetlink.server.builder import CacheEntry, EngineCache, build_engine
-from jetlink.server.telemetry import CachedTelemetry, Telemetry
+from jetlink.server.backends.base import ArtifactInvalid
+from jetlink.server.cache import CacheEntry, EngineCache
+from jetlink.server.telemetry import CachedTelemetry, NoTelemetry
 from jetlink.spec import CHUNK, DEFAULT_FRAME_SKIP, ModelSpec, sha256_file, spec_from_onnx
 from jetlink.transport.base import LinkError, LinkTimeout, Message, Transport
 
@@ -81,9 +82,9 @@ class EngineHost:
   are laid over segfaults rather than raising.
   """
 
-  def __init__(self, cache: EngineCache, telemetry: Telemetry | None = None):
+  def __init__(self, cache: EngineCache, telemetry=None):
     self.cache = cache
-    self.telemetry = CachedTelemetry(telemetry if telemetry is not None else Telemetry())
+    self.telemetry = CachedTelemetry(telemetry if telemetry is not None else NoTelemetry())
     self.lock = threading.Lock()
     self.loaded: Loaded | None = None
     self.job: Job | None = None
@@ -124,6 +125,10 @@ class EngineHost:
     with self.lock:
       return self.loaded.sha256 if self.loaded else None
 
+  @property
+  def backend(self):
+    return self.cache.backend
+
   # -- requests -------------------------------------------------------------
 
   def request(self, req: Request, session: Session) -> dict:
@@ -144,6 +149,13 @@ class EngineHost:
       self._start(Job(req.sha256, load_only=True), req, entry, model_path, spec)
     elif model_path.is_file() and model_path.stat().st_size == req.nbytes:
       self._start(Job(req.sha256, load_only=False), req, entry, model_path, spec)
+    else:
+      with self.lock:
+        if self.job is not None and self.job.sha256 == req.sha256 and self.job.state == 'failed':
+          # Whatever failed has left the disk (an artifact discarded as
+          # invalid, with no model to rebuild from). The client was told about
+          # the failure when it happened; what it needs now is `need_upload`.
+          self.job = None
     return self.status(req.sha256, req.frame_skip)
 
   def _ready(self, loaded: Loaded) -> dict:
@@ -182,7 +194,7 @@ class EngineHost:
     if not d:
       return
     spec = ModelSpec.from_dict({**d, 'frame_skip': frame_skip})
-    log.info("preloading the engine loaded last: %s", entry.plan_path.name)
+    log.info("preloading the engine loaded last: %s", entry.path.name)
     self._start(Job(sha256, load_only=True), Request(sha256, 0, frame_skip),
                 entry, self.cache.model_path(sha256), spec)
 
@@ -199,7 +211,7 @@ class EngineHost:
         if d:
           return ModelSpec.from_dict({**d, 'frame_skip': frame_skip})
       except (OSError, ValueError, KeyError):
-        log.warning("unreadable sidecar for %s", entry.plan_path.name)
+        log.warning("unreadable sidecar for %s", entry.path.name)
     if model_path.is_file():
       try:
         return self._derive_spec(model_path, frame_skip)
@@ -225,26 +237,25 @@ class EngineHost:
       # engines do not fit in 8 GB even for a moment.
       self._unload()
       if not job.load_only:
-        if spec is None:
-          self._progress('parse', 0.0, 'reading model metadata', force=True)
-          spec = self._derive_spec(model_path, req.frame_skip)
-        self._build(model_path, entry.plan_path, {'spec': spec.to_dict()})
-        # Offroad the clock can be behind every plan on disk, so the one just
-        # written has to be protected from the sweep.
-        self.cache.prune(protect=entry.plan_path)
-        self.cache.sweep_temp()
+        spec = self._build_job(req, entry, model_path, spec)
       assert spec is not None
-      try:
-        meta = entry.meta()
-      except (OSError, ValueError):
-        # A sidecar that predates specs, or one that went missing. Rewrite it
-        # rather than fail a build that already ran.
-        meta = {}
-      if 'spec' not in meta:
-        entry.write_meta({**meta, 'spec': spec.to_dict()})
+      self._write_spec(entry, spec)
 
       self._progress('load', 0.0, 'deserializing engine', force=True)
-      engine = self._load_engine(entry.plan_path)
+      try:
+        engine = self._load_engine(entry.path)
+      except ArtifactInvalid as e:
+        # Wrong on disk, not wrong here: a pickle from another tinygrad, a
+        # compiled-model cache another runtime left. Replace it from the ONNX
+        # when there is one, else let the client upload again.
+        log.warning("discarding %s: %s", entry.path.name, e)
+        entry.remove()
+        if job.load_only and not (model_path.is_file() and model_path.stat().st_size == req.nbytes):
+          raise RuntimeError(f"artifact invalid and the model is not on disk: {e}") from e
+        spec = self._build_job(req, entry, model_path, spec)
+        self._write_spec(entry, spec)
+        self._progress('load', 0.0, 'deserializing engine', force=True)
+        engine = self._load_engine(entry.path)
       loaded = self._warm(engine, spec)
       engine = None   # owned by `loaded` from here
       with self.lock:
@@ -252,7 +263,7 @@ class EngineHost:
         job.state, job.detail = 'ready', ''
       self.cache.remember_loaded(req.sha256, req.frame_skip)
       self._progress('load', 1.0, 'ready', force=True)
-      log.info("engine ready: %s", entry.plan_path)
+      log.info("engine ready: %s", entry.path)
     except Exception as e:
       log.exception("engine preparation failed")
       if engine is not None:
@@ -265,21 +276,40 @@ class EngineHost:
       if session is not None:
         session.engine_update()
 
+  def _build_job(self, req: Request, entry: CacheEntry, model_path: Path,
+                 spec: ModelSpec | None) -> ModelSpec:
+    if spec is None:
+      self._progress('parse', 0.0, 'reading model metadata', force=True)
+      spec = self._derive_spec(model_path, req.frame_skip)
+    self._build(model_path, entry.path, {'spec': spec.to_dict()})
+    # Offroad the clock can be behind every plan on disk, so the one just
+    # written has to be protected from the sweep.
+    self.cache.prune(protect=entry.path)
+    self.cache.sweep_temp()
+    return spec
+
+  @staticmethod
+  def _write_spec(entry: CacheEntry, spec: ModelSpec) -> None:
+    try:
+      meta = entry.meta()
+    except (OSError, ValueError):
+      # A sidecar that predates specs, or one that went missing. Rewrite it
+      # rather than fail a build that already ran.
+      meta = {}
+    if 'spec' not in meta:
+      entry.write_meta({**meta, 'spec': spec.to_dict()})
+
   def _warm(self, engine, spec: ModelSpec) -> Loaded:
     from jetlink.queues import PolicyQueues
     queues = PolicyQueues(spec)
     _check_shapes(engine, spec)
-    # one warm run, so the first real frame does not pay for lazy CUDA state
+    # Warm runs on zeros, so the first real frame pays for nothing lazy: CUDA
+    # state and the graph capture for TensorRT, a first replay for the others.
     host_inputs = {n: engine.host_input(n) for n in engine.inputs}
     warped = np.zeros(spec.warped_shape, np.uint8)
     packed = np.zeros(spec.packed_nelem, np.float32)
     queues.step_into(warped, packed, host_inputs)
-    engine.run()
-    if engine.capture_graph():
-      engine.run()   # first replay, so the steady state is never the first
-      log.info("cuda graph captured")
-    else:
-      log.info("cuda graph unavailable, enqueueing per frame")
+    log.info("%s", engine.warm())
     queues.reset()
     return Loaded(spec.sha256, spec, engine, queues, host_inputs)
 
@@ -294,18 +324,16 @@ class EngineHost:
     self.telemetry.close()
     self._unload()
 
-  # Seams the tests replace: everything below touches TensorRT or a real ONNX.
+  # The backend seam: everything below touches a runtime or a real ONNX.
 
-  def _load_engine(self, plan_path: Path):
-    from jetlink.server.engine import TrtEngine
-    return TrtEngine(str(plan_path))
+  def _load_engine(self, artifact: Path):
+    return self.backend.load(artifact)
 
   def _derive_spec(self, model_path: Path, frame_skip: int) -> ModelSpec:
     return spec_from_onnx(str(model_path), frame_skip=frame_skip)
 
-  def _build(self, model_path: Path, plan_path: Path, meta_extra: dict) -> None:
-    build_engine(model_path, plan_path, report=self._progress, meta_extra=meta_extra,
-                 timing_cache=self.cache.timing_cache())
+  def _build(self, model_path: Path, artifact: Path, meta_extra: dict) -> None:
+    self.backend.build(model_path, artifact, report=self._progress, meta_extra=meta_extra)
 
   # -- talking back ---------------------------------------------------------
 
@@ -321,16 +349,19 @@ class EngineHost:
 
 def _check_shapes(engine, spec: ModelSpec) -> None:
   """The engine is what will execute and the spec came from the file, so
-  disagreement means the plan on disk is not this model's."""
-  for name, shape in engine.input_shapes.items():
+  disagreement means the artifact on disk is not this model's."""
+  for name, io in engine.inputs.items():
     want = spec.input_shapes.get(name)
     if want is None:
       raise ValueError(f"engine input {name!r} is not in the model spec")
-    if int(np.prod(shape)) != int(np.prod(want)):
-      raise ValueError(f"input {name}: engine {shape} vs spec {want}")
-  out = next(iter(engine.output_shapes.values()))
+    if int(np.prod(io.shape)) != int(np.prod(want)):
+      raise ValueError(f"input {name}: engine {tuple(io.shape)} vs spec {want}")
+  missing = set(spec.input_shapes) - set(engine.inputs)
+  if missing:
+    raise ValueError(f"engine has no input(s) {sorted(missing)} the model spec declares")
+  out = next(iter(engine.outputs.values())).shape
   if int(np.prod(out)) != spec.output_nelem:
-    raise ValueError(f"output: engine {out} vs spec {spec.output_nelem}")
+    raise ValueError(f"output: engine {tuple(out)} vs spec {spec.output_nelem}")
 
 
 class Session:
@@ -427,18 +458,21 @@ class Session:
     return (self.request.sha256, self.request.frame_skip) if self.request else (None, None)
 
   def on_hello(self, msg: Message) -> None:
-    import tensorrt as trt
-    from jetlink.server.builder import device_tag
-    self._send_json(P.Msg.HELLO_RESP, msg.seq, {
+    info = self.host.backend.describe()
+    resp = {
       'protocol': P.VERSION,
-      'trt_version': trt.__version__,
-      'device': device_tag(),
+      **info,   # backend, runtime_version, device
       'engine_state': self.host.status(*self._wanted())['state'],
       'loaded': self.host.loaded_sha(),
       'frames_served': self.frames,
       'cached_models': self.host.cache.inventory(),
       'telemetry': self.telemetry.read(),
-    })
+    }
+    if info.get('backend') == 'trt':
+      # What the comma logged before there were backends. Kept for one
+      # release, and only where it is true.
+      resp['trt_version'] = info['runtime_version']
+    self._send_json(P.Msg.HELLO_RESP, msg.seq, resp)
 
   def on_engine_req(self, msg: Message) -> None:
     d = json.loads(bytes(msg.payload))

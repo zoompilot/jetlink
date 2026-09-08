@@ -9,3 +9,5 @@ dist/
 
 docs/assets/
 docs/upstreaming-options*.md
+.venv/
+*.pkl

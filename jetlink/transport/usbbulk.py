@@ -85,15 +85,30 @@ class UsbBulkTransport(StreamTransport):
 
   @staticmethod
   def present(vid: int = JETLINK_VID, pid: int = JETLINK_PID) -> bool:
-    """Cheap presence check that does not open the device."""
-    for d in Path('/sys/bus/usb/devices').glob('*'):
-      try:
-        if (int((d / 'idVendor').read_text(), 16) == vid
-            and int((d / 'idProduct').read_text(), 16) == pid):
-          return True
-      except (OSError, ValueError):
-        pass
-    return False
+    """Cheap presence check that does not open the device.
+
+    sysfs on Linux, a handful of small reads. Elsewhere libusb enumerates,
+    which on macOS and Windows needs no driver for a device nobody has
+    claimed; the server polls this every two seconds and that is fine.
+    """
+    sysfs = Path('/sys/bus/usb/devices')
+    if sysfs.is_dir():
+      for d in sysfs.glob('*'):
+        try:
+          if (int((d / 'idVendor').read_text(), 16) == vid
+              and int((d / 'idProduct').read_text(), 16) == pid):
+            return True
+        except (OSError, ValueError):
+          pass
+      return False
+    try:
+      import usb1
+      with usb1.USBContext() as context:
+        return any((d.getVendorID(), d.getProductID()) == (vid, pid)
+                   for d in context.getDeviceIterator(skip_on_error=True))
+    except Exception as e:
+      log.warning("cannot enumerate USB devices: %s", e)
+      return False
 
   def _ms(self, timeout: float | None) -> int:
     return self.timeout_ms if timeout is None else max(1, int(timeout * 1000))

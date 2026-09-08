@@ -5,16 +5,23 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-Jetson inference server entrypoint.
+Inference server entrypoint: a Jetson in the car, or any machine with a GPU.
 
-    # over USB, as it runs in the car (gadget must already be up)
-    python3 -m jetlink.server.main --transport ffs
+    # as the USB host, which is how the Jetson runs in the car
+    python3 -m jetlink.server.main --transport usb
 
     # over ethernet, for development and benchmarking
     python3 -m jetlink.server.main --transport tcp --port 5599
 
+    # on a Mac, tinygrad on Metal; scripts/run-mac.sh wraps this
+    python3 -m jetlink.server.main --backend tinygrad --device METAL --transport tcp
+
     # build an engine ahead of time, no client needed
     python3 -m jetlink.server.main --build /path/to/big_driving_supercombo.onnx
+
+--backend auto picks TensorRT where it imports, then tinygrad, then
+onnxruntime; docs/platforms.md has the measured frame times and start-up
+costs behind that order.
 """
 from __future__ import annotations
 
@@ -24,10 +31,12 @@ import sys
 import time
 from pathlib import Path
 
-from jetlink.server.builder import DEFAULT_CACHE, EngineCache, build_engine
+from jetlink.server import platform
+from jetlink.server.backends import NAMES, available, select
+from jetlink.server.cache import EngineCache
 from jetlink.server.session import EngineHost, Session
 from jetlink.server.sleep import SLEEP_AFTER, Sleeper
-from jetlink.server.telemetry import Telemetry
+from jetlink.server.telemetry import pick_source
 from jetlink.transport.base import LinkError
 
 log = logging.getLogger('jetlink.server')
@@ -44,33 +53,39 @@ def _serve(cache: EngineCache, open_transport, sleeper: Sleeper | None = None) -
   sessions: the comma reconnects at every handover and the engine must not
   reload. With a `sleeper`, a long run of None suspends the box; see sleep.py.
   """
-  host = EngineHost(cache, Telemetry())
+  host = EngineHost(cache, pick_source(cache.backend.name))
   # before accepting anything, so two callers cannot race to start GPU loads
   host.preload()
-  while True:
-    transport = open_transport()
-    if transport is None:
-      if sleeper is not None and sleeper.idle():
-        continue  # just woke up; look for the gadget right away
-      time.sleep(2.0)
-      continue
-    if sleeper is not None:
-      sleeper.touch()
-    session = Session(transport, host)
-    try:
-      session.serve_forever()
-    except LinkError as e:
-      log.info("session ended: %s", e)
-    finally:
-      session.close()
-      if getattr(transport, '_desynced', False):
-        # The client is still mid-message. Let it finish and time out rather
-        # than reopening under it; see StreamTransport.drain.
-        transport.drain(DRAIN_TIMEOUT)
-      transport.close()
+  try:
+    while True:
+      transport = open_transport()
+      if transport is None:
+        if sleeper is not None and sleeper.idle():
+          continue  # just woke up; look for the gadget right away
+        time.sleep(2.0)
+        continue
       if sleeper is not None:
         sleeper.touch()
-      log.info("client disconnected")
+      session = Session(transport, host)
+      try:
+        session.serve_forever()
+      except LinkError as e:
+        log.info("session ended: %s", e)
+      finally:
+        session.close()
+        if getattr(transport, '_desynced', False):
+          # The client is still mid-message. Let it finish and time out rather
+          # than reopening under it; see StreamTransport.drain.
+          transport.drain(DRAIN_TIMEOUT)
+        transport.close()
+        if sleeper is not None:
+          sleeper.touch()
+        log.info("client disconnected")
+  finally:
+    # Ctrl-C or a stop: release the engine on the thread that owns it rather
+    # than leaving it to interpreter teardown, which some runtimes survive
+    # less well than others (backends/tinygrad/owner.py).
+    host.close()
 
 
 def _tcp_opener(args):
@@ -132,7 +147,15 @@ OPENERS = {'tcp': _tcp_opener, 'usb': _usb_opener, 'ffs': _ffs_opener}
 
 
 def main(argv=None) -> int:
-  p = argparse.ArgumentParser(description='jetlink Jetson inference server')
+  p = argparse.ArgumentParser(description='jetlink inference server')
+  p.add_argument('--backend', choices=('auto', *NAMES), default='auto',
+                 help='what runs the model: trt (TensorRT), ort (onnxruntime: CoreML, CUDA or '
+                      'CPU), tinygrad. auto takes the first that comes up, in that order')
+  p.add_argument('--device', default='auto',
+                 help='backend-specific: a CUDA device index for trt; METAL, CUDA, NV, AMD or '
+                      'CPU for tinygrad; coreml, cuda or cpu for ort')
+  p.add_argument('--list-backends', action='store_true',
+                 help='print the backends whose runtime is installed here, and exit')
   p.add_argument('--transport', choices=('tcp', 'usb', 'ffs'), default='tcp',
                  help='usb = this end is the USB host (the usual case for a Jetson); '
                       'ffs = this end is the USB gadget')
@@ -149,7 +172,8 @@ def main(argv=None) -> int:
                  help='suspend the box (deep, USB wakes it) after this long with no '
                       f'gadget; 0 = never. In the car use {SLEEP_AFTER:.0f}. '
                       'Needs /sys/power writable in the container.')
-  p.add_argument('--cache', default=str(DEFAULT_CACHE))
+  p.add_argument('--cache', default=str(platform.default_cache_dir()),
+                 help='engines and uploaded models; JETLINK_CACHE sets the default')
   p.add_argument('--build', metavar='ONNX', help='build an engine and exit')
   p.add_argument('--dump-spec', metavar='ONNX',
                  help='write this model\'s spec as json to stdout and exit')
@@ -162,17 +186,27 @@ def main(argv=None) -> int:
 
   if args.dump_spec:
     import json
+
     from jetlink.spec import spec_from_onnx
     print(json.dumps(spec_from_onnx(args.dump_spec).to_dict()))
     return 0
 
-  cache = EngineCache(Path(args.cache))
+  if args.list_backends:
+    found = available()
+    print('\n'.join(found) if found else 'none: pip install jetlink[trt], jetlink[ort] or jetlink[tinygrad]')
+    return 0
+
+  backend = select(args.backend, args.device)
+  info = backend.describe()
+  log.info("backend %s %s on %s, cache %s", info['backend'], info['runtime_version'],
+           info['device'], args.cache)
+  cache = EngineCache(Path(args.cache), backend)
 
   if args.build:
     from jetlink.spec import sha256_file, spec_from_onnx
     sha, nbytes = sha256_file(args.build)
     entry = cache.entry(sha)
-    log.info("model %s (%d MB) -> %s", sha[:16], nbytes >> 20, entry.plan_path)
+    log.info("model %s (%d MB) -> %s", sha[:16], nbytes >> 20, entry.path)
     if entry.exists:
       log.info("already built: %s", entry.meta())
       return 0
@@ -180,14 +214,14 @@ def main(argv=None) -> int:
     last = [0.0]
 
     def report(stage, frac, msg):
-      if frac - last[0] >= 0.02 or frac >= 1.0:
+      if frac - last[0] >= 0.02 or frac >= 1.0 or frac == 0.0:
         last[0] = frac
         log.info("%-6s %5.1f%%  %s", stage, frac * 100, msg)
 
     # Carry the spec into the sidecar like a served build does, so the first
-    # client to connect loads the plan instead of reparsing the ONNX for it.
-    build_engine(args.build, entry.plan_path, report=report, timing_cache=cache.timing_cache(),
-                 meta_extra={'spec': spec_from_onnx(args.build).to_dict()})
+    # client to connect loads the artifact instead of reparsing the ONNX for it.
+    backend.build(Path(args.build), entry.path, report=report,
+                  meta_extra={'spec': spec_from_onnx(args.build).to_dict()})
     log.info("built: %s", entry.meta())
     return 0
 
@@ -200,10 +234,17 @@ def main(argv=None) -> int:
       # tcp blocks in accept and never sees an absent client; ffs is the
       # Jetson-as-gadget inversion, where the host end is the one that sleeps.
       p.error('--sleep-after only makes sense with --transport usb')
+    if not platform.can_suspend():
+      # macOS and Windows own their own sleep, and a laptop lid is not a USB
+      # edge that wakes anything; the flag is the Jetson's.
+      p.error('--sleep-after needs /sys/power, which this host has not got')
     sleeper = Sleeper(args.sleep_after)
     log.info("will suspend after %.0f s without a gadget", args.sleep_after)
   opener = _usb_opener(args, sleeper) if args.transport == 'usb' else OPENERS[args.transport](args)
-  _serve(cache, opener, sleeper)
+  try:
+    _serve(cache, opener, sleeper)
+  except KeyboardInterrupt:
+    log.info("stopped")
   return 0
 
 

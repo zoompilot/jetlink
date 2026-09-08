@@ -76,6 +76,10 @@ def memcpy_d2h_async(dst: int, src: int, nbytes: int, stream: int) -> None:
   check(_rt.cudaMemcpyAsync(dst, src, nbytes, cudaMemcpyDeviceToHost, stream))
 
 
+def set_device(device: int) -> None:
+  """Which GPU this thread's context is. A laptop has one; a desktop may not."""
+  check(_rt.cudaSetDevice(device))
+
 
 def device_name(device: int = 0) -> tuple[str, int, int]:
   """(name, cc_major, cc_minor) for a CUDA device."""
