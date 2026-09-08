@@ -17,20 +17,21 @@ were taken that day; everything else is an expectation to be replaced by one.
 | Artifact | `.plan` | `.pkl`, the captured JIT with its weights | `.ortcache/`, the patched ONNX and onnxruntime's cache |
 | ONNX surgery | uint8 images to fp16, `org.tinygrad` op stripped | none: tinygrad runs the export as it is | same as TensorRT |
 | Build, big model | 166 s on an Orin Nano | 13 s on an M1 Pro, *measured* | 10 min on an M1 Pro (CoreML), *measured* |
-| Load | 6 to 25 s | 1 s, *measured* | the same 10 min: CoreML compiles per session, see below |
-| Status | validated on the car (Jetson); 11.x untested | parity passed, over budget on an M1 Pro | parity passed on the GPU; the Neural Engine is wrong |
+| Load | 6 to 25 s | 1 s, *measured* | the same 9 min: CoreML compiles per session, in a worker while the server keeps answering |
+| Status | validated on the car (Jetson); 11.x untested | parity passed, over budget on an M1 Pro | parity passed on the GPU, under budget; the Neural Engine is wrong |
 
-`--backend auto` takes TensorRT where it imports, then tinygrad, then
-onnxruntime. Every backend keys its artifacts by its own runtime version and
-device, so a machine with two installed keeps two per model and each sees only
-its own. TensorRT's key is byte for byte what it was before there were
-backends: a Jetson's existing plans load without a rebuild.
+`--backend auto` takes TensorRT where it imports, then CoreML on a Mac, then
+tinygrad, then onnxruntime on whatever it has. Every backend keys its
+artifacts by its own runtime version and device, so a machine with two
+installed keeps two per model and each sees only its own. TensorRT's key is
+byte for byte what it was before there were backends: a Jetson's existing
+plans load without a rebuild.
 
 ## Platform matrix
 
 | | Jetson Orin | Linux, NVIDIA GPU | Windows, NVIDIA GPU | macOS, Apple silicon |
 | --- | --- | --- | --- | --- |
-| Backend | `trt`, unchanged | `trt` from `pip install "jetlink[trt]"`; `tinygrad` or `ort` as fallbacks | `trt`: wheels exist for `win_amd64`, but start in WSL2 | `tinygrad` on METAL; `ort` for CoreML |
+| Backend | `trt`, unchanged | `trt` from `pip install "jetlink[trt]"`; `tinygrad` or `ort` as fallbacks | `trt`: wheels exist for `win_amd64`, but start in WSL2 | `ort` (CoreML on the GPU) by default; `tinygrad` on METAL by name |
 | USB link | libusb host, today | libusb host plus `scripts/99-jetlink-host.rules` | WSL2 with `usbipd-win`; native needs WinUSB, see risks | libusb host, no driver; a USB-A port on a hub and the same A-to-C cable |
 | TCP link | yes | yes | yes | yes |
 | Telemetry | Tegra sysfs | NVML (`pip install "jetlink[nvml]"`) | NVML | none: the sensors need privileges, and the comma is told nothing rather than zeros |
@@ -60,10 +61,10 @@ the Jetson's TensorRT 10.3 path is untouched.
 macOS:
 
 ```bash
-scripts/run-mac.sh --build /path/to/big_driving_supercombo.onnx   # once per model
-scripts/run-mac.sh                                                  # tinygrad on Metal, TCP
+scripts/run-mac.sh --build /path/to/big_driving_supercombo.onnx   # once per model, 9 min for CoreML
+scripts/run-mac.sh                                                  # CoreML through onnxruntime, TCP
 JETLINK_TRANSPORT=usb scripts/run-mac.sh                            # the comma on a USB-A port
-JETLINK_BACKEND=ort scripts/run-mac.sh                              # CoreML, see below
+JETLINK_BACKEND=tinygrad scripts/run-mac.sh                         # tinygrad on Metal, see below
 ```
 
 Any machine, to see what would be chosen:
@@ -82,11 +83,13 @@ every slice and column gated at 0.999.
 
 | | tinygrad METAL | onnxruntime CoreML, GPU | onnxruntime CoreML, ALL (Neural Engine) |
 | --- | ---: | ---: | ---: |
-| frame, server side, mean | 66.3 ms | 38.9 ms | 25.1 ms |
-| round trip over TCP loopback at 20 Hz, mean / p99 / max | 67.9 / 82.2 / 89.9 ms | | |
-| parity, worst slice correlation | 0.999935 (lead_prob) | 0.999998 whole output, 1.00000 per slice | **0.91 to 0.97: wrong** |
-| build | 13 s | 590 s | 668 s |
-| load in a fresh process | 1.1 s | the same 590 s | 1158 s with the cache directory present |
+| frame, server side, mean | 64.6 ms | 41.6 ms (39.9 model, 1.6 queues) | 25.1 ms |
+| round trip over TCP loopback at 20 Hz, mean / p99 / max | 66.2 / 67.6 / 67.9 ms | 43.3 / 44.4 / 44.5 ms | |
+| frames over the 50 ms budget | 390 of 390 | 0 of 390 | |
+| parity, worst slice correlation, through the server | 0.999935 (lead_prob) | 0.999929 (lead_prob) | **0.91 to 0.97: wrong** |
+| build | 13 s | 524 s | 668 s |
+| load in a fresh process | 1.1 s | 527 s in the worker; the server answered 526 pings meanwhile, worst 11 ms | 1158 s with the cache directory present |
+| artifact on disk | 777 MB | 5.5 GB | |
 | peak RSS while building | 0.6 GB | 7.9 GB | 8.0 GB |
 
 What that means:
@@ -96,13 +99,15 @@ What that means:
   is per-kernel launch overhead across 393 launches (`docs/multi-platform-plan.md`),
   which a faster GPU only partly removes. A newer Mac is expected under budget
   and has to be measured, not assumed.
-- **CoreML on the GPU is correct and under budget.** 39 ms a frame, with a
-  p99 of 40 ms. It costs ten minutes of compile every time a process creates
-  the session, and onnxruntime's `ModelCacheDirectory` did not shorten the
-  second session. So it is the faster frame and the slower start: a server
-  that restarts is unusable for ten minutes, while tinygrad's is back in one
-  second. tinygrad is the default and CoreML is `--backend ort` for a server
-  that stays up.
+- **CoreML on the GPU is correct and under budget, and the Mac default.**
+  43 ms round trip with a p99 of 44, no frame over budget in 390. It costs
+  nine minutes of compile every time a process creates the session, and
+  onnxruntime's `ModelCacheDirectory` did not shorten the second session; the
+  compile runs in a worker process while the server keeps answering, so the
+  comma sees a long "loading engine" and the small model drives, the same
+  wait and the same fallback as a Jetson rebuilding a plan. A server that
+  restarts is nine minutes from serving again; `--backend tinygrad` trades
+  that for a one-second start and a 66 ms frame.
 - **CoreML with the Neural Engine is fast and wrong.** With `MLComputeUnits`
   at `ALL` the output correlates at 0.91 to 0.97 with the CPU reference, with
   errors above 100 in places, and CoreML logs "ANE model load has failed for

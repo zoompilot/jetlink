@@ -13,15 +13,17 @@ Inference server entrypoint: a Jetson in the car, or any machine with a GPU.
     # over ethernet, for development and benchmarking
     python3 -m jetlink.server.main --transport tcp --port 5599
 
-    # on a Mac, tinygrad on Metal; scripts/run-mac.sh wraps this
+    # on a Mac: CoreML through onnxruntime by default, tinygrad on Metal by name;
+    # scripts/run-mac.sh wraps this
+    python3 -m jetlink.server.main --transport tcp
     python3 -m jetlink.server.main --backend tinygrad --device METAL --transport tcp
 
     # build an engine ahead of time, no client needed
     python3 -m jetlink.server.main --build /path/to/big_driving_supercombo.onnx
 
---backend auto picks TensorRT where it imports, then tinygrad, then
-onnxruntime; docs/platforms.md has the measured frame times and start-up
-costs behind that order.
+--backend auto picks TensorRT where it imports, CoreML on a Mac, then
+tinygrad, then onnxruntime on whatever it has; docs/platforms.md has the
+measured frame times and start-up costs behind that order.
 """
 from __future__ import annotations
 

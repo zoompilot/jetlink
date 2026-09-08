@@ -663,13 +663,14 @@ the server process.
 
 ### Mac numbers, 2026-09-07, M1 Pro
 
-tinygrad METAL: 66 ms a frame, parity passed on every slice, 13 s build, 1 s
-load. Over the 50 ms budget on that machine; a faster Mac has to be measured.
-onnxruntime CoreML on the GPU (`CPUAndGPU`): 39 ms, parity passed, but ten
-minutes to create the session in every process, and onnxruntime's model cache
-did not shorten it. With the Neural Engine (`ALL`) it is 25 ms and wrong
-(correlation 0.91 to 0.97), so the backend pins the GPU. tinygrad is the
-default on a Mac for the one-second start; `--backend ort` is the opt-in.
+onnxruntime CoreML on the GPU (`CPUAndGPU`): 43 ms round trip, p99 44, no
+frame over budget, parity passed through the server; nine minutes to create
+the session in every process (in the worker, pings answered meanwhile), and
+onnxruntime's model cache did not shorten it; 5.5 GB per artifact. With the
+Neural Engine (`ALL`) it is 25 ms and wrong (correlation 0.91 to 0.97), so
+the backend pins the GPU. This is the Mac default. tinygrad METAL: 66 ms a
+frame, over budget on that machine, parity passed, 13 s build, 1 s load;
+`--backend tinygrad` is the switch.
 
 ## The cable
 

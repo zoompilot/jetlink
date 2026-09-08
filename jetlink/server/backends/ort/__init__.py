@@ -6,14 +6,14 @@ See the LICENSE file in the root directory for more details.
 
 onnxruntime: CoreML on a Mac, CUDA or plain CPU anywhere else.
 
-Measured on an M1 Pro the CoreML provider runs the 766 MB model in 39 ms a
-frame on the GPU, against 65 ms for tinygrad on the same Metal GPU, both
-correct. The price is the session: CoreML compiles the model for ten minutes
-every time a process creates one, and onnxruntime's ModelCacheDirectory did
-not shorten the second session in the measurement (docs/platforms.md has the
-numbers). So this is the faster frame and the slower start, and tinygrad is
-the Mac's default; pick this with --backend ort for the frame time once the
-server is long-lived enough to amortise the start.
+Measured on an M1 Pro the CoreML provider runs the 766 MB model in 40 ms a
+frame on the GPU, 43 ms round trip with nothing over the 50 ms budget,
+against 66 ms for tinygrad on the same Metal GPU, both correct. The price is
+the session: CoreML compiles the model for nine minutes every time a process
+creates one, and onnxruntime's ModelCacheDirectory did not shorten the second
+session in the measurement (docs/platforms.md has the numbers). It is the
+Mac's default because it is the one that makes the budget; --backend tinygrad
+is the switch for a one-second start.
 
 The artifact is a directory holding the patched ONNX and onnxruntime's cache,
 so a load needs nothing else on disk and a future onnxruntime that does reuse

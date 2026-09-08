@@ -12,7 +12,7 @@ natively. Measured on an M1 Pro (docs/multi-platform-plan.md) the 766 MB model
 replays in 65 ms, over the 50 ms frame budget, and the time is per-kernel
 launch overhead rather than arithmetic; a newer Mac or a newer scheduler is
 what moves it. onnxruntime's CoreML provider (backends/ort) is the faster Mac
-path today.
+path today and the default; this is --backend tinygrad.
 """
 from __future__ import annotations
 

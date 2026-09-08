@@ -49,7 +49,7 @@ class TestSelect:
       backends.select('cuda')
 
   def test_nothing_installed_says_what_to_install(self, monkeypatch):
-    monkeypatch.setattr(backends, 'available', lambda: [])
+    monkeypatch.setattr(backends, '_candidates', lambda device: [])
     with pytest.raises(RuntimeError, match=r'jetlink\[trt\]'):
       backends.select('auto')
 
@@ -62,7 +62,7 @@ class TestSelect:
         raise RuntimeError('no CUDA device')
       return FakeBackend(version=name)
 
-    monkeypatch.setattr(backends, 'available', lambda: ['trt', 'tinygrad'])
+    monkeypatch.setattr(backends, '_candidates', lambda device: [('trt', device), ('tinygrad', device)])
     monkeypatch.setattr(backends, '_make', make)
     picked = backends.select('auto', 'METAL')
     assert picked.version == 'tinygrad'
@@ -73,19 +73,33 @@ class TestSelect:
     def make(name, device):
       raise RuntimeError(f'{name} is broken')
 
-    monkeypatch.setattr(backends, 'available', lambda: ['trt', 'ort'])
+    monkeypatch.setattr(backends, '_candidates', lambda device: [('trt', device), ('ort', device)])
     monkeypatch.setattr(backends, '_make', make)
     with pytest.raises(RuntimeError, match='trt is broken') as e:
       backends.select('auto')
     assert 'ort is broken' in str(e.value)
 
   def test_available_lists_installed_runtimes_only(self, monkeypatch):
+    monkeypatch.setattr(backends.sys, 'platform', 'linux')
     monkeypatch.setattr(backends, '_importable', lambda m: m in ('tinygrad',))
     assert backends.available() == ['tinygrad']
     monkeypatch.setattr(backends, '_importable', lambda m: m in ('tensorrt', 'cuda.bindings', 'onnxruntime'))
     assert backends.available() == ['trt', 'ort']
     monkeypatch.setattr(backends, '_importable', lambda m: m in ('onnxruntime', 'tinygrad'))
     assert backends.available() == ['tinygrad', 'ort']
+    monkeypatch.setattr(backends.sys, 'platform', 'darwin')
+    assert backends.available() == ['ort', 'tinygrad']
+
+  def test_a_mac_tries_coreml_by_name_then_tinygrad(self, monkeypatch):
+    """An onnxruntime without the CoreML provider must not serve off the CPU
+    on auto; tinygrad on Metal is the next best, not a 600 ms frame."""
+    monkeypatch.setattr(backends.sys, 'platform', 'darwin')
+    monkeypatch.setattr(backends, '_importable', lambda m: m in ('onnxruntime', 'tinygrad'))
+    assert backends._candidates('auto') == [('ort', 'coreml'), ('tinygrad', 'auto')]
+    assert backends._candidates('METAL') == [('ort', 'METAL'), ('tinygrad', 'METAL')]
+    monkeypatch.setattr(backends.sys, 'platform', 'linux')
+    monkeypatch.setattr(backends, '_importable', lambda m: m in ('tensorrt', 'cuda', 'onnxruntime', 'tinygrad'))
+    assert backends._candidates('auto') == [('trt', 'auto'), ('tinygrad', 'auto'), ('ort', 'auto')]
 
 
 # -- the base helpers ---------------------------------------------------------
