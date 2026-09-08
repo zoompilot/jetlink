@@ -30,7 +30,13 @@ from jetlink import protocol as P
 from jetlink.server.backends.base import ArtifactInvalid
 from jetlink.server.cache import CacheEntry, EngineCache
 from jetlink.server.telemetry import CachedTelemetry, NoTelemetry
-from jetlink.spec import CHUNK, DEFAULT_FRAME_SKIP, ModelSpec, sha256_file, spec_from_onnx
+from jetlink.spec import (
+  CHUNK,
+  DEFAULT_FRAME_SKIP,
+  ModelSpec,
+  sha256_file,
+  spec_from_onnx,
+)
 from jetlink.transport.base import LinkError, LinkTimeout, Message, Transport
 
 log = logging.getLogger('jetlink.server')

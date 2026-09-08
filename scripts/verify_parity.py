@@ -316,7 +316,8 @@ def report_slices(spec: ModelSpec, links, refs) -> dict[str, bool]:
       ok &= not failed
       notes = ([f'{flat} flat'] if flat else []) + ([f'{thin} under {MIN_SAMPLES} samples, not gated'] if thin else [])
       worst = f"worst col {worst_c:8.6f} {worst_k:8}" if worst_k else f"{'no column gated':27}"
-      detail = f"{worst} {f'({', '.join(notes)})' if notes else '':9}"
+      note = '(' + ', '.join(notes) + ')' if notes else ''
+      detail = f"{worst} {note:9}"
       if failed:
         detail += '  cols: ' + ', '.join(failed)
     passed[name] = ok

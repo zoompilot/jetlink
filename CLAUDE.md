@@ -706,7 +706,7 @@ no faster (10.7 vs 10.6 ms). `onnx_patch.layernorm_in_fp32` on the policy's
 41 LayerNormalizations (by dataflow, `vision_nodes`) restores the GPU's
 precision exactly and makes the policy faster; on the trunk's 41 as well it
 costs a unit switch each and the frame went to 70 ms, so only the policy.
-Gate passed, 31.5 ms back to back.
+Gate passed, 31.5 ms back to back in the standalone harness.
 
 Then the cadence: at 20 Hz every CoreML unit pays a cost on the first
 request after an idle gap (a 127 MB sub-model: 3 to 11 ms on the Neural
@@ -718,36 +718,6 @@ split of two sessions pays the idle cost twice (45 ms). So `--device coreml`
 (GPU) is the default and `--device ane` is the opt-in, correct by the gate,
 for a Mac where the idle cost measures differently. Do not blame precision
 first if a new export goes wrong there: bisect.
-
-### onnxruntime is one process
-
-`InferenceSession()` holds the GIL for its whole duration (a 1 ms ticker
-thread ran three times across twenty session creations; a CoreML build logged
-no progress in ten minutes). In-process that freezes the request loop, the
-pings and the accept for as long as CoreML compiles, so the session lives in
-a spawned worker (`backends/ort/worker.py`) with the frame's inputs and
-outputs in shared memory. Keep it that way; do not "simplify" it back into
-the server process.
-
-### The Neural Engine: one broken operator, then a split
-
-Measured 2026-09-08 on the M1 Pro. The whole model on the Neural Engine
-(`MLComputeUnits=ALL`) was 25 ms and wrong, correlation 0.91 to 0.97. Bisected
-with sub-models (`onnx.utils`-style cuts, seconds to compile each) down to one
-node: `Gather(add_53, -1, axis=1)`, the last-token select after the temporal
-transformer, comes back as garbage on the Neural Engine and is exact with the
-index written as 287. `onnx_patch.normalize_gather_indices` rewrites every
-negative constant Gather index; it is value-preserving and the onnxruntime
-backend applies it. With that fixed the Neural Engine is 28 ms and fails the
-parity gate by one column (road_transform std[3] at 0.9988): the policy half
-is no faster there than on the GPU (10.7 vs 10.6 ms) and seven times less
-precise, while the vision trunk is 16.6 ms there against ~28 on the GPU and
-precise. So `onnx_patch.split_vision` cuts the graph by dataflow where the
-image-only trunk meets `features_buffer`, and the onnxruntime backend runs
-two sessions in its worker: trunk with `ALL`, policy with `CPUAndGPU`. Gate
-passed on every slice and column. Bisect the same way if a new export goes
-wrong there: `scratchpad/submodel.py` from the 2026-09-08 session is the tool
-(cut the graph at node indices, feed CPU-probed intermediates, compare).
 
 ### onnxruntime's telemetry aborts the test suite
 

@@ -52,7 +52,12 @@ import tempfile
 import time
 from pathlib import Path
 
-from jetlink.server.backends.base import ArtifactInvalid, ProgressFn, sanitize, write_sidecar
+from jetlink.server.backends.base import (
+  ArtifactInvalid,
+  ProgressFn,
+  sanitize,
+  write_sidecar,
+)
 from jetlink.server.platform import gpu_name
 
 log = logging.getLogger('jetlink.ort')

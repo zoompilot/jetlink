@@ -104,7 +104,7 @@ def main() -> int:
     return replay_capture(engine, Path(args.capture))
   print('engine inputs:')
   for n, b in engine.inputs.items():
-    print(f'  {n:<20} {str(tuple(b.shape)):<24} {b.dtype}')
+    print(f'  {n:<20} {tuple(b.shape)!s:<24} {b.dtype}')
 
   in_dir = Path(args.inputs)
   values = {}
