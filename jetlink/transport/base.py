@@ -206,7 +206,7 @@ class StreamTransport(Transport):
         # No room for a whole packet: every read returns 0 and this loop spins
         # while the peer blocks. read_slack is too small; say so, do not hang.
         raise LinkError(f"no room to read the rest of a {need} byte message "
-                        + f"({self.rx.available} in hand); read_slack too small")
+                         f"({self.rx.available} in hand); read_slack too small")
       remaining = None
       if end is not None:
         remaining = end - time.monotonic()

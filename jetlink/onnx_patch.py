@@ -245,7 +245,7 @@ def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
   casts = _head_casts(g)
   if not casts:
     raise ValueError("could not find the head Cast on the image inputs; "
-                     + "neither a Cast per input nor one after their Concat")
+                      "neither a Cast per input nor one after their Concat")
 
   for cast in casts:
     to = next(onnx.helper.get_attribute_value(a) for a in cast.attribute if a.name == 'to')

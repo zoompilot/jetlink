@@ -36,3 +36,33 @@ include = ["jetlink*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# The fork's rule set (sunnypilot's pyproject.toml), so code moves between the
+# two without reformatting, with two differences the fork does not allow:
+# strings may be implicitly concatenated across lines, and E402 stays on so the
+# `# noqa: E402` under every importorskip in tests/ means something.
+[tool.ruff]
+target-version = "py310"
+line-length = 160
+indent-width = 2
+lint.select = [
+  "E", "F", "W", "PIE", "C4", "ISC", "A", "B",
+  "NPY",
+  "UP",
+  "ASYNC",
+  "B904", "B905",
+  "PLC0207",
+  "TRY203", "TRY400", "TRY401",
+  "RUF006", "RUF008", "RUF009", "RUF061", "RUF064", "RUF100", "RUF102", "RUF103", "RUF104",
+  "PLE", "PLR1704",
+]
+lint.ignore = [
+  "E741",
+  "B027",
+  # An OSError the server expects (EBUSY refusing a suspend, EROFS on
+  # /sys/power) is logged with its errno; a traceback there is noise.
+  "TRY400",
+]
+
+[tool.ruff.format]
+quote-style = "preserve"

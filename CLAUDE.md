@@ -1441,7 +1441,10 @@ before installing anything.
   get the zoompilot one.
 - Comments explain why, not what. The reason a thing is the way it is usually took
   a session to find and will not be rediscovered from the code.
-- `ruff check` before committing. This repo allows implicitly concatenated strings
-  across lines; the fork does not, so code moving between them needs reformatting.
+- `ruff check` before committing; the config is in `pyproject.toml` and is the
+  fork's rule set, with two differences: this repo allows implicitly concatenated
+  strings across lines (the fork does not, so code moving there needs
+  reformatting) and keeps E402 on, so the `# noqa: E402` under an importorskip
+  in `tests/` is load-bearing.
 - Tests must run with no hardware. `tests/fake_trt.py` stubs tensorrt and cuda so
   the protocol and session logic import off a Jetson.

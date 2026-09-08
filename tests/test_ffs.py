@@ -430,7 +430,7 @@ def test_recycle_pool_is_bounded_and_ignores_foreign_buffers():
   t._cv = threading.Condition()
   ours = bytearray(ffs.READ_CHUNK)
   foreign = b'\x00\x00\x00\x00'          # bytes, not a bytearray we allocated
-  for payload, expect_pooled in ((memoryview(ours)[:4], False), (memoryview(foreign), False)):
+  for payload in (memoryview(ours)[:4], memoryview(foreign)):
     t._chunks.append((payload, time.monotonic(), 0.0, 0.0))
     t._queued += payload.nbytes
     t._read_into(memoryview(bytearray(4)), 0)

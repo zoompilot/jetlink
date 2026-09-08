@@ -118,7 +118,7 @@ class PolicyQueues:
 
     offset = 0
     self._packed_layout = []
-    for size, shape in zip(spec.packed_sizes, spec.packed_shapes.values()):
+    for size, shape in zip(spec.packed_sizes, spec.packed_shapes.values(), strict=True):
       self._packed_layout.append((offset, offset + size, shape))
       offset += size
 

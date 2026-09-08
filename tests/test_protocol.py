@@ -175,13 +175,13 @@ def test_closed_peer_raises_link_error():
 
 
 def _spec(**kw) -> ModelSpec:
-  base = dict(
-    sha256='a' * 64, nbytes=765953504, frame_skip=4,
-    input_shapes={'img': (1, 12, 128, 256), 'big_img': (1, 12, 128, 256),
-                  'desire_pulse': (1, 33, 8), 'traffic_convention': (1, 2),
-                  'action_t': (1, 2), 'features_buffer': (1, 32, 32, 512)},
-    output_shapes={'outputs': (1, 18452)},
-    output_slices={'hidden_state': slice(2066, 18450)}, checkpoint=None)
+  base = {
+    'sha256': 'a' * 64, 'nbytes': 765953504, 'frame_skip': 4,
+    'input_shapes': {'img': (1, 12, 128, 256), 'big_img': (1, 12, 128, 256),
+                     'desire_pulse': (1, 33, 8), 'traffic_convention': (1, 2),
+                     'action_t': (1, 2), 'features_buffer': (1, 32, 32, 512)},
+    'output_shapes': {'outputs': (1, 18452)},
+    'output_slices': {'hidden_state': slice(2066, 18450)}, 'checkpoint': None}
   base.update(kw)
   return ModelSpec(**base)
 

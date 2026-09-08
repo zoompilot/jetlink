@@ -49,7 +49,7 @@ class _Owner:
       fn, args, kwargs, box = self._q.get()
       try:
         box.set_result(fn(*args, **kwargs))
-      except BaseException as e:  # noqa: BLE001 - delivered to the caller, whatever it is
+      except BaseException as e:
         box.set_exception(e)
 
 

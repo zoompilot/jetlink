@@ -350,7 +350,7 @@ def compare(args) -> int:
   # Per frame: a stale queue or a dropped reset shows on the frame it happens to.
   # Slices too small to correlate on one frame are gated pooled, below.
   frame_fail: dict[str, float] = {}
-  for i, (link, ref) in enumerate(zip(links, refs)):
+  for i, (link, ref) in enumerate(zip(links, refs, strict=True)):
     print(f"\nframe {i}: corr {_corr(link, ref):.6f}  max abs {np.abs(link - ref).max():.4f}")
     for name, sl in sorted(spec.output_slices.items()):
       a, b = link[sl], ref[sl]

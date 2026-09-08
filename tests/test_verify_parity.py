@@ -98,7 +98,7 @@ def test_why_pooling_the_per_frame_column_would_have_failed():
   refs = reference_frames()
   links = fp16_noisy(refs)
   per_frame = []
-  for link, ref in zip(links, refs):
+  for link, ref in zip(links, refs, strict=True):
     ca, cb = vp.columns('plan', link[PLAN]), vp.columns('plan', ref[PLAN])
     per_frame.append(vp._corr(ca['mu[7]'], cb['mu[7]']))
   assert min(per_frame) < vp.MIN_CORR
@@ -109,7 +109,7 @@ def test_why_pooling_the_per_frame_column_would_have_failed():
 def test_three_logits_are_not_correlated_per_frame():
   refs = reference_frames()
   links = fp16_noisy(refs)
-  per_frame = [vp._corr(link[LEAD_PROB], ref[LEAD_PROB]) for link, ref in zip(links, refs)]
+  per_frame = [vp._corr(link[LEAD_PROB], ref[LEAD_PROB]) for link, ref in zip(links, refs, strict=True)]
   assert min(per_frame) < 1.0
   assert LEAD_PROB.stop - LEAD_PROB.start < vp.MIN_SAMPLES
   passed, _ = gate(links, refs)
