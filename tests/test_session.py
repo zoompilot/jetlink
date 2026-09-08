@@ -403,6 +403,45 @@ class TestPreload:
     assert other['state'] != 'ready' or started, "served a spec the client did not ask for"
 
 
+class TestRequestWithAPartialModel:
+  """While the server has no engine the comma asks again every few seconds, and
+  an upload cut short (a jetlinkd to modeld handover, a dropped link) leaves
+  its first chunks in models/. Every one of those requests found the file,
+  parsed it, and logged a traceback for the upload it then asked for anyway."""
+
+  def _host(self, tmp_path, spec, nbytes_on_disk, with_entry=False):
+    host = EngineHost(EngineCache(tmp_path, FakeBackend(spec)))
+    host.cache.model_path(spec.sha256).write_bytes(b'x' * nbytes_on_disk)
+    if with_entry:
+      # An artifact whose sidecar predates specs: the one case that needs the ONNX
+      entry = host.cache.entry(spec.sha256)
+      entry.path.write_bytes(b'plan')
+      entry.write_meta({'trt_version': 'x'})
+    return host
+
+  @pytest.mark.parametrize('with_entry', [False, True])
+  def test_a_partial_upload_is_not_parsed(self, tmp_path, caplog, with_entry):
+    spec = make_spec()
+    host = self._host(tmp_path, spec, spec.nbytes // 2, with_entry)
+    parsed, started = [], []
+    host._derive_spec = lambda *a: parsed.append(a)
+    host._start = lambda *a: started.append(a)
+    resp = host.request(Request(spec.sha256, spec.nbytes, spec.frame_skip), None)
+    assert resp['state'] == 'need_upload'
+    assert f'have {spec.nbytes // 2}' in resp['detail']
+    assert parsed == [] and started == []
+    assert 'could not derive' not in caplog.text
+
+  def test_a_whole_upload_is_parsed_and_built(self, tmp_path):
+    spec = make_spec()
+    host = self._host(tmp_path, spec, spec.nbytes)
+    host._derive_spec = lambda *a: spec
+    started = []
+    host._start = lambda job, req, entry, mp, sp: started.append((job.load_only, sp))
+    host.request(Request(spec.sha256, spec.nbytes, spec.frame_skip), None)
+    assert started == [(False, spec)]
+
+
 def test_slow_reply_send_is_logged_even_when_inference_is_fast(tmp_path, monkeypatch, caplog):
   from types import SimpleNamespace
 

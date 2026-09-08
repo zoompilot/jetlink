@@ -150,10 +150,10 @@ class EngineHost:
         return self._status(req.sha256, req.frame_skip)
     entry = self.cache.entry(req.sha256)
     model_path = self.cache.model_path(req.sha256)
-    spec = self._spec_on_disk(entry, model_path, req.frame_skip)
+    spec = self._spec_on_disk(entry, model_path, req)
     if entry.exists and spec is not None:
       self._start(Job(req.sha256, load_only=True), req, entry, model_path, spec)
-    elif model_path.is_file() and model_path.stat().st_size == req.nbytes:
+    elif _model_complete(model_path, req.nbytes):
       self._start(Job(req.sha256, load_only=False), req, entry, model_path, spec)
     else:
       with self.lock:
@@ -204,23 +204,28 @@ class EngineHost:
     self._start(Job(sha256, load_only=True), Request(sha256, 0, frame_skip),
                 entry, self.cache.model_path(sha256), spec)
 
-  def _spec_on_disk(self, entry: CacheEntry, model_path: Path, frame_skip: int) -> ModelSpec | None:
+  def _spec_on_disk(self, entry: CacheEntry, model_path: Path, req: Request) -> ModelSpec | None:
     """The spec for a cached plan, from its sidecar or failing that the ONNX.
 
     A plan whose sidecar predates specs still loads if the model file is there
     to derive one from; otherwise the client uploads and the existing plan is
     reused, not rebuilt.
+
+    Only a whole model file is parsed. One shorter than the size the client
+    declared is an upload still arriving or cut short, and the comma asks again
+    every few seconds while it has no engine: parsing it fails every time and
+    logs a traceback for what `need_upload` already says.
     """
     if entry.exists:
       try:
         d = entry.meta().get('spec')
         if d:
-          return ModelSpec.from_dict({**d, 'frame_skip': frame_skip})
+          return ModelSpec.from_dict({**d, 'frame_skip': req.frame_skip})
       except (OSError, ValueError, KeyError):
         log.warning("unreadable sidecar for %s", entry.path.name)
-    if model_path.is_file():
+    if _model_complete(model_path, req.nbytes):
       try:
-        return self._derive_spec(model_path, frame_skip)
+        return self._derive_spec(model_path, req.frame_skip)
       except Exception:
         log.exception("could not derive a spec from %s", model_path.name)
     return None
@@ -354,6 +359,12 @@ class EngineHost:
     session = self.session
     if session is not None:
       session.progress(stage, frac, msg)
+
+
+def _model_complete(model_path: Path, nbytes: int) -> bool:
+  """Uploads land in place chunk by chunk, so the model file is only the model
+  once it is the size the client declared."""
+  return model_path.is_file() and model_path.stat().st_size == nbytes
 
 
 def _check_shapes(engine, spec: ModelSpec) -> None:
