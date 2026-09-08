@@ -11,8 +11,8 @@ same Jetlink client with each backend.
 
 ## Before you start
 
-You need Git, Python 3.10 or later, internet access, and several GB of free disk
-space. Mac CoreML testing used a 16 GB M1 Pro and about 5.5 GB per cached model.
+You need Git, internet access, and several GB of free disk space. Native installs
+also need Python 3.10 or later; the Docker image includes Python. Mac CoreML testing used a 16 GB M1 Pro and about 5.5 GB per cached model.
 Open Terminal on Mac or Linux, or an Ubuntu terminal inside WSL2 on Windows.
 
 Download the project first:
@@ -83,6 +83,9 @@ faster back-to-back results. See [measurements](#mac-measured).
 
 ## Linux (NVIDIA GPU)
 
+Choose [Docker](#docker-cuda-laptops-and-desktops) to install the server and its
+dependencies in a container, or use the native Python steps below.
+
 You need a working NVIDIA driver compatible with the installed CUDA/TensorRT
 runtime. On Ubuntu or Debian, install the Python environment and USB library:
 
@@ -119,7 +122,8 @@ run `source .venv/bin/activate` from the project folder before using `jetlink-se
 
 ## Windows (NVIDIA GPU)
 
-Use **Ubuntu in WSL2** for this experimental path. Set up WSL2 and NVIDIA GPU
+For a container setup, follow [Docker setup](#docker-cuda-laptops-and-desktops)
+below. For a native Python install, use **Ubuntu in WSL2** for this experimental path. Set up WSL2 and NVIDIA GPU
 access first, then run the checkout and [Linux setup](#linux-nvidia-gpu) commands
 inside the Ubuntu terminal. Start with TCP and run the benchmark in a second
 Ubuntu terminal using `--host 127.0.0.1`.
@@ -128,6 +132,125 @@ Windows USB is not a validated quick-start path. WSL2 needs `usbipd-win` to atta
 the comma's USB device to Ubuntu. Native Windows needs WinUSB driver binding;
 there is no automatic driver setup in this project. See [platform limitations](#risks-and-decisions)
 before attempting USB integration.
+
+## Docker (CUDA laptops and desktops)
+
+Use this image on an **x86-64 laptop or desktop with an NVIDIA GPU**, running
+Linux or Windows with WSL2. This setup is experimental and has not yet been
+validated on a CUDA laptop. Keep the laptop plugged in, awake, and well cooled.
+
+The image includes Python, CUDA 12.9, TensorRT, USB support, and NVIDIA telemetry.
+You still need a compatible NVIDIA driver on the host. The existing
+`docker/build.sh` and `docker/run.sh` are for Jetson; use the commands below for
+laptops.
+
+### 1. Enable GPU access in Docker
+
+**Linux:** install [Docker Engine](https://docs.docker.com/engine/install/) and
+follow [NVIDIA's Container Toolkit installation guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+After installing the toolkit, configure Docker:
+
+```bash
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+**Windows:** install Docker Desktop, enable its **WSL 2 backend** and Ubuntu
+integration, and use an up-to-date NVIDIA Windows driver. Follow
+[Docker's GPU setup guide](https://docs.docker.com/desktop/features/gpu/).
+Run the remaining commands in your **Ubuntu WSL terminal**.
+
+The examples assume `docker` works without `sudo`. On Linux, add `sudo` before
+Docker commands if your installation requires it.
+
+Check that Docker can see your GPU:
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.9.1-runtime-ubuntu24.04 nvidia-smi
+```
+
+You should see your NVIDIA GPU listed. Resolve any driver or GPU-access error
+before building Jetlink.
+
+### 2. Build and start Jetlink
+
+From the `jetlink` checkout created in [Before you start](#before-you-start), at
+the revision paired with your client:
+
+```bash
+docker build -f docker/Dockerfile.cuda -t jetlink:cuda .
+docker volume create jetlink-cache
+docker run --rm -it --gpus all --name jetlink-cuda \
+  -p 127.0.0.1:5599:5599 \
+  -v jetlink-cache:/var/cache/jetlink \
+  jetlink:cuda
+```
+
+The first build downloads several GB. The server then listens for a TCP client
+on port **5599**. The `jetlink-cache` volume keeps uploaded models and engines
+when the container stops. Model preparation starts when a client requests it.
+
+This command allows connections from the laptop itself. To connect from another
+computer over wired Ethernet, replace `127.0.0.1` in the port mapping with the
+laptop's wired-network IP address and allow TCP 5599 through its firewall. Use a
+trusted network because Jetlink does not authenticate TCP clients.
+
+### 3. Run a model test
+
+For a test without installing Python on the laptop, put a compatible large-model
+ONNX file in a folder named `models` inside the checkout. In a second terminal,
+run the following from the same checkout, replacing `big_model.onnx` with the
+filename:
+
+```bash
+docker run --rm -it --network container:jetlink-cuda \
+  --mount "type=bind,source=$(pwd)/models,target=/models,readonly" \
+  --entrypoint python jetlink:cuda \
+  scripts/bench_link.py --host 127.0.0.1 --onnx /models/big_model.onnx --rate 20
+```
+
+The benchmark shares the server container's network, uploads the model, waits
+for its engine build, and reports latency. The target is **50 ms per frame at
+20 Hz**. Laptop performance and first-build time depend on the GPU and model;
+Jetson timings do not predict laptop results.
+
+Press **Ctrl-C** in the server terminal to stop it. Run the same server command
+to restart with the cached models. For logs from another terminal, use
+`docker logs -f jetlink-cuda`.
+
+### USB on native Linux
+
+After the TCP test, stop that server and start USB mode:
+
+```bash
+docker run --rm -it --gpus all --name jetlink-cuda \
+  --device-cgroup-rule 'c 189:* rmw' \
+  --mount type=bind,source=/dev/bus/usb,target=/dev/bus/usb \
+  -v jetlink-cache:/var/cache/jetlink \
+  jetlink:cuda --transport usb
+```
+
+This gives the container access to USB devices, including after a reconnect.
+Connect the laptop's USB-A port to the comma's USB-C port and follow
+[Connect the comma](tester-setup.md#connect-the-comma). A waiting-for-gadget
+message is normal until the comma connects.
+
+These USB commands are for Docker Engine on native Linux. Windows Docker Desktop
+USB forwarding requires additional setup and is not covered by this guide; use
+TCP for the Windows container path. Laptop sleep interrupts the connection, and
+Jetson's suspend/wake service does not apply here.
+
+### Docker troubleshooting
+
+| Problem | What to check |
+| --- | --- |
+| Cannot connect to Docker daemon | Start Docker Engine or Docker Desktop |
+| GPU not found or `could not select device driver` | Complete the GPU access setup above and rerun the `nvidia-smi` check |
+| CUDA driver or runtime compatibility error | Update the host NVIDIA driver to one compatible with the image's CUDA runtime |
+| Out of GPU memory | Close other GPU-heavy apps and try a smaller model; Docker does not add GPU memory |
+| Benchmark cannot find the model | Check the local `models` folder and filename; `/models` is its path inside the container |
+| Container name already in use | Stop the existing server with `docker stop jetlink-cuda` before starting another |
+| USB device unavailable | Use native Linux, check the USB mount, and follow the comma setup steps |
 
 ## CPU only
 

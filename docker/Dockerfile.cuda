@@ -1,0 +1,24 @@
+# CUDA laptop/desktop server. The Jetson image is docker/Dockerfile.
+FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    JETLINK_CACHE=/var/cache/jetlink \
+    PATH=/opt/venv/bin:$PATH
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3-venv ca-certificates libusb-1.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /opt/venv
+
+WORKDIR /opt/jetlink
+COPY pyproject.toml README.md LICENSE ./
+COPY jetlink ./jetlink
+COPY scripts ./scripts
+RUN python -m pip install --no-cache-dir ".[trt,usb,nvml]"
+
+EXPOSE 5599
+ENTRYPOINT ["jetlink-server", "--backend", "trt"]
+CMD ["--transport", "tcp"]

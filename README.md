@@ -35,6 +35,8 @@ The setup follows three steps:
    A green icon means it is ready. The [comma setup steps](docs/tester-setup.md#connect-the-comma)
    explain the branch, model selector, and status icons.
 
+For NVIDIA laptops and desktops, [Docker setup](docs/platforms.md#docker-cuda-laptops-and-desktops)
+includes the server dependencies and works with Linux or Windows/WSL2.
 You can also [test a model without a comma](docs/platforms.md#test-without-a-comma).
 
 ## Features
