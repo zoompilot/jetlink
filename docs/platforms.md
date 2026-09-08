@@ -1,14 +1,200 @@
-# Serving from something other than a Jetson
+# Set up Jetlink on your platform
 
-The server runs wherever one of its backends does: TensorRT on an NVIDIA GPU,
-tinygrad on Apple silicon (or any GPU tinygrad drives), onnxruntime as a
-fallback and for CoreML. The comma side does not change; it talks to the
-server over USB or TCP and learns what it is talking to from the hello.
+Choose the computer that will run the model. For the tested Jetson setup, use
+[the Jetson guide](tester-setup.md). These desktop paths are for experiments and
+bench testing: Mac has measured results below; Linux NVIDIA and Windows have not
+yet been tested on hardware.
 
-Written 2026-09-07 against the measurements below. Numbers marked *measured*
-were taken that day; everything else is an expectation to be replaced by one.
+A **backend** is the software that runs the model: TensorRT for NVIDIA, CoreML
+through onnxruntime for Mac, or tinygrad as an alternative. The comma uses the
+same Jetlink client with each backend.
 
-## Backends
+## Before you start
+
+You need Git, Python 3.10 or later, internet access, and several GB of free disk
+space. Mac CoreML testing used a 16 GB M1 Pro and about 5.5 GB per cached model.
+Open Terminal on Mac or Linux, or an Ubuntu terminal inside WSL2 on Windows.
+
+Download the project first:
+
+```bash
+git clone https://github.com/zoompilot/jetlink.git
+cd jetlink
+```
+
+If connecting to a comma, check out the Jetlink revision pinned by your compatible
+fork before installing dependencies:
+
+```bash
+git checkout <pinned-jetlink-revision>
+```
+
+Replace the placeholder with the commit linked by `jetlink_repo` in your fork's
+GitHub file list at the installed build's commit. Use the same revision for a
+separate benchmark client. See [paired releases](releasing.md#compatibility).
+
+## Mac (Apple silicon)
+
+Install Python 3.10+ and Git first. For USB, you also need the native `libusb`
+library; if you use Homebrew, run `brew install libusb`.
+
+From the `jetlink` folder, start the server:
+
+```bash
+scripts/run-mac.sh
+```
+
+The script creates a Python environment and installs dependencies on its first
+run. It then serves over TCP with CoreML on the GPU by default. Keep it running
+and use [Test without a comma](#test-without-a-comma) in a second terminal.
+
+For a comma USB connection, stop the TCP server with **Ctrl-C**, then run:
+
+```bash
+JETLINK_TRANSPORT=usb scripts/run-mac.sh
+```
+
+Use a USB-A port on a hub or dock and an A-to-C data cable to the comma. Follow
+[Connect the comma](tester-setup.md#connect-the-comma). A waiting-for-gadget message
+is normal until the comma connects.
+
+CoreML took **about 9 minutes to prepare or load a model for each new session**
+on the tested Mac, including after restarting the server. Keep the server running
+to avoid repeating that wait. The script uses `caffeinate` to prevent idle system
+sleep while on AC power; keep the Mac powered and its lid open.
+
+Optional commands, run one at a time:
+
+```bash
+# Prepare a model file, then exit. CoreML still needs a long load when serving.
+scripts/run-mac.sh --build /path/to/big_driving_supercombo.onnx
+
+# Include the Neural Engine. Benchmark at 20 Hz before using this option.
+scripts/run-mac.sh --device ane
+
+# Use tinygrad on Metal instead of CoreML.
+JETLINK_BACKEND=tinygrad scripts/run-mac.sh
+```
+
+Replace model paths with a compatible large driving-model ONNX file. On M1 Pro,
+CoreML GPU averaged 43 ms per round trip; tinygrad averaged 66 ms, above the
+50 ms frame budget. Neural Engine testing missed some deadlines at 20 Hz despite
+faster back-to-back results. See [measurements](#mac-measured).
+
+## Linux (NVIDIA GPU)
+
+You need a working NVIDIA driver compatible with the installed CUDA/TensorRT
+runtime. On Ubuntu or Debian, install the Python environment and USB library:
+
+```bash
+sudo apt update
+sudo apt install -y python3-venv libusb-1.0-0
+```
+
+From the `jetlink` folder:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -e ".[trt,usb,nvml]"
+jetlink-server --list-backends
+jetlink-server --backend trt --transport tcp
+```
+
+The server should report its backend and listen on port 5599. Keep it running
+for [a bench test](#test-without-a-comma). TensorRT is installed from PyPI; this
+PC setup has not yet been run on hardware.
+
+For USB, stop the TCP server with **Ctrl-C**, install the device permission rule,
+then unplug and reconnect the comma:
+
+```bash
+sudo install -m 644 scripts/99-jetlink-host.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+jetlink-server --backend trt --transport usb
+```
+
+Follow [Connect the comma](tester-setup.md#connect-the-comma). In a new terminal,
+run `source .venv/bin/activate` from the project folder before using `jetlink-server`.
+
+## Windows (NVIDIA GPU)
+
+Use **Ubuntu in WSL2** for this experimental path. Set up WSL2 and NVIDIA GPU
+access first, then run the checkout and [Linux setup](#linux-nvidia-gpu) commands
+inside the Ubuntu terminal. Start with TCP and run the benchmark in a second
+Ubuntu terminal using `--host 127.0.0.1`.
+
+Windows USB is not a validated quick-start path. WSL2 needs `usbipd-win` to attach
+the comma's USB device to Ubuntu. Native Windows needs WinUSB driver binding;
+there is no automatic driver setup in this project. See [platform limitations](#risks-and-decisions)
+before attempting USB integration.
+
+## CPU only
+
+Use this path to test the protocol and model loading without a supported GPU.
+It does not establish that the computer can keep up with driving.
+
+From the project folder on Mac, Linux, or Windows WSL2:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -e ".[ort]"
+jetlink-server --backend ort --device cpu --transport tcp
+```
+
+## Test without a comma
+
+You need a compatible large driving-model ONNX file, supplied separately. The
+comma integration normally downloads the selected model for you; this standalone
+benchmark needs a local file. Replace `/path/to/big_model.onnx` below with its path.
+
+Keep your platform's TCP server running. On a Jetson, start it with
+`sudo docker/run.sh --transport tcp` instead of USB. In a second terminal on the
+same computer, or another computer with a checkout of the same Jetlink revision:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -e . onnx
+python3 scripts/bench_link.py --host 127.0.0.1 --onnx /path/to/big_model.onnx --rate 20
+```
+
+Use `127.0.0.1` when client and server run on the same computer. For separate
+computers, replace it with the server's wired-network IP address. TCP uses port
+**5599** and has no client authentication: use a trusted network. Wi-Fi missed
+the frame budget in testing.
+
+The benchmark uploads the model if needed, waits for preparation, and reports
+round-trip latency and frames over **50 ms**, the budget at 20 frames per second.
+A passing short test does not establish sustained in-car performance.
+
+## Cache and troubleshooting
+
+Desktop caches use `JETLINK_CACHE` if set, otherwise `~/.cache/jetlink`. Each
+backend keeps artifacts for its runtime version and device. The Jetson container
+uses `/mnt/data/jetlink`.
+
+| Problem | Check |
+| --- | --- |
+| `python3` or `git` not found | Install Python 3.10+ or Git and reopen the terminal |
+| `jetlink-server` not found | Activate `.venv` from the project folder |
+| Backend missing | Run `jetlink-server --list-backends`; check that platform's dependencies and GPU driver |
+| USB library error | Install native libusb as well as the Python `usb` extra |
+| USB permission error on Linux | Install the udev rule above, then reconnect the device |
+| TCP connection refused | Check the server is running with `--transport tcp`, the address, and firewall access to port 5599 |
+| Mac appears stuck loading | Allow about 9 minutes for CoreML; check server output for errors |
+| Link drops when laptop sleeps | Keep it awake, powered, and open |
+
+Stop a foreground server with **Ctrl-C**. For comma alerts and reporting a problem,
+see [troubleshooting](tester-setup.md#troubleshooting).
+
+## Backend reference
+
+The details below preserve the runtime comparison and measurements recorded on
+September 7, 2026. Expectations are not hardware validation.
+
+### Runtime comparison
 
 | | `trt` | `tinygrad` | `ort` |
 | --- | --- | --- | --- |
@@ -27,7 +213,7 @@ installed keeps two per model and each sees only its own. TensorRT's key is
 byte for byte what it was before there were backends: a Jetson's existing
 plans load without a rebuild.
 
-## Platform matrix
+### Platform matrix
 
 | | Jetson Orin | Linux, NVIDIA GPU | Windows, NVIDIA GPU | macOS, Apple silicon |
 | --- | --- | --- | --- | --- |
@@ -38,41 +224,6 @@ plans load without a rebuild.
 | Sleep, poweroff | yes | `--sleep-after` works where `/sys/power` does; nothing wakes a laptop on a USB edge | no | no; `scripts/run-mac.sh` holds `caffeinate` |
 | Install | Docker image, unchanged | `pip install -e ".[trt,usb,nvml]"` | pip inside WSL2 | `scripts/run-mac.sh`, which makes the venv |
 | Status | validated on the car | expected to work; not yet run | untested | measured below |
-
-## Running it
-
-Linux with an NVIDIA GPU:
-
-```bash
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[trt,usb,nvml]"
-sudo install -m 644 scripts/99-jetlink-host.rules /etc/udev/rules.d/ && sudo udevadm control --reload
-jetlink-server --transport tcp            # bench from another machine
-jetlink-server --transport usb            # the comma on a USB port
-```
-
-The cache goes to `JETLINK_CACHE`, else `~/.cache/jetlink`. `pip` brings
-TensorRT 11.x, which removed weakly typed networks and the FP16 builder flag:
-the build asks for a strongly typed network there and precision follows the
-ONNX, which is fp16 end to end, so the engine is the same and only the calls
-differ (`backends/trt/build.py`). That path has not been run on hardware yet;
-the Jetson's TensorRT 10.3 path is untouched.
-
-macOS:
-
-```bash
-scripts/run-mac.sh --build /path/to/big_driving_supercombo.onnx   # once per model, 9 min for CoreML
-scripts/run-mac.sh                                                  # CoreML on the GPU, TCP
-JETLINK_TRANSPORT=usb scripts/run-mac.sh                            # the comma on a USB-A port
-scripts/run-mac.sh --device ane                                     # the Neural Engine too, see below
-JETLINK_BACKEND=tinygrad scripts/run-mac.sh                         # tinygrad on Metal, see below
-```
-
-Any machine, to see what would be chosen:
-
-```bash
-jetlink-server --list-backends
-```
 
 ## Mac, measured
 

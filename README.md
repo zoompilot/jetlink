@@ -1,163 +1,76 @@
-# jetlink
+# Jetlink
 
-Run openpilot's large driving models on an NVIDIA Jetson over USB.
+Run openpilot's large driving models on a separate computer connected to your
+comma. Jetson is the tested in-car setup; Mac, Linux, and Windows options are
+available for experiments and bench testing.
 
-The comma handles cameras, image warping, model parsing, and vehicle control.
-The Jetson runs inference with TensorRT FP16 and returns model outputs at 20 Hz.
-It has no CAN access.
+The comma still handles the cameras and vehicle control. Jetlink sends prepared
+camera images to the other computer, which runs the model and sends predictions
+back 20 times per second. The other computer has no CAN access.
 
-```text
-comma                              Jetson
-cameras → image warp ─── USB ────→ history buffers → TensorRT
-controls ← model parser ←──────── model outputs
-```
+**Experimental:** you need an openpilot build with Jetlink integration to use it
+with your comma. Installing this repository alone does not add model selection
+or switching. See [validation status](docs/release-readiness.md).
+
+## Start here
+
+| Your computer | Setup guide | What to expect |
+| --- | --- | --- |
+| NVIDIA Jetson Orin Nano Super, 8 GB | [Jetson and comma setup](docs/tester-setup.md) | Tested on the car; first setup needs a terminal on the Jetson |
+| Mac with Apple silicon | [Mac setup](docs/platforms.md#mac-apple-silicon) | Bench-tested on M1 Pro; CoreML takes about 9 minutes to load a model each session |
+| Linux PC with an NVIDIA GPU | [Linux setup](docs/platforms.md#linux-nvidia-gpu) | Implemented, not yet tested on hardware |
+| Windows PC with an NVIDIA GPU | [Windows setup](docs/platforms.md#windows-nvidia-gpu) | Experimental through WSL2; start with a TCP bench test |
+| Other computer / CPU only | [CPU setup](docs/platforms.md#cpu-only) | For functional testing; no real-time performance claim |
+
+For a car setup, you also need a comma 3X or comma 4 with a compatible build,
+a USB 3 **A-to-C data cable**, and separate power for both devices. Connect the
+computer's **USB-A port to the comma's USB-C port**. On a Mac, use a USB-A hub
+or dock. On the Jetson devkit, use USB-A, not its USB-C port.
+
+The setup follows three steps:
+
+1. Install and start the server using your platform guide above.
+2. On a compatible zoompilot build, enable **Settings > Models > Accelerator Link**.
+3. Connect the cable and wait for model preparation to finish while parked.
+   A green icon means it is ready. The [comma setup steps](docs/tester-setup.md#connect-the-comma)
+   explain the branch, model selector, and status icons.
+
+You can also [test a model without a comma](docs/platforms.md#test-without-a-comma).
 
 ## Features
 
-- Direct USB 3 transport; wired Ethernet for bench use or an alternate connection.
-- On-device engine builds with progress reporting and a persistent model cache.
-- GPU temperature, power, utilization, and inference timing telemetry.
-- Automatic reconnect, with the loaded engine retained between sessions.
-- Optional suspend while idle and USB wake, preserving the loaded engine.
+- Direct USB 3 connection, or wired Ethernet for bench testing and alternate setups.
+- Model downloads and preparation from the comma UI with a compatible integration.
+- Engine builds with progress reporting and a persistent model cache.
+- GPU temperature, power, utilization, and inference timing where the host supports them.
+- Automatic reconnect that keeps the loaded engine between connections.
+- Optional Jetson idle suspend and USB wake that preserve the loaded engine.
+- TensorRT on NVIDIA GPUs, CoreML or tinygrad on Apple silicon, and onnxruntime fallback.
 
-With a compatible openpilot integration, model selection and preparation happen
-in the UI. The local small model runs while the Jetson starts. Switching to the
-large model waits until controls are disengaged. A link failure returns to the
-small model and retries the connection; failure while engaged triggers a soft
-disable.
+With the compatible integration, the local small model runs while the server
+starts. The large model takes over only when controls are disengaged. If the link
+fails, the comma falls back to the small model and retries. A failure while
+engaged triggers a soft disable; follow the comma's alerts and take over.
 
-**Status:** experimental. A compatible openpilot build is required for vehicle
-integration; installing this repository alone does not add UI or model switching.
-See [validation status](docs/release-readiness.md) for remaining qualification work.
+## How it works
 
-## Requirements
-
-| Component | Tested configuration |
-| --- | --- |
-| Device | comma 3X or comma 4 with a build that includes the Jetlink integration |
-| Inference server | NVIDIA Jetson Orin Nano Super, 8 GB |
-| Software | JetPack 6.1 / L4T r36.4, TensorRT 10.3; Docker with NVIDIA runtime |
-| Connection | USB 3 Type-A to Type-C data cable |
-| Power | Separate regulated supply for the Jetson, sized for its 25 W power mode |
-| Storage | Several GB free for the container, ONNX models, and cached engines |
-
-Connect **Jetson USB-A → comma USB-C**. The Jetson is the USB host; the comma is
-the USB gadget. The Orin Nano devkit's USB-C port does not support this connection.
-Check [transport and power requirements](docs/transport.md) for other hardware.
-
-## Setup
-
-Perform initial setup while parked, with stable power and internet access for
-the container and model downloads. For a step-by-step walkthrough on zoompilot,
-from a fresh Jetson to the first drive, see [the tester guide](docs/tester-setup.md).
-
-### 1. Build and start the Jetson server
-
-Use the Jetlink revision pinned by your compatible openpilot build on both ends.
-On the Jetson:
-
-```bash
-git clone https://github.com/zoompilot/jetlink.git
-cd jetlink
-git checkout <pinned-jetlink-revision>
-sudo docker/build.sh
-sudo docker/run.sh --transport usb
+```text
+comma                                  Server computer
+cameras → image preparation ── USB ───→ history buffers → model inference
+controls ← model parser ←───────────── predictions
 ```
 
-The server waits for the comma to present its USB gadget. Leave it running for
-the next step.
+The comma prepares camera images using its calibration. The server keeps the
+model's input history and runs inference (the model calculation). The comma
+parses the results and uses them for driving control. USB and TCP use the same
+Jetlink protocol and client; the server reports its runtime when it connects.
 
-### 2. Enable Jetlink on the comma
-
-No terminal on the comma. On a comma 3X or comma 4 running
-[zoompilot](https://github.com/zoompilot/zoompilot):
-
-1. **Branch.** Settings > Software > Target Branch > Non-Prebuilt Branches >
-   `jetson-trt`. Update, reboot, and wait out the build screen.
-2. **Link.** Settings > Models > Accelerator Link, on. An Accelerator Model row
-   appears within seconds, set to the default large model. Leave it, or pick
-   another there.
-3. **Cable.** Jetson USB-A to comma USB-C, with the Jetson server running. The
-   icon on the home button pulses while the comma downloads the model, sends it
-   to the Jetson and the Jetson builds the engine, then turns green. Orange
-   means it failed, and the offroad alert says why. This happens once per model.
-
-Keep the device parked and online until the icon is green. The integration sets
-up USB at boot and manages the connection from then on; turning the same toggle
-off is the whole uninstall. [The tester guide](docs/tester-setup.md) has what a
-drive looks like and what each icon state means.
-
-The first engine build takes roughly 3 to 5 minutes on the tested Jetson, depending
-on the model. Engines persist in `/mnt/data/jetlink/engines` on the Jetson and are
-reused on later starts. Changing the model, TensorRT version, or GPU architecture
-requires a matching engine.
-
-### 3. Run at boot (optional)
-
-After verifying the connection, stop the foreground server with Ctrl-C. From
-the repository on the Jetson:
-
-```bash
-sudo install -d /etc/jetlink
-sudo docker image inspect --format 'JETLINK_IMAGE={{.Id}}' jetlink:latest \
-  | sudo tee /etc/jetlink/server.env >/dev/null
-sudo chmod 644 /etc/jetlink/server.env
-sudo install -m 755 scripts/jetlink-wake-setup.sh /usr/local/bin/
-sudo install -m 644 scripts/99-jetlink-usb-wakeup.rules /etc/udev/rules.d/
-sudo install -m 644 scripts/jetlink-server.service /etc/systemd/system/
-sudo udevadm control --reload-rules
-sudo systemctl daemon-reload
-sudo systemctl enable --now jetlink-server
-```
-
-The service pins the built image by ID, locks Jetson clocks, and suspends after
-120 seconds without a USB gadget. Suspend assumes an always-on supply with USB
-wake configured. For a setup without suspend, remove `--sleep-after 120` from
-the installed unit before starting it. See [power management](docs/transport.md#always-on-supply-and-suspend)
-for wake behavior and limitations.
-
-## Other hosts
-
-The server is not tied to the Jetson. It runs on any machine with one of its
-backends: TensorRT on an NVIDIA GPU, tinygrad on Apple silicon, onnxruntime as
-a fallback. The comma side is unchanged; the protocol, queues and client are
-the same, and the server tells the comma what it is in the hello.
-
-| Host | Backend | Frame, big model | Status |
-| --- | --- | ---: | --- |
-| Jetson Orin Nano Super | TensorRT 10.3 | 20 ms GPU, 31 ms in modeld | validated on the car |
-| Linux or Windows (WSL2), NVIDIA GPU | TensorRT 11 from PyPI | expected under the Jetson | not yet run |
-| Apple silicon | onnxruntime CoreML on the GPU (default) | 43 ms round trip on an M1 Pro | parity passed; nine-minute session start |
-| Apple silicon | onnxruntime CoreML with the Neural Engine (`--device ane`) | 33 ms back to back, 45 ms at 20 Hz on an M1 Pro | parity passed; idle cost between frames, measure on your Mac |
-| Apple silicon | tinygrad on Metal | 66 ms on an M1 Pro | parity passed; over the 50 ms budget on that machine |
-
-[Platforms](docs/platforms.md) has the install steps, the measurements and the
-risks; `scripts/run-mac.sh` serves from a Mac.
-
-## Bench test over Ethernet
-
-A Linux machine with Python 3.10+ can test inference without the driving-software
-integration. Connect it to the Jetson over wired Ethernet.
-
-On the Jetson, run this instead of the USB server:
-
-```bash
-sudo docker/run.sh --transport tcp
-```
-
-On the client, from a checkout of this repository:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -e . onnx
-python3 scripts/bench_link.py --host <jetson-ip> --onnx /path/to/big_model.onnx
-```
-
-Use a compatible large driving-model ONNX file. The benchmark uploads it if
-needed, builds the engine, then reports round-trip latency and frames over the
-50 ms budget. TCP listens on port `5599`; use a trusted, dedicated network.
-Wi-Fi did not meet the frame budget in testing.
+An engine is a model prepared for a particular GPU and runtime. Jetson uses
+TensorRT FP16 engines, stored in `/mnt/data/jetlink/engines` and reused on later
+starts. The first build takes roughly 3 to 5 minutes on the tested Jetson.
+Changing the model, runtime version, or GPU may require another build. Mac
+CoreML also keeps cached files, but measured session loads still took about
+9 minutes. See [platform details](docs/platforms.md#backend-reference).
 
 ## Performance
 
@@ -175,25 +88,14 @@ Lebowski leaves little margin. These short bench runs do not establish sustained
 performance under heat or load. See [latency analysis](docs/drive-2026-09-05-latency.md)
 and [bench validation](docs/validation-2026-09-07.md).
 
-## Troubleshooting
+## Help and further reading
 
-| Symptom | Check |
-| --- | --- |
-| Server keeps waiting for a gadget | Enable Jetlink, use the Jetson's USB-A port, and check the data cable. On the comma, read `/dev/shm/jetlink-gadget` for setup errors. |
-| Model stays unavailable | Confirm preparation finished and both devices use the paired Jetlink revision. Check server logs for build or protocol errors. |
-| Engine build fails | Check free space under `/mnt/data/jetlink` and the JetPack/TensorRT versions. |
-| Latency exceeds 50 ms | Check USB SuperSpeed negotiation, Jetson power mode, clocks, and cooling. |
-| Jetson fails to wake | Check host USB hub wake configuration in the [power guide](docs/transport.md#always-on-supply-and-suspend). |
-
-For the installed service:
-
-```bash
-sudo systemctl status jetlink-server
-sudo journalctl -u jetlink-server -b -f
-```
-
-Update or roll back the client and server together. See [paired releases and
-rollback](docs/releasing.md) for the procedure.
+- [Setup, status icons, and troubleshooting](docs/tester-setup.md)
+- [Platform setup and benchmarks](docs/platforms.md)
+- [Cables, networking, and power](docs/transport.md)
+- [Updates and rollback](docs/releasing.md)
+- [openpilot integration for fork maintainers](docs/openpilot-integration.md)
+- [Validation status and remaining work](docs/release-readiness.md)
 
 ## License
 

@@ -1,5 +1,10 @@
 # Integrating with openpilot
 
+This reference is for fork maintainers adding Jetlink support. To set up an
+existing compatible build, use [the setup guide](tester-setup.md). The integration
+keeps camera processing and vehicle control on the comma, prepares models while
+parked, and manages switching and fallback between the small and large models.
+
 Design rule: **minimise the diff against upstream, and never touch a chestnut
 code path.** Everything jetlink-specific is a new package under
 `openpilot/sunnypilot/`; the patch to openpilot's own files is 99 insertions

@@ -1,4 +1,21 @@
-# Paired release and rollback
+# Updates, paired releases, and rollback
+
+## For users
+
+Update the comma build and Jetlink server as a pair while parked. Use the Jetlink
+commit pinned by your fork's `jetlink_repo` entry, then rebuild the server using
+your [platform guide](platforms.md) or [Jetson setup](tester-setup.md). For a Jetson
+boot service, record the new image ID in `/etc/jetlink/server.env` and restart the
+service after stopping the old server. Keep the previous image and configuration
+until the new pair is verified.
+
+If setup fails, turn off **Settings > Models > Accelerator Link** to disable
+Jetlink. To roll back Jetlink itself, restore the previous fork and server pair;
+restoring just one side can leave them incompatible. Keep the model cache.
+
+The procedures below are for maintainers preparing and validating a release.
+
+## Maintainer procedure
 
 This is a bench-validation procedure, not authorization to deploy a public
 driving release.

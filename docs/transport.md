@@ -1,9 +1,23 @@
-# Choosing a transport
+# Cables, networking, and power
 
-Bandwidth was never the question. 533 KB/frame at 20 Hz is 85 Mbit/s, against
-5 Gbit/s for USB 3 or 1 Gbit/s for ethernet. What decides the design is **what
-is actually built into the two kernels**, and on both machines the answer is
-surprising. Check this before buying hardware.
+For initial setup, use [the Jetson guide](tester-setup.md) or [platform setup](platforms.md).
+Use USB 3 for the comma connection and wired Ethernet for a bench test.
+
+| Connection | What to use |
+| --- | --- |
+| Jetson to comma | Jetson USB-A → comma USB-C, with a USB 3 data cable |
+| Mac to comma | USB-A hub or dock → comma USB-C, with the same cable |
+| Ethernet bench | Wired network; TCP port 5599 on a trusted network |
+| Power | Separate supplies for the comma and server; size the Jetson supply for its 25 W mode |
+
+The Jetson devkit's USB-C port does not work for this setup. The comma acts as
+the USB device (called a gadget), and the server computer is the USB host.
+The compatible fork sets up the comma's USB connection at boot when enabled.
+
+For optional idle sleep, see [always-on supply and suspend](#always-on-supply-and-suspend).
+The rest of this page explains the tested hardware, kernel requirements, and
+power behavior for custom setups. Hardware observations apply to the versions
+listed, not every board or operating-system release.
 
 ## What the comma has (AGNOS, kernel 4.9.103, comma mici)
 
@@ -106,7 +120,7 @@ FunctionFS descriptors, `ep1`/`ep2` appear, and the UDC (`a600000.dwc3`) binds
 and unbinds cleanly.
 
 ```bash
-sudo scripts/setup_gadget.sh          # on the comma, once per boot
+sudo scripts/setup_gadget.sh          # manual integration only: on the comma, once per boot
 # jetlinkd/modeld then open ep0, write descriptors and bind the UDC
 docker/run.sh --transport usb         # on the Jetson: it is the host
 ```
@@ -136,7 +150,7 @@ AGNOS) to the Jetson's 1 GbE. Set the `JetlinkEndpoint` param to
   **164 ms mean with 40 ms of jitter**, and every single frame missed the
   50 ms budget. That is the number that rules wifi out.
 
-## Power, and why it is the real risk
+## Power requirements
 
 - The Jetson needs ~25 W at MAXN_SUPER. USB VBUS from the comma cannot supply
   that: it needs its own ignition-gated 12 V feed.
@@ -146,8 +160,8 @@ AGNOS) to the Jetson's 1 GbE. Set the `JetlinkEndpoint` param to
   `supplyFault`/`supplyVoltage` alerts for exactly this. It is worse for a
   Jetson: a GPU re-trains PCIe in milliseconds, a Jetson takes ~30 s to reboot.
 - Boot time means the big model is not ready at engagement. openpilot's existing
-  shape already covers it (`BIG_MODEL_TIMEOUT = 60`, start on the small model),
-  and jetlinkd provisions offroad so the engine is cached before you drive.
+  integration starts on the small model and joins the server in the background.
+  jetlinkd prepares the engine while parked so it is cached before you drive.
 
 ### Always-on supply, and suspend
 
