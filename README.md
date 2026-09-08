@@ -48,7 +48,8 @@ Check [transport and power requirements](docs/transport.md) for other hardware.
 ## Setup
 
 Perform initial setup while parked, with stable power and internet access for
-the container and model downloads.
+the container and model downloads. For a step-by-step walkthrough on zoompilot,
+from a fresh Jetson to the first drive, see [the tester guide](docs/tester-setup.md).
 
 ### 1. Build and start the Jetson server
 

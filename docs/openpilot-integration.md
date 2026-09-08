@@ -48,6 +48,7 @@ catalog, `runner` = snpe/tinygrad/stock), so the axis is `accelerators/`.
 ```
 present()                are we attached, or dormant and known to be there. USB-independent.
 ready()                  params only: enabled, no gadget error, spec == selected == built
+installed()              the submodule is checked out; what makes the link worth offering
 unavailable_reason()     the offroad alert text, None unless the user opted in
 prepare()                modeld only: tinygrad device init, and a last veto
 make_model_state()       the joining state, small model now and Jetson later
@@ -281,6 +282,16 @@ So `accelerators/jetlink/setup.sh` reads the param through
 `openpilot.common.params` before it touches the gadget and exits 0 unless it is
 true: no gadget, no sysctls, no override. A params library not built yet reads
 as off.
+
+The toggle is offered wherever the submodule is checked out
+(`accelerators.installed()`), as the chestnut slot is offered without a board:
+with the link off there is no gadget for a Jetson to enumerate, so a toggle
+gated on `present()` waited for the thing it enables. Under it, `link_status()`
+reports a Jetson through `present()` and otherwise what the CC pin says about
+the USB-C port. Turning it on takes effect without a reboot: manager starts
+jetlinkd on the param, and `ensure_gadget()` runs `setup_gadget.sh` through
+`sudo -n` when boot, with the link off, left no `ep0` to open. A failed setup
+is retried once a minute and its reason reaches the offroad alert as at boot.
 
 `uses_stock_runner()` is `JetlinkEnabled is True`, and nothing else. Not
 `JetlinkModel`: the model choice defaults through `selected_model()`, so an

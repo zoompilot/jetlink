@@ -34,7 +34,9 @@ and the models-panel toggle and picker in both layouts, and the tests.
 **Opt-in is explicit.** `JetlinkEnabled == True` is the only enable: installing the
 submodule enables nothing, `setup.sh` reads the param before presenting the gadget, and
 jetlinkd applies the three VM sysctls only when enabled, records the prior values and
-restores them on exit.
+restores them on exit. The toggle is offered wherever the submodule is checked out, as
+the chestnut slot is offered without a board, and takes effect at once: manager starts
+jetlinkd on the param and jetlinkd sets the gadget up itself when boot did not.
 
 **Cereal keeps comma's meaning.** `deviceState.chestnutPresent` and `chestnutState` mean
 comma's board only; jetlink publishes nothing on them. Runtime state travels in additive
