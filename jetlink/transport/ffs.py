@@ -193,9 +193,12 @@ class FfsTransport(StreamTransport):
 
     The reader checks this before every readv and cannot skip it (see
     _read_loop). Opening the sysfs file each time allocates, and under memory
-    pressure that reclaim stalled a frame 25 ms; lseek and re-read still re-runs
-    the attribute's show(), so the value is current. The fd is dropped on unbind
-    and reopened lazily in case the controller differs.
+    pressure that reclaim stalled a frame 25 ms; a pread at offset 0 still
+    re-runs the attribute's show(), so the value is current. pread, not lseek
+    and read: the reader and the frame thread both ask during the claim
+    window, and two lseek+read pairs interleaved on one fd hand one of them
+    an empty read, which _host_gone would take for a host that left. The fd
+    is dropped on unbind and reopened lazily in case the controller differs.
     """
     if self.bound_udc is None:
       return None
@@ -205,18 +208,29 @@ class FfsTransport(StreamTransport):
       except OSError:
         return None
     try:
-      os.lseek(self._state_fd, 0, os.SEEK_SET)
-      return os.read(self._state_fd, 64).decode().strip()
+      state = os.pread(self._state_fd, 64, 0).decode().strip()
     except OSError:
       _close_quietly(self._state_fd)
       self._state_fd = -1
       return None
+    return state or None
 
   def _configured(self) -> bool:
     """Has a host set our configuration? Only then are the endpoints enabled."""
     if self.bound_udc is None:
       return self.gadget is None   # no controller of ours to ask; assume ready
     return self._udc_state() == 'configured'
+
+  def _udc_note(self) -> str:
+    """The controller's state, for a failure message.
+
+    The same ENODEV comes from a cable falling out ("not attached"), from a
+    host resetting or re-enumerating us ("default", "addressed") and from a
+    bus the host suspended ("suspended"). A drive's worth of failures read
+    the same without it; with it the log says which layer let go.
+    """
+    state = self._udc_state()
+    return f" (udc: {state})" if state else ''
 
   def _ensure_epfiles(self) -> None:
     """Open ep1/ep2 and start the reader, once a host has enabled them.
@@ -336,7 +350,7 @@ class FfsTransport(StreamTransport):
             # A short write is fine: send() loops until the message is out.
             bufs = take(bufs, self.write_chunk)
             continue
-          raise LinkError(f"gadget write failed: {e}") from e
+          raise LinkError(f"gadget write failed: {e}{self._udc_note()}") from e
     finally:
       completed = self._write_guard.disarm()
       signal.pthread_sigmask(signal.SIG_SETMASK, was)
@@ -392,7 +406,7 @@ class FfsTransport(StreamTransport):
         # as the endpoint error it would have been.
         if self._wait_for_host_ready():
           continue
-        self._fail("host dropped the gadget configuration")
+        self._fail(f"host dropped the gadget configuration{self._udc_note()}")
         return
       # Reuse a buffer the consumer handed back: a fresh bytearray here was
       # measured stalling 20+ ms mid-frame under memory pressure, and the read
@@ -410,10 +424,10 @@ class FfsTransport(StreamTransport):
           continue
         if e.errno == errno.ENOMEM and self._shrink('_read_size'):
           continue
-        self._fail(f"gadget read failed: {e}")
+        self._fail(f"gadget read failed: {e}{self._udc_note()}")
         return
       if got == 0:
-        self._fail("gadget read returned EOF (host disconnected)")
+        self._fail(f"gadget read returned EOF (host disconnected){self._udc_note()}")
         return
       read_finished = time.monotonic()
       self._ready_deadline = None

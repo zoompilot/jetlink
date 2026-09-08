@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from collections import deque
 
 import numpy as np
 import pytest
@@ -190,6 +191,38 @@ def test_a_host_that_disconnects_mid_session_ends_the_link_at_once(tmp_path, mon
   assert t._wait_for_host_ready() is True
 
 
+def test_a_failure_names_the_controller_state_it_found(tmp_path, monkeypatch):
+  """ENODEV reads the same for a cable falling out, a host resetting us and a
+  bus the host suspended. A drive's worth of failures (2026-09-07: fourteen,
+  every one a USB drop) said nothing about which; the UDC state does.
+  """
+  t = _bare_transport(bound_udc='udc0', _had_host=True, _closing=False, _queued=0,
+                      _reader_error=None, _read_size=ffs.SS_MAX_PACKET, _free=deque(),
+                      _cv=threading.Condition())
+  monkeypatch.setattr(ffs, 'UDC_SYSFS', str(tmp_path))
+  monkeypatch.setattr(t, '_widen_affinity', lambda: None)
+  monkeypatch.setattr(t, '_raise_reader_priority', lambda: None)
+  state = tmp_path / 'udc0' / 'state'
+  state.parent.mkdir()
+  state.write_text('not attached\n')
+  # The reader checks the state before every read and stops on the first
+  # miss; with no host there is no read to sleep in. On its own thread: the
+  # loop blocks signals for the thread's life, and pytest's is not its own.
+  reader = threading.Thread(target=t._read_loop)
+  reader.start()
+  reader.join(5.0)
+  assert not reader.is_alive()
+  assert t._reader_error == 'host dropped the gadget configuration (udc: not attached)'
+  state.write_text('default\n')
+  assert t._udc_note() == ' (udc: default)'
+  # an empty read (the file mid-rewrite) is no state, not a host that left
+  state.write_text('')
+  assert t._udc_state() is None
+  assert t._udc_note() == ''
+  t.bound_udc = None
+  assert t._udc_note() == ''
+
+
 def test_the_watchdog_drops_the_link_so_a_stuck_write_can_return(mount, monkeypatch):
   """FunctionFS writes cannot time out: the request sits on the endpoint until the
   host drains it, and the join loop cannot retry what it is blocked inside.
@@ -269,8 +302,8 @@ def test_send_deadline_aborts_a_blocked_kernel_write(mount, monkeypatch):
 
 
 def test_receive_diagnostics_follow_chunks_and_reset_per_message(monkeypatch):
-  from collections import deque
   from types import SimpleNamespace
+
   from jetlink.transport.base import StreamTransport
 
   t = _bare_transport()
