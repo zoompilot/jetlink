@@ -1320,12 +1320,15 @@ minute after Jetson power-on. A re-flash brings it back; check with
 `waiting for a jetlink gadget at 1209:0001` in the log means the comma is not
 presenting. That is a comma-side or cable problem, not a server one.
 
-The container is started by hand on the bench Jetson, not by the unit, so a
-`docker rm -f` and `docker run` (needed to change mounts or arguments) has to
-carry the same flags: `--restart unless-stopped --runtime nvidia
---device-cgroup-rule "c 189:* rmw"`, the three mounts in `run.sh`, and
-`--transport usb --sleep-after 120`. A fresh container is the *image's* code:
-`docker cp` again after recreating it.
+The bench Jetson runs the container from `jetlink-server.service` since
+2026-09-08, the same way the car does: the unit's `ExecStartPre` does `docker rm
+-f jetlink` and `ExecStart` runs the image pinned in `/etc/jetlink/server.env`
+with `--transport usb --sleep-after 120`. So `systemctl restart jetlink-server`
+is a fresh container of the *image's* code and loses a `docker cp`; `docker
+restart jetlink` keeps it. To run a different image or flags for a bench,
+`systemctl stop jetlink-server`, `docker run` by hand with the unit's flags, and
+`systemctl start` afterwards. Leaving out `--sleep-after` in that hand-run
+container keeps the box awake for the session.
 
 ### Suspend
 
