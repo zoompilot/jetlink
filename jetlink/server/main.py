@@ -223,9 +223,16 @@ def main(argv=None) -> int:
 
     # Carry the spec into the sidecar like a served build does, so the first
     # client to connect loads the artifact instead of reparsing the ONNX for it.
+    spec = spec_from_onnx(args.build)
     backend.build(Path(args.build), entry.path, report=report,
-                  meta_extra={'spec': spec_from_onnx(args.build).to_dict()})
+                  meta_extra={'spec': spec.to_dict()})
     log.info("built: %s", entry.meta())
+    # A served model is what gets preloaded next time; with none on record, the
+    # one just built is the best guess. On a Mac that is the difference between
+    # a server that starts its nine-minute CoreML load when launched and one
+    # that waits for the comma to ask.
+    if cache.last_loaded() is None:
+      cache.remember_loaded(sha, spec.frame_skip)
     return 0
 
   from jetlink.server.power import clear_stale_flag

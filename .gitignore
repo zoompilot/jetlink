@@ -12,3 +12,6 @@ dist/
 
 # Local research, worklogs, and maintainer notes
 /notes/
+
+# The Mac script's engine cache (scripts/run-mac.sh); 5.5 GB per CoreML model
+/models_cache/

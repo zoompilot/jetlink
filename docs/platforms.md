@@ -45,18 +45,22 @@ scripts/run-mac.sh
 ```
 
 The script creates a Python environment and installs dependencies on its first
-run. It then serves over TCP with CoreML on the GPU by default. Keep it running
-and use [Test without a comma](#test-without-a-comma) in a second terminal.
+run. It then serves the comma over USB with CoreML on the GPU. Use a USB-A port
+on a hub or dock and an A-to-C data cable to the comma, and follow
+[Connect the comma](tester-setup.md#connect-the-comma). A waiting-for-gadget
+message is normal until the comma connects.
 
-For a comma USB connection, stop the TCP server with **Ctrl-C**, then run:
+Engines and uploaded models go in `models_cache/` beside the checkout, so a
+9 minute CoreML artifact is where you can see it; set `JETLINK_CACHE` to put it
+elsewhere.
+
+For a bench without a comma, stop the server with **Ctrl-C** and serve TCP on
+port 5599 instead, then use [Test without a comma](#test-without-a-comma) in a
+second terminal:
 
 ```bash
-JETLINK_TRANSPORT=usb scripts/run-mac.sh
+JETLINK_TRANSPORT=tcp scripts/run-mac.sh
 ```
-
-Use a USB-A port on a hub or dock and an A-to-C data cable to the comma. Follow
-[Connect the comma](tester-setup.md#connect-the-comma). A waiting-for-gadget message
-is normal until the comma connects.
 
 CoreML took **about 9 minutes to prepare or load a model for each new session**
 on the tested Mac, including after restarting the server. Keep the server running
@@ -294,7 +298,8 @@ A passing short test does not establish sustained in-car performance.
 
 ## Cache and troubleshooting
 
-Desktop caches use `JETLINK_CACHE` if set, otherwise `~/.cache/jetlink`. Each
+Desktop caches use `JETLINK_CACHE` if set (the Mac script sets it to `models_cache/`
+beside the checkout), otherwise `~/.cache/jetlink`, or `~/Library/Caches/jetlink` on a Mac. Each
 backend keeps artifacts for its runtime version and device. The Jetson container
 uses `/mnt/data/jetlink`.
 
