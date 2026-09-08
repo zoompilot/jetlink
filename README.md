@@ -69,10 +69,23 @@ the next step.
 
 ### 2. Enable Jetlink on the comma
 
-Connect the USB cable. In your build's model settings, enable Jetlink and select
-a large model. Keep the device offroad until download, engine build, and warmup
-finish and the UI reports ready. The integration sets up USB at boot and manages
-the connection.
+No terminal on the comma. On a comma 3X or comma 4 running
+[zoompilot](https://github.com/zoompilot/zoompilot):
+
+1. **Branch.** Settings > Software > Target Branch > Non-Prebuilt Branches >
+   `jetson-trt`. Update, reboot, and wait out the build screen.
+2. **Link.** Settings > Models > Accelerator Link, on. An Accelerator Model row
+   appears within seconds, set to the default large model. Leave it, or pick
+   another there.
+3. **Cable.** Jetson USB-A to comma USB-C, with the Jetson server running. The
+   icon on the home button pulses while the comma downloads the model, sends it
+   to the Jetson and the Jetson builds the engine, then turns green. Orange
+   means it failed, and the offroad alert says why. This happens once per model.
+
+Keep the device parked and online until the icon is green. The integration sets
+up USB at boot and manages the connection from then on; turning the same toggle
+off is the whole uninstall. [The tester guide](docs/tester-setup.md) has what a
+drive looks like and what each icon state means.
 
 The first engine build takes roughly 3 to 5 minutes on the tested Jetson, depending
 on the model. Engines persist in `/mnt/data/jetlink/engines` on the Jetson and are
