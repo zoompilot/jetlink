@@ -47,17 +47,18 @@ class WorkerDied(RuntimeError):
 
 
 class OrtEngine:
-  def __init__(self, model: str, providers: list, device: str, log_severity: int = 3,
+  def __init__(self, sessions: list[tuple[str, list]], device: str, log_severity: int = 3,
                on_tick=None):
-    """Start the child and wait for its session. `on_tick(elapsed_s)` is called
-    every few seconds meanwhile; the build uses it for progress."""
+    """Start the child and wait for its sessions, `[(model path, providers)]`
+    run back to back. `on_tick(elapsed_s)` is called every few seconds
+    meanwhile; the build uses it for progress."""
     self.device = device
     self.last_gpu_us = 0
     self._block = None
     self._proc = None
     ctx = mp.get_context('spawn')
     self._conn, child_conn = ctx.Pipe()
-    self._proc = ctx.Process(target=worker.main, args=(child_conn, model, providers, log_severity),
+    self._proc = ctx.Process(target=worker.main, args=(child_conn, [(str(m), p) for m, p in sessions], log_severity),
                              name='jetlink-ort', daemon=True)
     self._proc.start()
     child_conn.close()
@@ -82,7 +83,7 @@ class OrtEngine:
       msg = self._recv()
       if msg[0] != 'ready':
         raise RuntimeError(f"onnxruntime worker: {msg[1] if len(msg) > 1 else msg}")
-      self.providers = msg[1]
+      self.providers = msg[1]   # per session, as onnxruntime reports them
     except BaseException:
       self.close()
       raise

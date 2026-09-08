@@ -113,7 +113,8 @@ the same, and the server tells the comma what it is in the hello.
 | --- | --- | ---: | --- |
 | Jetson Orin Nano Super | TensorRT 10.3 | 20 ms GPU, 31 ms in modeld | validated on the car |
 | Linux or Windows (WSL2), NVIDIA GPU | TensorRT 11 from PyPI | expected under the Jetson | not yet run |
-| Apple silicon | onnxruntime CoreML, GPU only (default) | 43 ms round trip on an M1 Pro | parity passed; nine-minute session start |
+| Apple silicon | onnxruntime CoreML on the GPU (default) | 43 ms round trip on an M1 Pro | parity passed; nine-minute session start |
+| Apple silicon | onnxruntime CoreML with the Neural Engine (`--device ane`) | 33 ms back to back, 45 ms at 20 Hz on an M1 Pro | parity passed; idle cost between frames, measure on your Mac |
 | Apple silicon | tinygrad on Metal | 66 ms on an M1 Pro | parity passed; over the 50 ms budget on that machine |
 
 [Platforms](docs/platforms.md) has the install steps, the measurements and the

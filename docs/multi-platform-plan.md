@@ -319,18 +319,28 @@ Filled in as the runs finish.
 | --- | ---: | ---: | --- |
 | tinygrad METAL, default | 65.4 | 67.9 | above; through the finished backend over TCP loopback: 66.2 mean, 67.6 p99, parity passed on every slice |
 | tinygrad METAL, `BEAM=2` | 61.8 | 63.7 | 404 s to compile; with host copies 65.4 mean, max 159.9. Five percent, so kernel search is not the lever. |
-| onnxruntime CoreML, `MLComputeUnits=ALL` | 25.1 | 30.3 | **wrong**: whole-output correlation 0.91 to 0.97 against the CPU provider, CoreML logs "ANE model load has failed"; 668 s session |
+| onnxruntime CoreML, `MLComputeUnits=ALL`, as exported | 25.1 | 30.3 | **wrong**: whole-output correlation 0.91 to 0.97 against the CPU provider; 668 s session |
 | onnxruntime CoreML, `CPUAndGPU` | 38.9 | 40.5 | correct: 0.999998 whole output, 1.00000 per slice; 590 s session, and a second session with onnxruntime's cache directory present took 1158 s |
+| onnxruntime CoreML, `ALL`, negative Gather index normalised | 28.2 | 30.7 | the "wrong" above was one node, `Gather(add_53, -1)`: exact with the index written as 287. Fixed, every slice is above 0.9996 and the parity gate fails by one column (road_transform std[3] at 0.9988); the policy half is seven times less precise on the Neural Engine and no faster than on the GPU |
+| onnxruntime CoreML, trunk `ALL` + policy `CPUAndGPU`, two sessions | 31.1 (standalone harness) | 38.7 | passes the gate with the GPU path's precision, but 45 ms through the server at 20 Hz: each session pays an after-idle cost while the other runs |
+| onnxruntime CoreML, `ALL`, Gather fixed, all 85 LayerNorms in fp32 | 70.2 | 106.9 | passes the gate; every fp32 LayerNorm in the trunk is a compute-unit switch |
+| onnxruntime CoreML, `ALL`, Gather fixed, the policy's 41 LayerNorms in fp32 | 31.5 | 40.0 | passes the gate with the GPU path's precision; through the server 32.6 back to back and 44.6 mean, p99 58.8 at 20 Hz. Ships as `--device ane` |
 
 `BEAM=2` moving the replay from 65 to 62 ms is the confirmation: the kernels
 were already cheap, and searching their schedules cannot remove launches.
 Lever 1 is crossed off; levers 2 and 4 are the ones left with leverage.
 
-Lever 4 was then built and measured (`backends/ort`): CoreML on the GPU is
-the faster and correct frame, at the cost of ten minutes of compile every
-time a process creates the session, cache or no cache. That is why tinygrad
-stays the Mac default and CoreML is `--backend ort`; the reasoning is in
-`docs/platforms.md`.
+Lever 4 was then built and measured (`backends/ort`), and it is the Mac
+default: CoreML on the GPU, correct by the parity gate and under budget at
+43 ms round trip, at the cost of nine minutes of compile every time a
+process creates its session, cache or no cache. The Neural Engine was made
+correct too (a sub-model bisect found one `Gather` with a negative index,
+then the policy's LayerNormalizations in fp32) and is 31 ms back to back,
+but at the car's 20 Hz it pays an after-idle cost that puts it level with
+the GPU on the mean and behind on the tail, so it ships as `--device ane`
+for a faster Mac to measure. The reasoning and the numbers are in
+`docs/platforms.md`; the tooling that found the node is
+`scratchpad/submodel.py` from the 2026-09-08 session.
 
 ## Risks and decisions
 

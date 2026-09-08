@@ -4,17 +4,22 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-The process that holds an onnxruntime session.
+The process that holds the onnxruntime sessions.
 
 onnxruntime keeps the GIL for the whole of InferenceSession(): measured with
 a 1 ms ticker thread that ran three times across twenty session creations,
 and a CoreML build that logged no progress in ten minutes. In the server
 process that would stop every thread - the request loop, the pings the comma
 uses to tell a slow build from a dead link, the accept - for as long as CoreML
-compiles. So the session lives here, in a child, and the server talks to it
+compiles. So the sessions live here, in a child, and the server talks to it
 over a pipe with the model's inputs and outputs in shared memory: the queues
 gather straight into the shared block, the child runs, and the reply is a
 few bytes. Tens of microseconds a frame on top of the model.
+
+A frame may be a chain of sessions: on Apple silicon the vision trunk runs
+with the Neural Engine allowed and the policy on the GPU (see the backend),
+and the trunk's outputs feed the policy by name. One session is a chain of
+one.
 
 Spawned, never forked: a fork would carry the parent's GPU state into a
 process that must not touch it. A spawn re-imports the parent's __main__, so
@@ -49,10 +54,11 @@ def views(block, laid: list[tuple[str, tuple[int, ...], str, int]]) -> dict[str,
           for name, shape, dtype, offset in laid}
 
 
-def main(conn, model: str, providers: list, log_severity: int) -> None:
-  """Runs in the child. Protocol, parent's view:
+def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
+  """Runs in the child. `sessions` is [(model path, providers)] in run order.
+  Protocol, parent's view:
 
-      <- ('io', inputs, outputs)       once the session exists; each a list of (name, shape, dtype)
+      <- ('io', inputs, outputs)       once every session exists; each a list of (name, shape, dtype)
       -> ('attach', shm_name, laid_inputs, laid_outputs)
       <- ('ready', providers_in_use)
       -> ('run',)      <- ('ok', gpu_us) | ('error', text)
@@ -66,11 +72,13 @@ def main(conn, model: str, providers: list, log_severity: int) -> None:
   try:
     import onnxruntime as ort
 
+    from jetlink.server.backends.ort import quiet
     from jetlink.server.backends.ort.engine import ORT_DTYPES
 
+    quiet(ort)
     so = ort.SessionOptions()
     so.log_severity_level = log_severity
-    session = ort.InferenceSession(model, so, providers=providers)
+    chain = [ort.InferenceSession(model, so, providers=providers) for model, providers in sessions]
 
     def describe(nodes):
       out = []
@@ -83,8 +91,16 @@ def main(conn, model: str, providers: list, log_severity: int) -> None:
         out.append((n.name, shape, np.dtype(ORT_DTYPES[n.type]).name))
       return out
 
-    inputs = describe(session.get_inputs())
-    outputs = describe(session.get_outputs())
+    # What the parent stages: every session's inputs that no earlier session
+    # produces. What it reads: the last session's outputs.
+    produced: set[str] = set()
+    inputs: list = []
+    for s in chain:
+      for entry in describe(s.get_inputs()):
+        if entry[0] not in produced and all(entry[0] != e[0] for e in inputs):
+          inputs.append(entry)
+      produced.update(o.name for o in s.get_outputs())
+    outputs = describe(chain[-1].get_outputs())
     conn.send(('io', inputs, outputs))
 
     msg = conn.recv()
@@ -94,8 +110,8 @@ def main(conn, model: str, providers: list, log_severity: int) -> None:
     block = shared_memory.SharedMemory(name=shm_name)
     feeds = views(block, laid_in)
     sinks = views(block, laid_out)
-    names = [n for n, *_ in laid_out]
-    conn.send(('ready', list(session.get_providers())))
+    plan = [([i.name for i in s.get_inputs()], [o.name for o in s.get_outputs()]) for s in chain]
+    conn.send(('ready', [list(s.get_providers()) for s in chain]))
 
     while True:
       msg = conn.recv()
@@ -106,8 +122,13 @@ def main(conn, model: str, providers: list, log_severity: int) -> None:
         continue
       try:
         t0 = time.perf_counter()
-        results = session.run(names, feeds)
-        for name, value in zip(names, results, strict=True):
+        between: dict[str, np.ndarray] = {}
+        results = None
+        for s, (in_names, out_names) in zip(chain, plan, strict=True):
+          feed = {n: between[n] if n in between else feeds[n] for n in in_names}
+          results = s.run(out_names, feed)
+          between.update(zip(out_names, results, strict=True))
+        for name, value in zip(plan[-1][1], results, strict=True):
           np.copyto(sinks[name], np.asarray(value).reshape(sinks[name].shape), casting='unsafe')
         conn.send(('ok', int((time.perf_counter() - t0) * 1e6)))
       except Exception as e:
