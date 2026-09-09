@@ -5,8 +5,9 @@ The comma keeps the cameras and vehicle control. It sends prepared camera
 images over USB, the other computer runs the model, and predictions come back
 20 times per second.
 
-Jetlink is experimental. It needs a zoompilot build with Jetlink built in; the
-comma's stock small model keeps driving whenever the link is down. If the link
+Jetlink is experimental. It needs a zoompilot build with Jetlink built in. The
+comma side lives on the [zoompilot `jetson-trt` branch](https://github.com/zoompilot/zoompilot/tree/jetson-trt).
+The comma's stock small model keeps driving whenever the link is down. If the link
 drops while engaged, the comma soft-disables and tells you to take over. See
 [status and known limitations](docs/status.md).
 
