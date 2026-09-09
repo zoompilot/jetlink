@@ -53,7 +53,9 @@ same idea in Docker, plus a service that starts the server at boot.
 ### 3. Plug in and wait
 
 Connect the computer's **USB-A port to the comma's USB-C port**. On a Mac, use
-a USB-A port on a hub or dock. On the Jetson, use a USB-A port, not its USB-C.
+a USB-A port on a hub or dock, or a USB-C-to-A adapter. Going through USB-A
+makes the computer take the host role reliably; a plain C-to-C cable may not.
+On the Jetson, use a USB-A port, not its USB-C.
 
 Stay parked with the comma online. The home-button icon pulses while the comma
 downloads the model, sends it over, and the server prepares it. A Jetson takes

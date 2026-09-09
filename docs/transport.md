@@ -6,7 +6,7 @@ Use USB 3 for the comma connection and wired Ethernet for a bench test.
 | Connection | What to use |
 | --- | --- |
 | Jetson to comma | Jetson USB-A → comma USB-C, with a USB 3 data cable |
-| Mac to comma | USB-A hub or dock → comma USB-C, with the same cable |
+| Mac to comma | USB-A hub, dock, or C-to-A adapter → comma USB-C, with the same cable |
 | Ethernet bench | Wired network; TCP port 5599 on a trusted network |
 | Power | Separate supplies for the comma and server; size the Jetson supply for its 25 W mode |
 

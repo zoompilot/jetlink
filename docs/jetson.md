@@ -74,12 +74,32 @@ while parked, then wait for it to prepare. Stick with 766 MB models on the
 Jetson. Lebowski (1.7 GB) runs at 46 ms against a 50 ms frame budget, which
 leaves little margin. See [measured performance](status.md#measured-performance).
 
+### Swap for large models
+
+Building a 1.7 GB model such as Lebowski needs more memory than the 8 GB
+Jetson has. JetPack ships only compressed zram, which is not enough: the build
+gets killed part way through and the model never becomes ready. Add an 8 GB
+swap file once, before selecting a large model:
+
+```bash
+sudo fallocate -l 8G /mnt/data/swapfile
+sudo chmod 600 /mnt/data/swapfile
+sudo mkswap /mnt/data/swapfile
+sudo swapon /mnt/data/swapfile
+echo '/mnt/data/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+`free -h` should show 8 GB of swap. The swap is only used during the build;
+the finished engine is cached and running it does not touch swap. The 766 MB
+models build without it.
+
 ## Troubleshooting
 
 | Problem | What to do |
 | --- | --- |
 | Server keeps waiting, or icon never pulses | Check the server is running, use a Jetson USB-A port, try another USB 3 data cable |
 | Engine build fails | Check free space in `/mnt/data/jetlink` and JetPack/TensorRT version |
+| Large model build is killed or hangs | Add [swap](#swap-for-large-models) |
 | Model repeatedly drops out | Check separate supplies and voltage dips, cable, cooling, and server logs |
 | Frame time exceeds 50 ms | Check USB 3 speed, Jetson power mode, cooling, and model choice |
 | Jetson fails to wake | See [USB wake setup](transport.md#always-on-supply-and-suspend) |

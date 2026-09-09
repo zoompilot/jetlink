@@ -22,7 +22,9 @@ scripts/run-mac.sh
 
 The first run creates a Python environment and installs dependencies. The
 server then serves the comma over USB using CoreML on the GPU. Plug the comma
-into a **USB-A port on a hub or dock** with an A-to-C data cable.
+into a **USB-A port on a hub or dock** with an A-to-C data cable, or use a
+USB-C-to-A adapter. Going through USB-A makes the Mac take the host role
+reliably; a plain C-to-C cable may not.
 
 Things to know:
 
