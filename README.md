@@ -7,7 +7,7 @@ images over USB, the other computer runs the model, and predictions come back
 
 Jetlink is experimental. It needs a zoompilot build with Jetlink built in. The
 comma side lives on the [zoompilot `jetson-trt` branch](https://github.com/zoompilot/zoompilot/tree/jetson-trt).
-The comma's stock small model keeps driving whenever the link is down. If the link
+The small model you picked in sunnypilot keeps driving whenever the link is down. If the link
 drops while engaged, the comma soft-disables and tells you to take over. See
 [status and known limitations](docs/status.md).
 
