@@ -1,101 +1,103 @@
 # Jetlink
 
-Run openpilot's large driving models on a separate computer connected to your
-comma. Jetson is the tested in-car setup; Mac, Linux, and Windows options are
-available for experiments and bench testing.
+Run openpilot's large driving models on a computer plugged into your comma.
+The comma keeps the cameras and vehicle control. It sends prepared camera
+images over USB, the other computer runs the model, and predictions come back
+20 times per second.
 
-The comma still handles the cameras and vehicle control. Jetlink sends prepared
-camera images to the other computer, which runs the model and sends predictions
-back 20 times per second. The other computer has no CAN access.
+Jetlink is experimental. It needs a zoompilot build with Jetlink built in; the
+comma's stock small model keeps driving whenever the link is down. If the link
+drops while engaged, the comma soft-disables and tells you to take over. See
+[status and known limitations](docs/status.md).
 
-**Experimental:** you need an openpilot build with Jetlink integration to use it
-with your comma. Installing this repository alone does not add model selection
-or switching. See [validation status](docs/status.md).
+## What you need
 
-## Start here
+- A comma 3X or comma 4.
+- A computer to run the model. A **Jetson Orin Nano Super (8 GB)** is the
+  tested in-car setup. A **Mac with Apple silicon** works for bench testing.
+  Linux and Windows PCs with an NVIDIA GPU are [supported but untested](docs/platforms.md).
+- A USB 3 **A-to-C data cable**. Charge-only cables do not work.
+- Separate power for both devices. Neither one powers the other.
 
-| Your computer | Setup guide | What to expect |
-| --- | --- | --- |
-| NVIDIA Jetson Orin Nano Super, 8 GB | [Jetson and comma setup](docs/tester-setup.md) | Tested on the car; first setup needs a terminal on the Jetson |
-| Mac with Apple silicon | [Mac setup](docs/platforms.md#mac-apple-silicon) | Bench-tested on M1 Pro; CoreML takes about 9 minutes to load a model each session |
-| Linux PC with an NVIDIA GPU | [Linux setup](docs/platforms.md#linux-nvidia-gpu) | Implemented, not yet tested on hardware |
-| Windows PC with an NVIDIA GPU | [Windows setup](docs/platforms.md#windows-nvidia-gpu) | Experimental through WSL2; start with a TCP bench test |
-| Other computer / CPU only | [CPU setup](docs/platforms.md#cpu-only) | For functional testing; no real-time performance claim |
+## Quick start
 
-For a car setup, you also need a comma 3X or comma 4 with a compatible build,
-a USB 3 **A-to-C data cable**, and separate power for both devices. Connect the
-computer's **USB-A port to the comma's USB-C port**. On a Mac, use a USB-A hub
-or dock. On the Jetson devkit, use USB-A, not its USB-C port.
+### 1. Set up the comma
 
-The setup follows three steps:
+Everything happens on the comma's screen.
 
-1. Install and start the server using your platform guide above.
-2. On a compatible zoompilot build, enable **Settings > Models > Accelerator Link**.
-3. Connect the cable and wait for model preparation to finish while parked.
-   A green icon means it is ready. The [comma setup steps](docs/tester-setup.md#connect-the-comma)
-   explain the branch, model selector, and status icons.
+1. **Settings > Software > Target Branch > Non-Prebuilt Branches**, select
+   **jetson-trt**. Let it update, reboot, and finish building.
+2. **Settings > Models**, turn on **Accelerator Link**. An **Accelerator Model**
+   row appears within a few seconds. Keep the default model for your first run.
 
-For NVIDIA laptops and desktops, [Docker setup](docs/platforms.md#docker-cuda-laptops-and-desktops)
-includes the server dependencies and works with Linux or Windows/WSL2.
-You can also [test a model without a comma](docs/platforms.md#test-without-a-comma).
+### 2. Start the server
 
-## Features
+**Mac (Apple silicon)**, in Terminal:
 
-- Direct USB 3 connection, or wired Ethernet for bench testing and alternate setups.
-- Model downloads and preparation from the comma UI with a compatible integration.
-- Engine builds with progress reporting and a persistent model cache.
-- GPU temperature, power, utilization, and inference timing where the host supports them.
-- Automatic reconnect that keeps the loaded engine between connections.
-- Optional Jetson idle suspend and USB wake that preserve the loaded engine.
-- TensorRT on NVIDIA GPUs, CoreML or tinygrad on Apple silicon, and onnxruntime fallback.
-
-With the compatible integration, the local small model runs while the server
-starts. The large model takes over only when controls are disengaged. If the link
-fails, the comma falls back to the small model and retries. A failure while
-engaged triggers a soft disable; follow the comma's alerts and take over.
-
-## How it works
-
-```text
-comma                                  Server computer
-cameras → image preparation ── USB ───→ history buffers → model inference
-controls ← model parser ←───────────── predictions
+```bash
+brew install python libusb
+git clone https://github.com/zoompilot/jetlink.git
+cd jetlink
+scripts/run-mac.sh
 ```
 
-The comma prepares camera images using its calibration. The server keeps the
-model's input history and runs inference (the model calculation). The comma
-parses the results and uses them for driving control. USB and TCP use the same
-Jetlink protocol and client; the server reports its runtime when it connects.
+The first run installs dependencies. The server then prints that it is waiting
+for a gadget, which means it is waiting for the comma. Leave the terminal open.
 
-An engine is a model prepared for a particular GPU and runtime. Jetson uses
-TensorRT FP16 engines, stored in `/mnt/data/jetlink/engines` and reused on later
-starts. The first build takes roughly 3 to 5 minutes on the tested Jetson.
-Changing the model, runtime version, or GPU may require another build. Mac
-CoreML also keeps cached files, but measured session loads still took about
-9 minutes. See [platform details](docs/platforms.md#backend-reference).
+**Jetson Orin Nano**: follow the [Jetson guide](docs/jetson.md). It is the
+same idea in Docker, plus a service that starts the server at boot.
 
-## Performance
+**Other computers**: see [platform setup](docs/platforms.md).
 
-Recorded bench results on Orin Nano Super 8 GB, TensorRT 10.3 FP16, over USB 3:
+### 3. Plug in and wait
 
-| Model | GPU inference | Full modeld mean / max | First engine build |
-| --- | ---: | ---: | ---: |
-| BMRLNAP, 766 MB | 19.8 ms | 31.0 / 32.7 ms | 166 s |
-| TGC v2, 766 MB | ~20 ms | 31.1 / 33.5 ms | 166 s |
-| Lebowski, 1757 MB | 36.2 ms | 46.3 / 49.5 ms | 290 s |
+Connect the computer's **USB-A port to the comma's USB-C port**. On a Mac, use
+a USB-A port on a hub or dock. On the Jetson, use a USB-A port, not its USB-C.
 
-Full modeld timings include local image processing, transport, inference, and
-output parsing during recorded-segment replay. The frame budget is 50 ms;
-Lebowski leaves little margin. These short bench runs do not establish sustained
-performance under heat or load. See [status and known limitations](docs/status.md).
+Stay parked with the comma online. The home-button icon pulses while the comma
+downloads the model, sends it over, and the server prepares it. A Jetson takes
+about 3 minutes for the default model. A Mac takes about 9 minutes, and repeats
+that wait every time the server restarts, so keep it running.
 
-## Help and further reading
+| Icon | Meaning |
+| --- | --- |
+| Pulsing | Downloading, transferring, or preparing the model. Keep waiting. |
+| Green | Ready. |
+| Orange | Preparation failed. Read the alert on the home screen. |
+| Back to normal a minute later | The comma released the idle connection. This is expected. |
 
-- [Setup, status icons, and troubleshooting](docs/tester-setup.md)
-- [Platform setup and benchmarks](docs/platforms.md)
-- [Cables, networking, and power](docs/transport.md)
+## What to expect when driving
+
+- The small model drives while the server starts. A **Big Model Ready** chime
+  means the large model is available.
+- The large model takes over only while disengaged. If you are engaged when it
+  becomes ready, the comma says **Big Model Available, disengage to switch**.
+- **Big Model Lost** while engaged is a soft disable. Take over. The small model
+  drives, and Jetlink reconnects and switches back the next time you disengage.
+
+To stop using Jetlink, turn off **Settings > Models > Accelerator Link**.
+
+## If something is wrong
+
+| Problem | Try |
+| --- | --- |
+| No Accelerator Link toggle | Check the branch in Settings > Software. |
+| Toggle is on, no Accelerator Model row | Read the setup alert on the home screen. |
+| Server keeps waiting, icon never pulses | Check the server is running, use a USB-A port, try another USB 3 data cable. |
+| Orange icon | Read the alert, check the comma's internet, then toggle Accelerator Link off and on. |
+| Model drops out repeatedly | Check the cable, separate power supplies, and cooling. |
+
+The [Jetson guide](docs/jetson.md#troubleshooting) has more, including how to
+collect logs when reporting a problem.
+
+## More
+
+- [Jetson setup, boot service, troubleshooting, logs](docs/jetson.md)
+- [Mac, Linux, Windows, Docker, and testing without a comma](docs/platforms.md)
+- [Status, known limitations, and measured performance](docs/status.md)
 - [Updates and rollback](docs/releasing.md)
-- [Validation status and remaining work](docs/status.md)
+- [Cables, networking, and power](docs/transport.md)
+- [Backends and measurements, for developers](docs/backends.md)
 
 ## License
 

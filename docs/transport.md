@@ -1,6 +1,6 @@
 # Cables, networking, and power
 
-For initial setup, use [the Jetson guide](tester-setup.md) or [platform setup](platforms.md).
+For initial setup, use the [README](../README.md#quick-start), the [Jetson guide](jetson.md), or [platform setup](platforms.md).
 Use USB 3 for the comma connection and wired Ethernet for a bench test.
 
 | Connection | What to use |

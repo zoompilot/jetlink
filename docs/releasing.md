@@ -1,28 +1,44 @@
 # Updates and rollback
 
-Update the comma build and Jetlink server as a pair while parked. Use the Jetlink
-commit pinned by your fork's `jetlink_repo` entry, then rebuild the server using
-your [platform guide](platforms.md) or [Jetson setup](tester-setup.md). For a Jetson
-boot service, record the new image ID in `/etc/jetlink/server.env` and restart the
-service after stopping the old server. Keep the previous image and configuration
-until the new pair is verified.
+The comma build and the Jetlink server have to match. Update both while parked.
 
-If setup fails, turn off **Settings > Models > Accelerator Link** to disable
-Jetlink. To roll back Jetlink itself, restore the previous fork and server pair;
-restoring just one side can leave them incompatible. Keep the model cache.
+## Which Jetlink to run
 
-## Compatibility
+Clone `main`. The zoompilot fork records the exact Jetlink commit it was tested
+with as its `jetlink_repo` submodule, and `main` is kept compatible with the
+current `jetson-trt` branch. A protocol mismatch is refused cleanly: the server
+rejects the connection and the comma keeps driving on the small model.
 
-Jetlink 0.2.0 uses protocol 2 and rejects protocol 1 peers. The fork's
-`jetlink_repo` submodule points to the required Jetlink commit. Use that revision
-for the server as well as the client.
+If the server refuses the comma after an update, check out the commit the fork
+pins and rebuild:
 
-Cached engines also depend on the model, GPU, and runtime version. Keep caches
-when updating, but allow time for another build if the new setup needs one.
+```bash
+git -C jetlink fetch
+git -C jetlink checkout <commit from the fork's jetlink_repo entry>
+```
 
-## Check the update
+## Updating
 
-Restart both devices while parked. Confirm model preparation finishes, the
-connection becomes ready, and the selected model is correct. If the check fails,
-keep Jetlink disabled until you have diagnosed the problem or restored the
-previous working pair.
+1. Update the comma first from **Settings > Software** and let it reboot.
+2. On the server, `git pull`. On a Mac, restart `scripts/run-mac.sh`; delete
+   `.venv` first if dependencies changed. On a Jetson, rebuild the image and
+   point the service at it:
+
+```bash
+sudo docker/build.sh
+sudo docker image inspect --format 'JETLINK_IMAGE={{.Id}}' jetlink:latest \
+  | sudo tee /etc/jetlink/server.env >/dev/null
+sudo systemctl restart jetlink-server
+```
+
+3. Plug in while parked and wait for the green icon. A new Jetlink or model may
+   need another engine build. Cached engines stay valid across updates that do
+   not change the model or runtime.
+
+## Rolling back
+
+Turn off **Settings > Models > Accelerator Link** to stop using Jetlink
+immediately. To roll back properly, restore the previous comma build and the
+previous server image together; restoring one side can leave them incompatible.
+Keep the model cache. On the Jetson, `docker image ls` shows earlier images,
+and the previous image ID can be written back into `/etc/jetlink/server.env`.

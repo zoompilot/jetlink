@@ -8,7 +8,7 @@ tinygrad: the model on whatever GPU tinygrad drives, Metal first.
 
 The exporter's own runtime, so the ONNX needs no surgery: tinygrad takes the
 uint8 image inputs as declared and runs its `org.tinygrad` layout ops
-natively. Measured on an M1 Pro (docs/platforms.md#mac-measured) the 766 MB model
+natively. Measured on an M1 Pro (docs/backends.md#mac-measured) the 766 MB model
 replays in 65 ms, over the 50 ms frame budget, and the time is per-kernel
 launch overhead rather than arithmetic; a newer Mac or a newer scheduler is
 what moves it. onnxruntime's CoreML provider (backends/ort) is the faster Mac
