@@ -28,8 +28,9 @@ Everything happens on the comma's screen.
 
 1. **Settings > Software > Target Branch > Non-Prebuilt Branches**, select
    **jetson-trt**. Let it update, reboot, and finish building.
-2. **Settings > Models**, turn on **Accelerator Link**. An **Accelerator Model**
-   row appears within a few seconds. Keep the default model for your first run.
+2. **Settings > Models**, turn on **Accelerator Link**. The **Big Model** row
+   is the model Jetlink runs, the same list a comma with a chestnut board
+   picks from. Leave it on the default for your first run.
 
 ### 2. Start the server
 
@@ -85,7 +86,8 @@ To stop using Jetlink, turn off **Settings > Models > Accelerator Link**.
 | Problem | Try |
 | --- | --- |
 | No Accelerator Link toggle | Check the branch in Settings > Software. |
-| Toggle is on, no Accelerator Model row | Read the setup alert on the home screen. |
+| Toggle is on, nothing happens | Read the setup alert on the home screen. |
+| Big Model list is empty | Connect the comma to the internet and use Refresh Model List. |
 | Server keeps waiting, icon never pulses | Check the server is running, use a USB-A port, try another USB 3 data cable. |
 | Orange icon | Read the alert, check the comma's internet, then toggle Accelerator Link off and on. |
 | Model drops out repeatedly | Check the cable, separate power supplies, and cooling. |

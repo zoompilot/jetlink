@@ -69,9 +69,12 @@ To stop the service: `sudo systemctl disable --now jetlink-server`.
 
 ## Choosing a model
 
-You can pick another model under **Settings > Models > Accelerator Model**
-while parked, then wait for it to prepare. Stick with 766 MB models on the
-Jetson. Lebowski (1.7 GB) runs at 46 ms against a 50 ms frame budget, which
+Pick another model under **Settings > Models > Big Model** while parked, then
+wait for it to prepare. The list is sunnypilot's big-model catalog, the one a
+chestnut board picks from; the comma stores your choice, fetches the ONNX only
+when the Jetson asks for it, and never downloads the chestnut's files unless a
+board is fitted. New models appear in the list without a comma or Jetlink
+update. Stick with 766 MB models on the Jetson. Lebowski (1.7 GB) runs at 46 ms against a 50 ms frame budget, which
 leaves little margin. See [measured performance](status.md#measured-performance).
 
 ### Swap for large models
