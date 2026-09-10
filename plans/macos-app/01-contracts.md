@@ -397,6 +397,24 @@ extension LogBuffer { static func preview(lines: [String]) -> LogBuffer }
 extension AppSettings { static func preview() -> AppSettings }   // backed by UserDefaults(suiteName: "io.zoompilot.jetlink.preview"), reset on each call
 ```
 
+// Members the views (D) use that C must provide, decided after D's report:
+// - Every event struct above (HelloEvent ... ImportEvent, InventoryModel, InventoryArtifact, InventoryDisk,
+//   CatalogModel) is Equatable, has plain stored `let` properties in the declared order, and so a
+//   memberwise initializer in that order (PreviewData builds them directly).
+// - AppState: `init()` with no arguments (composition root; reads AppSettings itself) and
+//   `func applicationWillTerminate() async` (awaits ServerStore.stop()).
+// - ModelStore: `func prepareNeedsConfirmation(_ row: ModelRow) -> Bool` (true when a comma is connected
+//   and a different model is loaded or being prepared).
+// - LoginItem: `@MainActor @Observable final class LoginItem { init(); var isEnabled: Bool { get set };
+//   var requiresApproval: Bool { get }; var lastError: String?; func openSystemSettings() }`.
+//   The setter calls SMAppService.mainApp.register()/unregister(); on failure it logs, sets lastError
+//   and re-reads the status so the toggle snaps back. requiresApproval is status == .requiresApproval.
+//   openSystemSettings opens x-apple.systempreferences:com.apple.LoginItems-Settings.extension.
+// - EmbeddedPython: `static func manifest() -> [String: String]?` reads python/MANIFEST.json and flattens
+//   it: key "python" is the interpreter version, and every entry of the manifest's "packages" object is
+//   copied to the top level (so "onnxruntime", "tinygrad", "numpy" are keys). Nil when there is no
+//   bundled runtime.
+
 The app wires the stores together in `AppState` (C owns it): `@MainActor @Observable final class AppState { let settings: AppSettings; let server: ServerStore; let models: ModelStore; let logs: LogBuffer }`.
 D's views take the stores they need as `@Environment(ServerStore.self)`-style
 environment objects; `JetlinkApp` (D) creates one `AppState` and injects
