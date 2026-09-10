@@ -14,8 +14,11 @@ execute, and it imports no inference runtime at all.
 """
 from __future__ import annotations
 
+import json
+import logging
 import threading
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -464,3 +467,120 @@ def test_slow_reply_send_is_logged_even_when_inference_is_fast(tmp_path, monkeyp
     assert 'total 0.0 send 20.0 ms' in caplog.text
   finally:
     session.host.close()
+
+
+class TestHello:
+  """A hello means a new client process, whatever the seq says.
+
+  A comma process that takes the gadget over from another one starts its seqs
+  at 1, and the server may still be inside the session the last one left: the
+  Jetson's hub driver can keep the usb_device across a rebind, so nothing here
+  ever saw a disconnect. Dropping that hello as a replay left modeld with a
+  drained write and no answer, and the drive on the small model.
+  """
+
+  def _session(self, tmp_path, sleep_after=0.0):
+    sent = []
+    host = EngineHost(EngineCache(tmp_path, FakeBackend(make_spec())),
+                      telemetry=FakeSensor(), sleep_after=sleep_after)
+    return Session(SimpleNamespace(send=lambda *args: sent.append(args)), host), sent
+
+  @staticmethod
+  def _hello(seq, name='modeld', nonce='deadbeef'):
+    payload = json.dumps({'client': {'nonce': nonce, 'name': name}}).encode()
+    return SimpleNamespace(msg_type=P.Msg.HELLO_REQ, seq=seq, payload=memoryview(payload))
+
+  @staticmethod
+  def _resp(sent):
+    return json.loads(bytes(sent[0][2][0]))
+
+  def test_a_hello_is_answered_on_a_session_that_outlived_its_client(self, tmp_path):
+    session, sent = self._session(tmp_path)
+    spec = make_spec()
+    session.last_seq = 5000
+    session.frames = 42
+    session.request = Request(spec.sha256, spec.nbytes, spec.frame_skip)
+
+    session.handle(self._hello(1))
+
+    assert sent, "the hello was dropped as a replay"
+    assert sent[0][0] == P.Msg.HELLO_RESP and sent[0][1] == 1
+    assert session.last_seq == 1, "the new client's seqs are counted from its own hello"
+    assert session.request is None and session.frames == 0
+
+  def test_replays_are_still_dropped_after_the_reset(self, tmp_path):
+    session, sent = self._session(tmp_path)
+    session.handle(self._hello(1))
+    sent.clear()
+    ping = SimpleNamespace(msg_type=P.Msg.PING, seq=1, payload=memoryview(b''))
+    session.handle(ping)
+    assert not sent, "a message at the hello's own seq is a replay"
+    session.handle(SimpleNamespace(msg_type=P.Msg.PING, seq=2, payload=memoryview(b'')))
+    assert sent[0][0] == P.Msg.PONG
+
+  def test_the_journal_names_the_client_that_is_talking(self, tmp_path, caplog):
+    session, _ = self._session(tmp_path)
+    with caplog.at_level(logging.INFO, logger='jetlink.server'):
+      session.handle(self._hello(7, name='jetlinkd', nonce='0badcafe'))
+      session.handle(SimpleNamespace(msg_type=P.Msg.PING, seq=7, payload=memoryview(b'')))
+    assert 'jetlinkd/0badcafe' in caplog.text
+    assert 'dropping replayed message' in caplog.text
+
+  def test_a_client_that_names_nothing_is_still_served(self, tmp_path):
+    session, sent = self._session(tmp_path)
+    session.handle(SimpleNamespace(msg_type=P.Msg.HELLO_REQ, seq=3, payload=memoryview(b'')))
+    assert sent[0][0] == P.Msg.HELLO_RESP
+
+  @pytest.mark.parametrize('sleep_after', [0.0, 120.0])
+  def test_the_hello_says_whether_this_server_sleeps(self, tmp_path, sleep_after):
+    # The comma only lets go of the gadget when parked if letting go buys the
+    # far end a suspend; see jetlinkd.go_dormant.
+    session, sent = self._session(tmp_path, sleep_after=sleep_after)
+    session.handle(self._hello(1))
+    assert self._resp(sent)['sleep_after'] == sleep_after
+
+
+class TestEngineStateWithoutAnUpload:
+  """The server asked for a gigabyte it already had.
+
+  Only request() consulted the cache, so every other answer for a plan on disk
+  was need_upload: modeld carries no ONNX and waited out its whole
+  build_timeout before falling back.
+  """
+
+  def _cached(self, tmp_path, spec):
+    cache = EngineCache(tmp_path, FakeBackend(spec))
+    entry = cache.entry(spec.sha256)
+    entry.path.write_bytes(b'plan')
+    entry.write_meta({'spec': spec.to_dict()})
+    return cache
+
+  def test_a_plan_on_disk_is_not_reported_as_needing_an_upload(self, tmp_path):
+    spec = make_spec()
+    host = EngineHost(self._cached(tmp_path, spec))
+    # a preload that guessed another sha, finished and still holds the job slot
+    host.job = Job('c' * 64, load_only=True, state='ready')
+    assert host.status(spec.sha256, spec.frame_skip)['state'] == 'building'
+
+  def test_a_model_that_really_is_absent_still_asks_for_the_upload(self, tmp_path):
+    host = EngineHost(EngineCache(tmp_path, FakeBackend(make_spec())))
+    assert host.status('d' * 64, 4)['state'] == 'need_upload'
+
+  def test_a_finished_job_for_another_model_starts_the_one_asked_for(self, tmp_path):
+    spec = make_spec()
+    cache = self._cached(tmp_path, spec)
+    host = EngineHost(cache, telemetry=FakeSensor())
+    sent = []
+    session = Session(SimpleNamespace(send=lambda *a: sent.append(a)), host)
+    session.request = Request(spec.sha256, spec.nbytes, spec.frame_skip)
+    other = FakeEngine(spec)
+    host.loaded = Loaded('c' * 64, spec, other, PolicyQueues(spec), {})
+    host.job = Job('c' * 64, load_only=True, state='ready')
+    started = []
+    host._start = lambda job, req, entry, mp, sp: started.append(job.sha256)
+
+    session.engine_update()
+
+    assert started == [spec.sha256], "nobody loaded the model this client asked for"
+    assert sent[0][0] == P.Msg.ENGINE_RESP
+    assert json.loads(bytes(sent[0][2][0]))['state'] == 'building'

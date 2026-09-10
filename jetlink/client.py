@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -56,10 +58,24 @@ class EngineMissing(LinkError):
   """
 
 
+def _default_name() -> str:
+  """Something the Jetson's journal can tell one comma process from another by."""
+  try:
+    return Path(sys.argv[0]).stem or 'python'
+  except Exception:
+    return 'python'
+
+
 class JetlinkClient:
-  def __init__(self, transport: Transport, deadline: float = FRAME_TIMEOUT):
+  def __init__(self, transport: Transport, deadline: float = FRAME_TIMEOUT,
+               name: str | None = None):
     self.t = transport
     self.deadline = deadline
+    # Who the server logs this connection as. The nonce is per client object,
+    # so two processes taking turns on one gadget, or one process reopening
+    # the link, are separable in a journal whose clock is wrong anyway.
+    self.name = name or _default_name()
+    self.nonce = secrets.token_hex(4)
     self.seq = 0
     self.spec: ModelSpec | None = None
     self.progress_cb: ProgressFn | None = None
@@ -141,8 +157,11 @@ class JetlinkClient:
   # -- handshake ------------------------------------------------------------
 
   def hello(self, timeout: float = 5.0) -> dict:
+    """Introduce this client. The server starts its session over on a hello,
+    so this is also how a new owner of the gadget takes over one the server
+    never saw end; see Session._greet."""
     seq = self._next_seq()
-    self.t.send_json(P.Msg.HELLO_REQ, seq, {})
+    self.t.send_json(P.Msg.HELLO_REQ, seq, {'client': {'nonce': self.nonce, 'name': self.name}})
     return json.loads(bytes(self._expect(P.Msg.HELLO_RESP, seq, timeout).payload))
 
   def state(self, timeout: float = 2.0) -> dict:
@@ -332,6 +351,11 @@ class JetlinkClient:
     memoryview reaches the wire with no numpy round trip.
     """
     return self.infer_end(self.infer_begin(warped, packed, frame_id, reset, want_state, deadline), deadline)
+
+  def rebind(self) -> bool:
+    """Make the peer see the link arrive again, where that is a thing this
+    transport can do. See FfsTransport.rebind; False everywhere else."""
+    return self.t.rebind()
 
   def close(self) -> None:
     self.t.close()

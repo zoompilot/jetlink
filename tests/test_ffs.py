@@ -495,3 +495,86 @@ def test_reader_priority_is_best_effort_without_permission(monkeypatch):
     SCHED_FIFO=1, sched_param=lambda p: SimpleNamespace(sched_priority=p),
     sched_setscheduler=denied))
   _bare_transport()._raise_reader_priority()   # must not raise on a box without RTPRIO
+
+
+def test_close_releases_the_endpoints_even_when_the_watchdog_hangs(mount, monkeypatch):
+  """The leak that outlived the link.
+
+  close() used to raise before touching an fd if the write guard had not come
+  back within a second, which it has not when it is stuck inside its own
+  abort's unbind. ep0 then stayed open for the life of the process and every
+  descriptor write after it answered ESRCH: only a reboot brought the gadget
+  back.
+  """
+  monkeypatch.setattr(ffs, 'READER_JOIN_TIMEOUT', 0.05)
+  t = FfsTransport(str(mount))
+  ep0 = t.ep0
+  stuck = threading.Event()
+  guard = threading.Thread(target=stuck.wait, daemon=True)
+  guard.start()
+  t._write_guard.thread = guard
+  try:
+    t.close()
+  finally:
+    stuck.set()
+
+  assert t.ep0 == -1
+  with pytest.raises(OSError):
+    os.fstat(ep0)   # really closed, not merely forgotten
+
+  # And the gadget opens again, which is the half the raise used to cost.
+  again = FfsTransport(str(mount))
+  again.close()
+
+
+def test_rebind_bounces_a_gadget_no_host_ever_configured(mount, monkeypatch):
+  """The one edge a Jetson that took the bind as a wake and then stopped needs.
+
+  It answers with a bus reset and parks the UDC in default or addressed;
+  nothing on the comma moves it but another connect.
+  """
+  monkeypatch.setattr(ffs, 'REBIND_SETTLE', 0.0)
+  t = FfsTransport(str(mount))
+  try:
+    t.gadget = '/sys/kernel/config/usb_gadget/jetlink'
+    t.bound_udc = 'udc0'
+    calls = []
+    monkeypatch.setattr(t, 'unbind', lambda: calls.append('unbind'))
+    monkeypatch.setattr(t, 'bind', lambda udc=None: calls.append(f'bind {udc}'))
+    assert t.rebind() is True
+    assert calls == ['unbind', 'bind udc0'], calls
+  finally:
+    t.gadget = None
+    t.close()
+
+
+@pytest.mark.parametrize('state', ['no gadget', 'host has been here', 'endpoints open', 'not bound'])
+def test_rebind_is_refused_once_it_would_cost_a_working_link(mount, monkeypatch, state):
+  monkeypatch.setattr(ffs, 'REBIND_SETTLE', 0.0)
+  t = FfsTransport(str(mount))
+  try:
+    t.gadget = None if state == 'no gadget' else '/sys/kernel/config/usb_gadget/jetlink'
+    t.bound_udc = None if state == 'not bound' else 'udc0'
+    t._had_host = state == 'host has been here'
+    if state == 'endpoints open':
+      t.ep_out = 999   # unbinding here completes the reader's read with ESHUTDOWN
+    unbound = []
+    monkeypatch.setattr(t, 'unbind', lambda: unbound.append(state))
+    assert t.rebind() is False
+    assert not unbound, 'unbound a link that was not stalled'
+  finally:
+    monkeypatch.undo()
+    t.gadget, t.ep_out = None, -1
+    t.close()
+
+
+def test_only_the_gadget_can_bounce_itself():
+  # tcp and libusb peers reconnect on their own; there is nothing to bounce.
+  from jetlink.transport.tcp import TcpTransport
+  srv = TcpTransport.listen('127.0.0.1', 0)
+  try:
+    t = TcpTransport.connect('127.0.0.1', srv.getsockname()[1])
+    assert t.rebind() is False
+    t.close()
+  finally:
+    srv.close()

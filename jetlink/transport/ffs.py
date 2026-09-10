@@ -84,6 +84,9 @@ UDC_SYSFS = '/sys/class/udc'
 # How long close() waits for the reader thread after unbinding, which is what
 # wakes it. A read the kernel will not complete is left to die with the process.
 READER_JOIN_TIMEOUT = 1.0
+# How long a rebind leaves the gadget off the bus. Long enough that the host
+# sees a disconnect and not a glitch; a dwc3 pull-down is immediate.
+REBIND_SETTLE = 0.5
 _NOT_READY = (errno.EIO, errno.ESHUTDOWN, errno.ENODEV)
 
 # A signal inside a FunctionFS transfer is not a retry: ffs_epfile_io returns
@@ -271,6 +274,27 @@ class FfsTransport(StreamTransport):
     with open(os.path.join(self.gadget, 'UDC'), 'w') as f:
       f.write(udc + '\n')
     self.bound_udc = udc
+
+  def rebind(self) -> bool:
+    """One unplug and replug, as the host sees it.
+
+    For a host that answered our bind with a bus reset and then stopped: the
+    UDC sits in `default` or `addressed` and only another edge moves it. A
+    Jetson whose hubs are not armed for remote wakeup does exactly that.
+
+    Refused once a host has enabled the endpoints. Unbinding then completes
+    the reader's request with ESHUTDOWN and the transport is done; the caller
+    wants a working link, not a freshly bound dead one.
+    """
+    if self.gadget is None or self._closing or self._had_host or self.ep_out >= 0:
+      return False
+    udc = self.bound_udc
+    if udc is None:
+      return False
+    self.unbind()
+    time.sleep(REBIND_SETTLE)
+    self.bind(udc)
+    return True
 
   def unbind(self) -> None:
     if self.gadget is None or self.bound_udc is None:
@@ -513,8 +537,15 @@ class FfsTransport(StreamTransport):
     self._write_guard.close()
     self._write_guard.thread.join(READER_JOIN_TIMEOUT)
     if self._write_guard.thread.is_alive():
-      # Keep ownership rather than allow a late abort to unbind a new owner.
-      raise LinkError('gadget watchdog teardown did not finish')
+      # It is stuck inside its own abort, which is already unbinding the
+      # gadget. This used to raise, to keep a late abort from unbinding a
+      # gadget the next owner had bound - but the raise came before a single
+      # fd was closed, so ep0 stayed open for the life of the process and
+      # every descriptor write after it answered ESRCH. unbind() is
+      # idempotent, so a late abort finds nothing left to let go of; the leak
+      # was the worse half by far.
+      log.warning("jetlink: gadget watchdog teardown did not finish in %.0f s, "
+                  "closing the endpoints anyway", READER_JOIN_TIMEOUT)
     # Unbinding disables the endpoints, which completes the reader's pending
     # request with ESHUTDOWN and lets the thread exit before its fd goes away.
     self.unbind()

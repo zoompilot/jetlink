@@ -98,7 +98,9 @@ def test_build_makes_a_directory_with_the_prepared_model(built):
   assert not any(n.domain == 'org.tinygrad' for n in prepared.graph.node), 'Contiguous was not stripped'
   img = next(i for i in prepared.graph.input if i.name == 'img')
   assert img.type.tensor_type.elem_type == onnx.TensorProto.FLOAT16, 'uint8 images were not retyped'
-  assert any(p.key == 'CACHE_KEY' for p in prepared.metadata_props)
+  # The name onnxruntime reads; under any other it keys the cache on the path.
+  assert any(p.key == 'COREML_CACHE_KEY' for p in prepared.metadata_props)
+  assert not any(p.key == 'CACHE_KEY' for p in prepared.metadata_props)
   meta = out.with_suffix('.json').read_text()
   assert '"backend": "ort"' in meta and '"spec"' in meta and '"sessions"' in meta
   assert [s for s, _, _ in stages][0] == 'patch' and stages[-1][1] == 1.0

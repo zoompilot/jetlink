@@ -68,7 +68,8 @@ def _serve(cache: EngineCache, open_transport, sleeper: Sleeper | None = None,
   """
   owns_host = host is None
   if host is None:
-    host = EngineHost(cache, pick_source(cache.backend.name))
+    host = EngineHost(cache, pick_source(cache.backend.name),
+                      sleep_after=sleeper.after if sleeper is not None else 0.0)
   # before accepting anything, so two callers cannot race to start GPU loads
   host.preload()
   waiting_detail = getattr(open_transport, 'waiting_detail', 'waiting for a client')
@@ -375,7 +376,10 @@ def main(argv=None) -> int:
     log.info("will suspend after %.0f s without a gadget", args.sleep_after)
   opener = _usb_opener(args, sleeper) if args.transport == 'usb' else OPENERS[args.transport](args)
 
-  host = EngineHost(cache, pick_source(backend.name))
+  # sleep_after goes out in the hello: the comma tells a box that suspends when
+  # parked from one that is simply gone.
+  host = EngineHost(cache, pick_source(backend.name),
+                    sleep_after=sleeper.after if sleeper is not None else 0.0)
   control = None
   if args.control_socket:
     from jetlink.server.control import ControlServer
