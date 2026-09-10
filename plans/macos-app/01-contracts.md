@@ -422,7 +422,9 @@ extension AppSettings { static func preview() -> AppSettings }   // backed by Us
 //   The setter calls SMAppService.mainApp.register()/unregister(); on failure it logs, sets lastError
 //   and re-reads the status so the toggle snaps back. requiresApproval is status == .requiresApproval.
 //   openSystemSettings opens x-apple.systempreferences:com.apple.LoginItems-Settings.extension.
-// - EmbeddedPython: `static func manifest() -> [String: String]?` reads python/MANIFEST.json and flattens
+// - EmbeddedPython is a namespace enum in Server/EmbeddedPython.swift beside `struct PythonRuntime`
+//   (the located interpreter, `PythonRuntime.locate(settings:)`); it forwards to PythonRuntime.manifest().
+//   `static func manifest() -> [String: String]?` reads python/MANIFEST.json and flattens
 //   it: key "python" is the interpreter version, and every entry of the manifest's "packages" object is
 //   copied to the top level (so "onnxruntime", "tinygrad", "numpy" are keys). Nil when there is no
 //   bundled runtime.
