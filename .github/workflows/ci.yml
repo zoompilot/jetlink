@@ -63,12 +63,13 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install the package
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,ort]"
 
       - name: Run the tests
         run: python -m pytest -q
-        # No inference runtime here: the backend tests skip themselves, and the
-        # registry, control channel, protocol and cache tests all run.
+        # onnxruntime's CPU wheel is the one runtime here. The trt and tinygrad
+        # suites skip themselves without it, but test_sleep drives the serve
+        # loop, which needs a backend to select rather than a skip.
 
   python-test-macos:
     name: Python tests on macOS
