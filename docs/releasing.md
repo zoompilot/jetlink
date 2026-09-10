@@ -57,7 +57,12 @@ git push origin v0.3.0
    `Jetlink-0.3.0.zip`, `SHA256SUMS`, the sdist and the wheel, and notes ending
    with the GHCR image line.
 
-A tag with a hyphen in it (`v0.3.0-rc1`) is published as a prerelease.
+A prerelease tag is published as a prerelease. Both spellings are
+recognised: a hyphen (`v0.3.0-rc1`) and the PEP 440 suffixes
+(`v0.3.0a1`, `v0.3.0b2`, `v0.3.0rc1`). Prefer PEP 440. `pyproject.toml`
+has to hold the version verbatim, and setuptools normalizes a hyphenated
+version anyway, so `v0.3.0-alpha.1` would ship a wheel named
+`jetlink-0.3.0a1` and the tag would not match its own artifacts.
 
 ### Installing the app
 

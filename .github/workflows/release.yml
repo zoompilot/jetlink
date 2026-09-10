@@ -276,8 +276,13 @@ jobs:
             exit 1
           fi
           ARGS=(--generate-notes --title "Jetlink $GITHUB_REF_NAME")
+          # Both spellings of a prerelease: a hyphenated semver tag, and the
+          # PEP 440 suffixes, which carry no hyphen. pyproject.toml has to hold
+          # the version verbatim (check-version.sh), so an alpha tagged the
+          # semver way would be built into a wheel named the PEP 440 way; the
+          # tags here are PEP 440 and this has to recognise them.
           case "$GITHUB_REF_NAME" in
-            *-*) ARGS+=(--prerelease) ;;
+            *-*|*a[0-9]*|*b[0-9]*|*rc[0-9]*) ARGS+=(--prerelease) ;;
           esac
           gh release create "$GITHUB_REF_NAME" "${ARGS[@]}" "${FILES[@]}"
 
