@@ -590,6 +590,13 @@ class OrtBackend:
       raise ArtifactInvalid(f"{artifact}: no readable {MANIFEST} inside ({e})") from e
     if not isinstance(manifest, list) or not manifest:
       raise ArtifactInvalid(f"{artifact}: {MANIFEST} names no sessions")
+    sidecar = self._sidecar(artifact)
+    if self._on_coreml and 'compile_bytes' not in sidecar:
+      # Built before the Gemm weights were handed over transposed: its MIL
+      # carries the weights as text and a load parses gigabytes of it, 465 s
+      # on an M1 Pro against 1.8 s for the same model built since. The host
+      # replaces an invalid artifact from the ONNX, and that build is 5 s.
+      raise ArtifactInvalid(f"{artifact}: built before the weight rewrite; loads took minutes, a rebuild takes seconds")
     for entry in manifest:
       if not (artifact / entry['model']).is_file():
         raise ArtifactInvalid(f"{artifact}: no {entry['model']} inside")
@@ -606,7 +613,6 @@ class OrtBackend:
       if cache is not None and (not cache.is_dir() or not any(cache.iterdir())):
         raise ArtifactInvalid(f"{artifact}: the CoreML cache for {entry['model']} is empty")
     t0 = time.time()
-    sidecar = self._sidecar(artifact)
     progress = None
     if self._on_coreml:
       progress = CoreMLProgress(self._caches(artifact, manifest), expect=sidecar, loading=True)

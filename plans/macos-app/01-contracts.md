@@ -124,7 +124,8 @@ A client needs no command to render its first screen.
 //   building: a Job with load_only false; loading: a Job with load_only true
 //   ready: EngineHost.loaded is set; sha256 is the loaded model
 //   failed: the last Job failed; detail says why
-// stage: "upload"|"patch"|"parse"|"build"|"save"|"load"|"failed"|null, frac 0..1, msg free text,
+// stage: "upload"|"patch"|"parse"|"convert"|"compile"|"build"|"save"|"load"|"failed"|null, frac 0..1, msg free text,
+//   (convert and compile are the CoreML build's two stages, added 2026-09-10; a client that does not know a stage shows "Working")
 // straight from EngineHost._progress. Emitted on every state change and on
 // progress at most 4 times a second.
 
@@ -300,7 +301,14 @@ Two deviations from decision D10 were approved because they fix what the
 run showed: `Backend.load(artifact, report=None)` gained the optional
 progress callback `build` already had, and the ORT backend reports
 `('load', 0.0, 'creating the CoreML session, N min elapsed; ...')` every 5 s
-during session creation; `tinygrad_identity()` reads the pip
+during session creation (superseded 2026-09-10 by workstream H, plan 80: the
+build reports `convert` and `compile` from the bytes onnxruntime writes into
+the cache directory every 2 s, the load reports the worker's resident size
+against the last load's, every stage ends with a 100 % line, and
+`Backend.load` writes `load_seconds` and `load_rss_bytes` back into the
+sidecar; a CoreML artifact whose sidecar has no `compile_bytes` was built
+before the weight rewrite and `load` raises `ArtifactInvalid` so the host
+rebuilds it, 5 s); `tinygrad_identity()` reads the pip
 `direct_url.json` commit first and only runs a version-control lookup when
 tinygrad's own directory is a checkout, because the old lookup walked up to
 whichever repository enclosed site-packages and changed the cache key on

@@ -206,6 +206,19 @@ def test_a_directory_without_a_manifest_is_artifact_invalid(backend, tmp_path):
     backend.load(d)
 
 
+def test_a_coreml_artifact_from_before_the_weight_rewrite_is_artifact_invalid(tmp_path):
+  """Its MIL carries the weights as text and a load parsed it for minutes; the
+  host rebuilds an invalid artifact in seconds instead. The sidecar of a build
+  since the rewrite records compile_bytes, so its absence is the marker."""
+  coreml = OrtBackend('coreml', providers=['CoreMLExecutionProvider', 'CPUExecutionProvider'])
+  d = tmp_path / 'old.ortcache'
+  d.mkdir()
+  (d / MANIFEST).write_text(json.dumps([{'model': 'model.onnx', 'units': 'CPUAndGPU', 'cache': 'coreml'}]))
+  d.with_suffix('.json').write_text(json.dumps({'backend': 'ort', 'build_seconds': 526.4}))
+  with pytest.raises(ArtifactInvalid, match='weight rewrite'):
+    coreml.load(d)
+
+
 def test_an_empty_coreml_cache_is_artifact_invalid(backend, built):
   """Otherwise onnxruntime recompiles for minutes under 'loading engine'."""
   out = built[0]

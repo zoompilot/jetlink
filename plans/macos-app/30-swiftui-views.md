@@ -120,9 +120,10 @@ A `Form` (`.formStyle(.grouped)`) with three sections.
   or `"None"`; secondary: `sha256.prefix(16)`.
 - "State": None (gray) / Preparing (blue) / Loading (blue) / Ready (green) / Failed (red).
 - When building or loading: `ProgressRow(stage:frac:msg:)`, a `ProgressView(value:)`
-  with the `msg` beneath in secondary text. For CoreML the server's message
-  already says "compiling for CoreML, 3 min elapsed; the big model takes 11 min
-  on an M1 Pro", show it verbatim.
+  with the `msg` beneath in secondary text. The server's message is shown
+  verbatim; since 2026-09-10 (plan 80) CoreML reports "converting for CoreML,
+  412 MB of 766 MB written" and "compiling for CoreML, 1.2 GB of 2.3 GB
+  written" from the bytes on disk, and the whole build is about 5 s.
 - When failed: `detail` in red.
 - Empty state when `engine.state == .none` and no artifacts exist: a
   `ContentUnavailableView("No model prepared", systemImage: "shippingbox",
@@ -222,9 +223,9 @@ to the buffer's 5000 lines; the file has the rest.
 **Server** (`cpu`)
 - "Backend" `Picker`: Automatic (recommended) / CoreML on the GPU / CoreML with
   the Neural Engine / tinygrad on Metal. Caption changes with the choice:
-  auto and coreml: "About 43 ms a frame on an M1 Pro. Preparing a model takes
-  about 9 minutes, and loading one again takes as long, so keep Jetlink
-  running."; ane: "Faster back to back, slower at the comma's 20 Hz on an M1 Pro.
+  auto and coreml: the measured figures, since 2026-09-10 about 5 s to prepare
+  and 2 s to load (the "9 minutes" of the first build were a wrong cache key
+  and weights inlined as text, plan 80); ane: "Faster back to back, slower at the comma's 20 Hz on an M1 Pro.
   Measure on your Mac before using it in the car."; tinygrad: "Loads in a
   second. About 66 ms a frame on an M1 Pro, which is over the 50 ms budget;
   a newer Mac may be under it."
@@ -359,7 +360,7 @@ Summary (`StatusBadge.summary`, toolbar and menu bar first line): "Stopped",
 | Logs, Clear help | "Clear the view. The log file keeps everything." |
 | Logs, Copy all help | "Copy the shown lines" |
 | Settings, cache caption | "Models and prepared engines. A CoreML engine is about 10 GB. Takes effect when the server restarts." |
-| Settings, backend auto | "Recommended. About 43 ms a frame on an M1 Pro. Preparing takes about 18 minutes the first time and 9 minutes for each later load, so keep Jetlink running." |
+| Settings, backend auto | superseded 2026-09-10 by workstream H (plan 80): the caption now carries the measured 5 s prepare and 2 s load; see `SettingsView.backendCaption` |
 | Settings, backend coreml | same as auto without "Recommended. " |
 | Settings, backend ane | "Faster back to back, slower at the comma's 20 Hz on an M1 Pro. Measure before using it in the car." |
 | Settings, backend tinygrad | "Loads in a second. About 66 ms a frame on an M1 Pro, over the 50 ms budget; a newer Mac may be under it." |
