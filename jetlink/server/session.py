@@ -140,6 +140,7 @@ class EngineHost:
     self._last_progress = 0.0
     self._listeners: list = []            # the control channel, when there is one
     self._last_stage: tuple[str | None, float, str] = (None, 0.0, '')
+    self._last_engine: dict | None = None
     self.frame_stats = FrameStats()
 
   # -- listeners ------------------------------------------------------------
@@ -158,7 +159,15 @@ class EngineHost:
     Called from the job thread, the request loop and the main thread, so a
     listener has to be thread-safe. One that throws is logged and dropped
     rather than allowed to take a build down with it.
+
+    An engine payload identical to the last one is dropped: a job finishing
+    emits from the progress call and again from the run's finally, and the two
+    are the same event.
     """
+    if kind == 'engine':
+      if payload == self._last_engine:
+        return
+      self._last_engine = dict(payload)
     for fn in tuple(self._listeners):
       try:
         fn(kind, payload)
@@ -330,6 +339,10 @@ class EngineHost:
     job.detail = 'loading engine' if job.load_only else 'building engine'
     with self.lock:
       self.job = job
+      # The stage belongs to the job, not to the host: without this the first
+      # event of a build carried the last one's ("load", 1.0, "ready") and a
+      # client drew a full progress bar over a build that had not started.
+      self._last_stage = (None, 0.0, '')
     threading.Thread(target=self._run, args=(job, req, entry, model_path, spec),
                      daemon=True, name='jetlink-build').start()
     self.emit('engine', self.snapshot())
@@ -441,7 +454,7 @@ class EngineHost:
   # The backend seam: everything below touches a runtime or a real ONNX.
 
   def _load_engine(self, artifact: Path):
-    return self.backend.load(artifact)
+    return self.backend.load(artifact, report=self._progress)
 
   def _derive_spec(self, model_path: Path, frame_skip: int) -> ModelSpec:
     return spec_from_onnx(str(model_path), frame_skip=frame_skip)
