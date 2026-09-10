@@ -82,6 +82,6 @@ class TinygradBackend:
     from jetlink.server.backends.tinygrad.owner import on_owner
     return on_owner(build_jit, onnx_path, out_path, self.device, report=report, meta_extra=meta_extra)
 
-  def load(self, artifact: Path):
+  def load(self, artifact: Path, report=None):
     from jetlink.server.backends.tinygrad.engine import TinygradEngine
     return TinygradEngine(str(artifact), self.device)

@@ -90,8 +90,10 @@ class FakeBackend:
     report('build', 1.0, 'done')
     return out_path
 
-  def load(self, artifact: Path) -> FakeEngine:
+  def load(self, artifact: Path, report=None) -> FakeEngine:
     self.loads.append(Path(artifact))
+    if report is not None:
+      report('load', 0.0, 'faking a load')
     if self.invalid_loads > 0:
       self.invalid_loads -= 1
       raise ArtifactInvalid(f"{artifact}: made invalid by the test")

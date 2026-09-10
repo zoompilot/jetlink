@@ -240,7 +240,7 @@ def test_a_load_failure_that_is_not_the_artifacts_fault_keeps_it(linked, monkeyp
   client.ensure_engine(spec.sha256, spec.nbytes, onnx_path=onnx, build_timeout=10.0)
   host._unload()
 
-  def boom(artifact):
+  def boom(artifact, report=None):
     raise MemoryError('device out of memory')
   monkeypatch.setattr(backend, 'load', boom)
   with pytest.raises(LinkError, match='out of memory'):

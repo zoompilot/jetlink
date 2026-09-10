@@ -46,7 +46,7 @@ class TrtBackend:
     return _build.build_engine(onnx_path, out_path, report=report, meta_extra=meta_extra,
                                timing_cache=_build.timing_cache_path(Path(out_path).parent, self.device))
 
-  def load(self, artifact: Path):
+  def load(self, artifact: Path, report=None):
     # A plan that will not deserialize is not treated as ArtifactInvalid on
     # purpose: plans are keyed by TensorRT version and GPU, so the file cannot
     # be stale, and the other reasons (memory, a device fault) are not cured by
