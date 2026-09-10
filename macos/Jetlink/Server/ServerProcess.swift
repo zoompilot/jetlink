@@ -22,6 +22,15 @@ enum BackendChoice: String, CaseIterable, Codable, Sendable {
     case .tinygrad: return "METAL"
     }
   }
+
+  /// What the choice comes to on a Mac, before the server has said so itself.
+  var title: String {
+    switch self {
+    case .auto, .coreml: return "CoreML on the GPU"
+    case .ane: return "CoreML with the Neural Engine"
+    case .tinygrad: return "tinygrad on Metal"
+    }
+  }
 }
 
 enum TransportChoice: String, CaseIterable, Codable, Sendable {
@@ -128,6 +137,12 @@ final class ServerProcess {
 
     let exitHandler = onExit
     process.terminationHandler = { finished in
+      if finished.terminationReason == .uncaughtSignal {
+        // The server leads its own process group (--parent-pid), so this
+        // takes the ORT worker down instead of leaving it orphaned with the
+        // engine half built. ESRCH when there is no such group, harmless.
+        kill(-finished.processIdentifier, SIGKILL)
+      }
       exitHandler?(finished.terminationStatus, finished.terminationReason)
     }
 
@@ -158,6 +173,7 @@ final class ServerProcess {
     }
     log.error("server \(pid) ignored SIGTERM, sending SIGKILL")
     kill(pid, SIGKILL)
+    kill(-pid, SIGKILL)
     _ = await waitForExit(process, seconds: 5)
     self.process = nil
   }

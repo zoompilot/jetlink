@@ -308,10 +308,7 @@ final class ServerStore {
     }
     let wasStarting: Bool
     if case .starting = runState { wasStarting = true } else { wasStarting = false }
-    let tail = logs.tail(20).joined(separator: "\n")
-    var message = "Server exited with status \(status)"
-    if reason == .uncaughtSignal { message += " after a signal" }
-    if !tail.isEmpty { message += "\n" + tail }
+    let message = ServerStore.exitMessage(status: status, reason: reason)
     lastFailure = message
     runState = .failed(message)
     resetLiveState()
@@ -319,6 +316,24 @@ final class ServerStore {
     // A failure during startup is almost always configuration, so it is not retried.
     guard !wasStarting else { return }
     scheduleRestart()
+  }
+
+  /// One sentence on how the server went, with the signal by name. The last
+  /// log lines are not in it: the Status view shows them underneath.
+  nonisolated static func exitMessage(status: Int32, reason: Process.TerminationReason) -> String {
+    guard reason == .uncaughtSignal else {
+      return "The server exited with status \(status)."
+    }
+    let names: [Int32: String] = [
+      SIGKILL: "SIGKILL", SIGSEGV: "SIGSEGV", SIGABRT: "SIGABRT", SIGBUS: "SIGBUS",
+      SIGILL: "SIGILL", SIGTRAP: "SIGTRAP", SIGTERM: "SIGTERM", SIGINT: "SIGINT",
+    ]
+    let name = names[status].map { " (\($0))" } ?? ""
+    var text = "The server was killed by signal \(status)\(name)."
+    if [SIGKILL, SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGTRAP].contains(status) {
+      text += " Console may have a crash report for python3.14 under Crash Reports."
+    }
+    return text
   }
 
   private func failStartup(_ detail: String) {

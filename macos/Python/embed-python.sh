@@ -110,6 +110,11 @@ USB1_DIR="$OUT/lib/python$PYVER/site-packages/usb1"
 cp "$LIBUSB_DYLIB" "$USB1_DIR/libusb-1.0.dylib"
 install_name_tool -id @loader_path/libusb-1.0.dylib "$USB1_DIR/libusb-1.0.dylib"
 chmod 644 "$USB1_DIR/libusb-1.0.dylib"
+# install_name_tool leaves Homebrew's signature invalid, and Apple silicon kills
+# any process that maps a modified page: the server died with "SIGKILL (Code
+# Signature Invalid)" the first time ctypes opened this file. scripts/sign.sh
+# re-signs the release bundle, but Xcode's own Run copies this tree as it is.
+codesign --force --sign - "$USB1_DIR/libusb-1.0.dylib"
 
 # 5. Prune. Each of these has been checked to be unused at runtime. Every
 #    *.dist-info stays: importlib.metadata version lookups read them.
@@ -133,11 +138,22 @@ echo "==> compiling"
 "$PY" -m compileall -q -j 0 "$LIB" || echo "warning: compileall reported files it could not compile (samples, not imports)"
 
 # 7. Sanity, under the same environment the app uses (01-contracts.md section 9).
+#    Every Mach-O must carry either no signature or a valid one: a signature
+#    that no longer matches the file is a SIGKILL at load time, not an error.
 echo "==> checking the runtime"
+SIGNATURE_ERRORS=0
+while IFS= read -r f; do
+  if codesign -v "$f" 2>&1 | grep -q "invalid signature\|modified"; then
+    echo "error: $f has a signature that no longer matches the file" >&2
+    SIGNATURE_ERRORS=$((SIGNATURE_ERRORS + 1))
+  fi
+done < <(find "$OUT" -type f \( -name '*.so' -o -name '*.dylib' \))
+[ "$SIGNATURE_ERRORS" -eq 0 ] || exit 1
 CLEAN_ENV=(env -i "PATH=/usr/bin:/bin:/usr/sbin:/sbin" "HOME=$HOME" "TMPDIR=${TMPDIR:-/tmp}" \
   PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8 LANG=en_US.UTF-8)
+# USBContext() is what opens libusb; importing usb1 alone does not.
 "${CLEAN_ENV[@]}" "$PY" -c \
-  "import jetlink, numpy, onnx, usb1, tinygrad; import importlib.metadata as m; print('onnxruntime', m.version('onnxruntime'))"
+  "import jetlink, numpy, onnx, usb1, tinygrad; usb1.USBContext().close(); import importlib.metadata as m; print('onnxruntime', m.version('onnxruntime'))"
 BACKENDS="$("${CLEAN_ENV[@]}" "$PY" -m jetlink.server.main --list-backends)"
 echo "$BACKENDS"
 echo "$BACKENDS" | grep -q '\bort\b' || { echo "error: the ort backend did not come up" >&2; exit 1; }

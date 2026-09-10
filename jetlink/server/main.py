@@ -274,7 +274,8 @@ def main(argv=None) -> int:
                  help='open a local control channel: a filesystem path (a unix socket) or '
                       'tcp://127.0.0.1:PORT. The Mac app drives the server through it')
   p.add_argument('--parent-pid', type=int, default=None, metavar='PID',
-                 help='exit cleanly once this process is no longer our parent')
+                 help='exit cleanly once this process is no longer our parent, and lead a '
+                      'process group of our own so that parent can reap the workers')
   p.add_argument('--build', metavar='ONNX', help='build an engine and exit')
   p.add_argument('--dump-spec', metavar='ONNX',
                  help='write this model\'s spec as json to stdout and exit')
@@ -297,6 +298,15 @@ def main(argv=None) -> int:
     pass  # not the main thread, or a platform without these signals
 
   if args.parent_pid:
+    # Lead a process group of our own, so the app can take the ORT worker down
+    # with one killpg when we die by a signal instead of leaving it orphaned
+    # with the engine half built. Not done for a terminal: the shell's job
+    # control (Ctrl-C reaching the group) is what keeps a bare run stoppable.
+    if hasattr(os, 'setpgrp'):
+      try:
+        os.setpgrp()
+      except OSError:
+        pass
     threading.Thread(target=_watch_parent, args=(args.parent_pid,), daemon=True,
                      name='jetlink-parent-watch').start()
 
