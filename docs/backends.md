@@ -54,8 +54,14 @@ over TCP loopback through the real server at 20 Hz.
 | parity gate, worst column | 0.99954 pass | 0.99957 pass | 0.99957 pass |
 | parity, mean error on `plan` / `lead_prob` | 0.0060 / 0.0156 | 0.0046 / 0.0150 | 0.0057 / 0.0138 |
 | build / load in a fresh process | 13 s / 1.1 s | 524 s / 527 s | 621 s / 635 s |
-| artifact on disk | 777 MB | 5.5 GB | 5.5 GB |
+| artifact on disk | 777 MB | 10.3 GB | 10.3 GB |
 | peak RSS while building | 0.6 GB | 7.9 GB | 9.1 GB |
+
+The CoreML artifact size was re-measured in the end-to-end run through the Mac
+app on the same machine, over the whole `.ortcache` directory, and came to
+10.3 GB; an earlier figure of 5.5 GB was wrong. That run also timed a first
+prepare at about 18 minutes end to end, which is the build and the load above
+back to back.
 
 Read it this way:
 

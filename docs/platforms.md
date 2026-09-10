@@ -35,11 +35,13 @@ reliably; a plain C-to-C cable may not.
 
 Things to know:
 
-- CoreML takes **about 9 minutes** to prepare the model, and pays that again
-  every time the server restarts. Keep it running.
+- CoreML takes **about 18 minutes** to prepare the model the first time, and
+  about 9 minutes to load it again every time the server restarts. Keep it
+  running.
 - The script holds the Mac awake on AC power. On battery, keep the lid open.
 - Models and prepared engines live in `models_cache/` next to the checkout,
-  about 5.5 GB per model. Set `JETLINK_CACHE` to move them.
+  about 11 GB per model with CoreML: a 766 MB download plus a 10 GB engine.
+  Set `JETLINK_CACHE` to move them.
 
 Options:
 
@@ -189,7 +191,7 @@ docker run --rm -it --network container:jetlink-cuda \
 | USB permission error on Linux | Install the udev rule, then replug the comma |
 | TCP connection refused | Server running with `--transport tcp`? Right address, port 5599 open? |
 | GPU not found in Docker | Redo the GPU access setup and rerun the `nvidia-smi` check |
-| Mac looks stuck loading | Allow about 9 minutes for CoreML; check the server output |
+| Mac looks stuck loading | Allow about 18 minutes the first time and about 9 minutes for each later load; check the server output |
 | Link drops when laptop sleeps | Keep it awake, powered, and open |
 
 Desktop caches use `JETLINK_CACHE` if set, otherwise `~/.cache/jetlink`, or
