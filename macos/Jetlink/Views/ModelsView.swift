@@ -191,13 +191,22 @@ struct ModelsView: View {
         .foregroundStyle(.secondary)
       Spacer()
       if let error = models.catalog?.error, !error.isEmpty {
-        Label(error, systemImage: "exclamationmark.triangle")
+        Label(catalogErrorTitle, systemImage: "exclamationmark.triangle")
           .font(.callout)
           .foregroundStyle(.orange)
+          .lineLimit(1)
+          .help(error)
       }
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 6)
+  }
+
+  /// The fetch failed. The cached list still drives the table, unless there is
+  /// none. The reason itself is a whole paragraph, so it goes in the tooltip.
+  private var catalogErrorTitle: String {
+    let cached = models.catalog?.models.isEmpty ?? true
+    return cached ? "Model list unavailable" : "Model list not refreshed"
   }
 
   private var diskSummary: String {
