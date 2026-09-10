@@ -75,21 +75,35 @@ Verify the download against `SHA256SUMS`:
 shasum -a 256 -c SHA256SUMS
 ```
 
-### The Jetson image
+### The container images
 
-Every release pushes `ghcr.io/zoompilot/jetlink`, tagged with the full version
-and with `major.minor`. Pull it on the Jetson instead of building, and point
-the service at that image:
+Every release pushes two images to `ghcr.io/zoompilot/jetlink`, each tagged with
+the full version and with `major.minor`, and each carrying the platform it is
+for:
+
+| Tag | Platform | Base |
+| --- | --- | --- |
+| `0.3.0-jetson` | linux/arm64, JetPack | `l4t-jetpack:r36.4.0` |
+| `0.3.0-cuda` | linux/amd64, NVIDIA GPU | `nvidia/cuda:12.9.1-base-ubuntu24.04` |
+
+The suffix is not decoration. `arm64` on its own does not mean Jetson: the
+Jetson image wants the L4T stack and the nvidia container runtime, and an
+ordinary arm64 server that pulled an unsuffixed tag would get something it
+cannot run. Nothing takes `:latest`, so a `docker pull` with no tag fails
+rather than handing out whichever release was cut last.
+
+Pull the Jetson one on the Jetson instead of building, and point the service at
+that image:
 
 ```bash
-sudo docker pull ghcr.io/zoompilot/jetlink:0.3.0
-sudo docker image inspect --format 'JETLINK_IMAGE={{.Id}}' ghcr.io/zoompilot/jetlink:0.3.0 \
+sudo docker pull ghcr.io/zoompilot/jetlink:0.3.0-jetson
+sudo docker image inspect --format 'JETLINK_IMAGE={{.Id}}' ghcr.io/zoompilot/jetlink:0.3.0-jetson \
   | sudo tee /etc/jetlink/server.env >/dev/null
 sudo systemctl restart jetlink-server
 ```
 
-The image job is allowed to fail without blocking the rest of the release; the
-release notes then say so, and `sudo docker/build.sh` on the Jetson still works.
+Either image job may fail without blocking the rest of the release; the release
+notes then say which, and building locally still works.
 
 ### Signing secrets
 

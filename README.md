@@ -81,7 +81,7 @@ For a **release install**, copy the Jetson image reference from the
 that reference, replacing `VERSION` below with its version:
 
 ```bash
-IMAGE=ghcr.io/zoompilot/jetlink:VERSION
+IMAGE=ghcr.io/zoompilot/jetlink:VERSION-jetson
 sudo docker pull "$IMAGE"
 sudo env IMAGE="$IMAGE" docker/run.sh --transport usb
 ```

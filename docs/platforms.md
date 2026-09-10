@@ -113,10 +113,24 @@ rest in your Ubuntu WSL terminal. Check it works:
 docker run --rm --gpus all nvidia/cuda:12.9.1-runtime-ubuntu24.04 nvidia-smi
 ```
 
-**Build and run.** From the checkout:
+**Pull or build.** Every release publishes an image; pull it and skip the
+build, which downloads 4.4 GB of TensorRT:
+
+```bash
+docker pull ghcr.io/zoompilot/jetlink:VERSION-cuda
+docker tag ghcr.io/zoompilot/jetlink:VERSION-cuda jetlink:cuda
+```
+
+The `-cuda` suffix matters: `-jetson` is the same version for a Jetson, and the
+two are different stacks. To build it yourself instead, from the checkout:
 
 ```bash
 docker build -f docker/Dockerfile.cuda -t jetlink:cuda .
+```
+
+**Run it.**
+
+```bash
 docker volume create jetlink-cache
 docker run --rm -it --gpus all --name jetlink-cuda \
   -p 127.0.0.1:5599:5599 \
