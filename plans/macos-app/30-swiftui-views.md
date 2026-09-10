@@ -365,3 +365,15 @@ Summary (`StatusBadge.summary`, toolbar and menu bar first line): "Stopped",
 | Settings, backend tinygrad | "Loads in a second. About 66 ms a frame on an M1 Pro, over the 50 ms budget; a newer Mac may be under it." |
 | Settings, override caption | "For development. Empty means the bundled runtime." |
 | Inspector, no engines | "No prepared engine yet." |
+
+## Toolbar status indicator (decided 2026-09-09)
+
+The toolbar summary must not draw its own background: macOS 26 toolbars are
+Liquid Glass and a hand-drawn tinted capsule inside one looks foreign.
+`StatusBadge` gets a style parameter: `.pill` (the current capsule, used in the
+form rows) and `.plain` (a `Label` with a `circle.fill` symbol in the tone
+colour and the text in `.secondary`, no background, no padding). The toolbar
+uses `.plain`. On macOS 26 and later the `.pill` style applies
+`.glassEffect(.regular.tint(tone.color.opacity(0.35)), in: .capsule)` instead of
+the manual fill, gated with `if #available(macOS 26, *)`; on macOS 15 the manual
+fill stays. Nothing else in the toolbar changes.
