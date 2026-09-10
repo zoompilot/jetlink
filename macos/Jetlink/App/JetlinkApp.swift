@@ -10,7 +10,10 @@ struct JetlinkApp: App {
     Window("Jetlink", id: "main") {
       MainWindow()
         .jetlinkEnvironment(appState)
-        .onAppear { delegate.appState = appState }
+        .onAppear {
+          delegate.appState = appState
+          appState.launch()
+        }
     }
     .defaultSize(width: 860, height: 560)
     .commands { AppCommands(appState: appState) }
@@ -18,7 +21,10 @@ struct JetlinkApp: App {
     MenuBarExtra("Jetlink", systemImage: menuBarSymbol) {
       MenuBarView()
         .jetlinkEnvironment(appState)
-        .onAppear { delegate.appState = appState }
+        .onAppear {
+          delegate.appState = appState
+          appState.launch()
+        }
     }
     .menuBarExtraStyle(.menu)
 
