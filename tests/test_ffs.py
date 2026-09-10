@@ -525,3 +525,56 @@ def test_close_releases_the_endpoints_even_when_the_watchdog_hangs(mount, monkey
   # And the gadget opens again, which is the half the raise used to cost.
   again = FfsTransport(str(mount))
   again.close()
+
+
+def test_rebind_bounces_a_gadget_no_host_ever_configured(mount, monkeypatch):
+  """The one edge a Jetson that took the bind as a wake and then stopped needs.
+
+  It answers with a bus reset and parks the UDC in default or addressed;
+  nothing on the comma moves it but another connect.
+  """
+  monkeypatch.setattr(ffs, 'REBIND_SETTLE', 0.0)
+  t = FfsTransport(str(mount))
+  try:
+    t.gadget = '/sys/kernel/config/usb_gadget/jetlink'
+    t.bound_udc = 'udc0'
+    calls = []
+    monkeypatch.setattr(t, 'unbind', lambda: calls.append('unbind'))
+    monkeypatch.setattr(t, 'bind', lambda udc=None: calls.append(f'bind {udc}'))
+    assert t.rebind() is True
+    assert calls == ['unbind', 'bind udc0'], calls
+  finally:
+    t.gadget = None
+    t.close()
+
+
+@pytest.mark.parametrize('state', ['no gadget', 'host has been here', 'endpoints open', 'not bound'])
+def test_rebind_is_refused_once_it_would_cost_a_working_link(mount, monkeypatch, state):
+  monkeypatch.setattr(ffs, 'REBIND_SETTLE', 0.0)
+  t = FfsTransport(str(mount))
+  try:
+    t.gadget = None if state == 'no gadget' else '/sys/kernel/config/usb_gadget/jetlink'
+    t.bound_udc = None if state == 'not bound' else 'udc0'
+    t._had_host = state == 'host has been here'
+    if state == 'endpoints open':
+      t.ep_out = 999   # unbinding here completes the reader's read with ESHUTDOWN
+    unbound = []
+    monkeypatch.setattr(t, 'unbind', lambda: unbound.append(state))
+    assert t.rebind() is False
+    assert not unbound, 'unbound a link that was not stalled'
+  finally:
+    monkeypatch.undo()
+    t.gadget, t.ep_out = None, -1
+    t.close()
+
+
+def test_only_the_gadget_can_bounce_itself():
+  # tcp and libusb peers reconnect on their own; there is nothing to bounce.
+  from jetlink.transport.tcp import TcpTransport
+  srv = TcpTransport.listen('127.0.0.1', 0)
+  try:
+    t = TcpTransport.connect('127.0.0.1', srv.getsockname()[1])
+    assert t.rebind() is False
+    t.close()
+  finally:
+    srv.close()

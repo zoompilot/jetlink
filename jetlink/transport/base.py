@@ -57,6 +57,11 @@ class Transport(ABC):
     import json
     self.send(msg_type, seq, (json.dumps(obj).encode(),), flags)
 
+  def rebind(self) -> bool:
+    """Bounce the link so the peer sees it arrive again, if that means
+    anything here. Only the gadget transport can; see FfsTransport.rebind."""
+    return False
+
 
 class RxBuffer:
   """Receive buffer for a byte stream carrying framed messages.
