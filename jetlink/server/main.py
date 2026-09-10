@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 import sys
 import time
 from pathlib import Path
@@ -47,6 +48,14 @@ log = logging.getLogger('jetlink.server')
 DRAIN_TIMEOUT = 5.0
 
 
+def _stop_on_sigterm(signum, frame) -> None:
+  """`docker stop` sends SIGTERM and SIGKILLs 10 s later. Unhandled, every
+  unit stop cost that whole 10 s and the engine was never released on the
+  thread that owns it. Raising is what Ctrl-C already does, so the teardown
+  below is the same one."""
+  raise KeyboardInterrupt
+
+
 def _serve(cache: EngineCache, open_transport, sleeper: Sleeper | None = None) -> None:
   """Serve one client at a time forever.
 
@@ -55,7 +64,8 @@ def _serve(cache: EngineCache, open_transport, sleeper: Sleeper | None = None) -
   sessions: the comma reconnects at every handover and the engine must not
   reload. With a `sleeper`, a long run of None suspends the box; see sleep.py.
   """
-  host = EngineHost(cache, pick_source(cache.backend.name))
+  host = EngineHost(cache, pick_source(cache.backend.name),
+                    sleep_after=sleeper.after if sleeper is not None else 0.0)
   # before accepting anything, so two callers cannot race to start GPU loads
   host.preload()
   try:
@@ -251,6 +261,7 @@ def main(argv=None) -> int:
     sleeper = Sleeper(args.sleep_after)
     log.info("will suspend after %.0f s without a gadget", args.sleep_after)
   opener = _usb_opener(args, sleeper) if args.transport == 'usb' else OPENERS[args.transport](args)
+  signal.signal(signal.SIGTERM, _stop_on_sigterm)
   try:
     _serve(cache, opener, sleeper)
   except KeyboardInterrupt:
