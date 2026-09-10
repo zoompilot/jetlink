@@ -68,6 +68,11 @@ class Transport(ABC):
     anything here. Only the gadget transport can; see FfsTransport.rebind."""
     return False
 
+  def release_endpoints(self) -> bool:
+    """Give up the IO without giving up the link, where the two are separable.
+    Only the gadget transport can; see FfsTransport.release_endpoints."""
+    return False
+
 
 class RxBuffer:
   """Receive buffer for a byte stream carrying framed messages.

@@ -126,16 +126,15 @@ class EngineHost:
     if job is not None and job.state == 'building':
       return {'state': 'building', 'sha256': sha256, 'chunk': CHUNK,
               'detail': f'another build is in progress ({job.sha256[:16]})'}
-    have = self._model_bytes(sha256)
-    if self._loadable_from_cache(sha256):
+    if self._cached_spec(self.cache.entry(sha256)) is not None:
       # Built already, just not loaded. Only `request` consults the cache, so
-      # every other caller answered need_upload for a plan sitting on disk: the
-      # client then waits out its whole build_timeout, or gives up outright
-      # since modeld never carries the ONNX. Say what a request will do.
-      return {'state': 'building', 'sha256': sha256, 'chunk': CHUNK, 'cached': True,
+      # every other caller answered need_upload for a plan sitting on disk, and
+      # modeld, which never carries the ONNX, reads that as an engine that is
+      # gone. Say what a request for it will do instead.
+      return {'state': 'building', 'sha256': sha256, 'chunk': CHUNK,
               'detail': 'engine cached, not loaded yet'}
     return {'state': 'need_upload', 'sha256': sha256, 'chunk': CHUNK,
-            'detail': f'have {have} of the model'}
+            'detail': f'have {self._model_bytes(sha256)} of the model'}
 
   def loaded_sha(self) -> str | None:
     with self.lock:
@@ -178,19 +177,19 @@ class EngineHost:
     return {'state': 'ready', 'detail': '', 'sha256': loaded.sha256, 'chunk': CHUNK,
             'spec': loaded.spec.to_dict()}
 
-  def _loadable_from_cache(self, sha256: str) -> bool:
-    """Would a request for this model load without the client uploading?
+  def _cached_spec(self, entry: CacheEntry) -> dict | None:
+    """The spec a cached artifact's sidecar carries, if it has one.
 
-    The plan alone is not enough: without a spec in its sidecar there is
-    nothing to lay the engine's IO over, and deriving one needs the ONNX.
+    A plan on its own cannot be served: without a spec there is nothing to lay
+    the engine's IO over, and deriving one means parsing the ONNX.
     """
-    entry = self.cache.entry(sha256)
     if not entry.exists:
-      return False
+      return None
     try:
-      return bool(entry.meta().get('spec'))
-    except (OSError, ValueError):
-      return False
+      return entry.meta().get('spec') or None
+    except (OSError, ValueError, KeyError):
+      log.warning("unreadable sidecar for %s", entry.path.name)
+      return None
 
   def _model_bytes(self, sha256: str) -> int:
     path = self.cache.model_path(sha256)
@@ -214,15 +213,10 @@ class EngineHost:
     with self.lock:
       if self.loaded is not None or self.job is not None:
         return
+    d = self._cached_spec(self.cache.entry(sha256))
+    if d is None:
+      return
     entry = self.cache.entry(sha256)
-    if not entry.exists:
-      return
-    try:
-      d = entry.meta().get('spec')
-    except (OSError, ValueError):
-      return
-    if not d:
-      return
     spec = ModelSpec.from_dict({**d, 'frame_skip': frame_skip})
     log.info("preloading the engine loaded last: %s", entry.path.name)
     self._start(Job(sha256, load_only=True), Request(sha256, 0, frame_skip),
@@ -240,13 +234,9 @@ class EngineHost:
     every few seconds while it has no engine: parsing it fails every time and
     logs a traceback for what `need_upload` already says.
     """
-    if entry.exists:
-      try:
-        d = entry.meta().get('spec')
-        if d:
-          return ModelSpec.from_dict({**d, 'frame_skip': req.frame_skip})
-      except (OSError, ValueError, KeyError):
-        log.warning("unreadable sidecar for %s", entry.path.name)
+    d = self._cached_spec(entry)
+    if d is not None:
+      return ModelSpec.from_dict({**d, 'frame_skip': req.frame_skip})
     if _model_complete(model_path, req.nbytes):
       try:
         return self._derive_spec(model_path, req.frame_skip)
@@ -312,7 +302,23 @@ class EngineHost:
     finally:
       session = self.session
       if session is not None:
+        self._serve_pending(job, session)
         session.engine_update()
+
+  def _serve_pending(self, done: Job, session: Session) -> None:
+    """Start what the client is still waiting for, now the GPU is free.
+
+    The job that just finished is not necessarily the one anybody asked for: a
+    preload that guessed the wrong sha holds the GPU while the client waits,
+    and when it landed nothing started the model actually wanted, so the client
+    sat in _await_ready until its build_timeout ran out. A job for the client's
+    own model is never retried here, whatever became of it: its outcome is the
+    answer.
+    """
+    req = session.request
+    if req is None or done.sha256 == req.sha256:
+      return
+    self.request(req, session)
 
   def _build_job(self, req: Request, entry: CacheEntry, model_path: Path,
                  spec: ModelSpec | None) -> ModelSpec:
@@ -413,12 +419,18 @@ class Session:
     self.t = transport
     self.host = host
     self.telemetry = host.telemetry
-    self.request: Request | None = None
     self.send_lock = threading.Lock()
-    self.frames = 0
-    self.last_seq = 0
     self.client = ''   # who said hello; see _greet
+    self._reset(0)
     self.telemetry.read()  # request the first sample without blocking connection setup
+
+  def _reset(self, seq: int) -> None:
+    """Everything counted per connection, back where a fresh client expects it:
+    the seq it counts replays from, the model it asked for, the frames it has
+    been served. The engine is not per connection and stays; see EngineHost."""
+    self.last_seq = seq
+    self.request: Request | None = None
+    self.frames = 0
 
   # -- plumbing -------------------------------------------------------------
 
@@ -479,7 +491,8 @@ class Session:
       # like from here - would drop the new modeld's hello as a replay and
       # answer nothing at all. That was a whole drive on the small model.
       self._greet(msg)
-      return self.on_hello(msg)
+      self.on_hello(msg)
+      return
     # dwc3 occasionally sends a request twice (see FfsTransport.write_chunk).
     # Seqs never repeat on a connection, so anything at or below the last one is
     # a replay; running it would push the same image into the queues twice.
@@ -511,13 +524,7 @@ class Session:
     return (self.request.sha256, self.request.frame_skip) if self.request else (None, None)
 
   def _greet(self, msg: Message) -> None:
-    """Start the session over for whoever just said hello.
-
-    Everything numbered per connection goes back to where a fresh client
-    expects it: the seq it counts replays from, the model it asked for, the
-    frames it has been served. The engine is not per connection and stays; see
-    EngineHost.
-    """
+    """Start the session over for whoever just said hello."""
     who = ''
     try:
       d = json.loads(bytes(msg.payload) or b'{}').get('client') or {}
@@ -527,9 +534,7 @@ class Session:
     if self.client and who != self.client:
       log.info("session handed from %s to %s", self.client, who or 'an unnamed client')
     self.client = who
-    self.last_seq = msg.seq
-    self.request = None
-    self.frames = 0
+    self._reset(msg.seq)
     log.info("hello from %s (seq %d)", who or 'an unnamed client', msg.seq)
 
   def on_hello(self, msg: Message) -> None:
@@ -560,23 +565,7 @@ class Session:
     self._send_json(P.Msg.ENGINE_RESP, msg.seq, self.host.request(self.request, self))
 
   def _respond_engine(self, seq: int) -> None:
-    self._send_json(P.Msg.ENGINE_RESP, seq, self._engine_state())
-
-  def _engine_state(self) -> dict:
-    """This session's engine state, starting the work when the GPU is free.
-
-    engine_update fires when *a* job finished, not necessarily this client's:
-    a preload that guessed the wrong sha holds the GPU while the client waits,
-    and when it lands nothing would start the model actually asked for. The
-    client then sat in _await_ready until build_timeout. `cached` is the one
-    state that says the plan is there and no one is loading it; a job that
-    failed on this model is reported as the failure it is, not retried.
-    """
-    sha, frame_skip = self._wanted()
-    if sha is None:
-      return self.host.status(None)
-    state = self.host.status(sha, frame_skip)
-    return self.host.request(self.request, self) if state.get('cached') else state
+    self._send_json(P.Msg.ENGINE_RESP, seq, self.host.status(*self._wanted()))
 
   def on_upload_chunk(self, msg: Message) -> None:
     req = self.request

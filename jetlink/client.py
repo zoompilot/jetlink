@@ -60,10 +60,7 @@ class EngineMissing(LinkError):
 
 def _default_name() -> str:
   """Something the Jetson's journal can tell one comma process from another by."""
-  try:
-    return Path(sys.argv[0]).stem or 'python'
-  except Exception:
-    return 'python'
+  return (Path(sys.argv[0]).stem if sys.argv else '') or 'python'
 
 
 class JetlinkClient:
@@ -107,7 +104,8 @@ class JetlinkClient:
     return cls(FfsTransport(mount, gadget=gadget, udc=udc), **kw)
 
   @classmethod
-  def open_borrowed_ffs(cls, mount: str, udc: str, bounce=None, **kw) -> JetlinkClient:
+  def open_borrowed_ffs(cls, mount: str, udc: str, bounce=None, owner_gadget: str | None = None,
+                        **kw) -> JetlinkClient:
     """This end is the USB gadget, over a gadget another process owns.
 
     The owner holds ep0 and the UDC bind for as long as the link is enabled,
@@ -115,7 +113,7 @@ class JetlinkClient:
     recover from. See FfsTransport.borrowed.
     """
     from jetlink.transport.ffs import FfsTransport
-    return cls(FfsTransport.borrowed(mount, udc, bounce=bounce), **kw)
+    return cls(FfsTransport.borrowed(mount, udc, bounce=bounce, owner_gadget=owner_gadget), **kw)
 
   @classmethod
   def open_tcp(cls, host: str, port: int = 5599, **kw) -> JetlinkClient:
@@ -373,6 +371,11 @@ class JetlinkClient:
     """Make the peer see the link arrive again, where that is a thing this
     transport can do. See FfsTransport.rebind; False everywhere else."""
     return self.t.rebind()
+
+  def release_endpoints(self) -> bool:
+    """Give the endpoints up without giving the gadget up. See
+    FfsTransport.release_endpoints; False everywhere else."""
+    return self.t.release_endpoints()
 
   def close(self) -> None:
     self.t.close()

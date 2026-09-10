@@ -632,11 +632,28 @@ def test_a_stuck_borrowed_write_asks_the_owner_to_free_it(mount, tmp_path, monke
   borrowed gadget only the owner can do it."""
   _udc(tmp_path / 'sys', monkeypatch)
   asked = []
-  t = FfsTransport.borrowed(str(mount), 'udc0', bounce=lambda: asked.append(True))
+  t = FfsTransport.borrowed(str(mount), 'udc0', bounce=lambda: bool(asked.append(True)) or True)
   try:
-    monkeypatch.setattr(t, 'unbind', lambda: pytest.fail('a borrower took the gadget down'))
+    monkeypatch.setattr(t, 'unbind', lambda *a: pytest.fail('a borrower took the gadget down'))
     t._abort_write()
     assert t._write_aborted and asked == [True]
+  finally:
+    monkeypatch.undo()
+    t.close()
+
+
+def test_an_owner_that_does_not_answer_does_not_wedge_the_frame_thread(mount, tmp_path, monkeypatch):
+  """The abort runs while a frame thread is inside a writev the kernel will
+  never return from on its own. Asking an owner that is dead and leaving it at
+  that costs the whole drive, the small model included."""
+  _udc(tmp_path / 'sys', monkeypatch)
+  owner = str(tmp_path / 'gadget')
+  taken = []
+  t = FfsTransport.borrowed(str(mount), 'udc0', bounce=lambda: False, owner_gadget=owner)
+  try:
+    monkeypatch.setattr(t, 'unbind', lambda gadget=None: taken.append(gadget))
+    t._abort_write()
+    assert taken == [owner], 'the link was left stuck on a silent owner'
   finally:
     monkeypatch.undo()
     t.close()
@@ -672,4 +689,56 @@ def test_a_borrower_asks_the_owner_to_bounce_a_stalled_bus(mount, tmp_path, monk
     assert t.rebind() is False, 'bounced a link this end is reading'
   finally:
     t.ep_out = -1
+    t.close()
+
+
+def test_releasing_the_endpoints_keeps_ep0_and_the_bind(mount, tmp_path, monkeypatch):
+  """The owner puts the endpoints down between exchanges so a borrower can
+  read them. Closing the transport instead would drop ep0, and the gadget
+  exists only while somebody holds it."""
+  monkeypatch.setattr(ffs, 'REBIND_SETTLE', 0.0)
+  _udc(tmp_path / 'sys', monkeypatch)
+  t = FfsTransport(str(mount))
+  try:
+    t.gadget, t.bound_udc = '/sys/kernel/config/usb_gadget/jetlink', 'udc0'
+    bound = []
+    monkeypatch.setattr(t, 'unbind', lambda gadget=None: bound.append('off'))
+    monkeypatch.setattr(t, 'bind', lambda udc=None: bound.append(f'on {udc}'))
+    ep0 = t.ep0
+    assert t.release_endpoints() is False, 'nothing was open to give up'
+
+    t._ensure_epfiles()
+    assert not t.lendable
+    assert t.release_endpoints() is True
+    assert bound == ['off', 'on udc0']
+    assert t.ep0 == ep0, 'the owner let go of ep0'
+    assert t.ep_out == -1 and t.ep_in == -1
+    assert t.lendable, 'a borrower still cannot take the endpoints'
+    assert t._reader is None and t._reader_error is None
+  finally:
+    monkeypatch.undo()
+    t.gadget = None
+    t.close()
+
+
+def test_a_released_link_frames_the_next_exchange_from_scratch(mount, tmp_path, monkeypatch):
+  # half a message left in the receive buffer would frame the next reply as
+  # garbage, and the next reply belongs to somebody else
+  monkeypatch.setattr(ffs, 'REBIND_SETTLE', 0.0)
+  _udc(tmp_path / 'sys', monkeypatch)
+  t = FfsTransport(str(mount))
+  try:
+    t.gadget, t.bound_udc = '/sys/kernel/config/usb_gadget/jetlink', 'udc0'
+    monkeypatch.setattr(t, 'unbind', lambda gadget=None: None)
+    monkeypatch.setattr(t, 'bind', lambda udc=None: None)
+    t._ensure_epfiles()
+    t.rx.end = 17
+    t._chunks.append((memoryview(b'half a message'), 0.0, 0.0, 0.0))
+    t._queued = 14
+    t.release_endpoints()
+    assert t.rx.start == t.rx.end == 0
+    assert not t._chunks and t._queued == 0
+  finally:
+    monkeypatch.undo()
+    t.gadget = None
     t.close()
