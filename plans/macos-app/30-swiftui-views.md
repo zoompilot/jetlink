@@ -283,3 +283,54 @@ build-time date parsing; `ProgressRow` stage mapping.
 Screenshots are not required (no display in CI). Report which views have
 previews that compile, and any store API you needed that `01-contracts.md`
 did not declare.
+
+## Polish pass (decided 2026-09-09 from screenshots of the running app)
+
+These override the sections above where they differ. All strings stay
+sentence case, no em dashes.
+
+1. **Toolbar.** `MainWindow` puts the summary in `ToolbarItem(placement: .principal)`
+   as a `StatusBadge(text:tone:)` (dot plus text), and the Start/Stop button in
+   `.primaryAction`. The summary must never truncate at the default window size.
+2. **Summary strings** (`StatusBadge.summary`, also the menu bar's first line):
+   stopped "Stopped"; starting "Starting…"; stopping "Stopping…"; failed "Failed";
+   serving and waiting "Waiting for comma"; serving and connected "Comma connected";
+   connected while building or loading "Comma connected, preparing"; connected and
+   failed "Comma connected, model failed"; waiting while building or loading
+   "Preparing a model"; waiting and failed "Model failed"; disconnected
+   "Comma disconnected". The menu bar adds the rate when stats exist:
+   "Comma connected, 19.9 fps".
+3. **Short model names.** Add `ModelRow.displayName`: the name with a trailing
+   parenthesised date removed (" (August 30, 2026)" and similar; regex
+   ` \([A-Za-z]+ \d{1,2}, \d{4}\)$`). Use it in the table's Model column, the menu
+   bar model line ("Loaded: BMRLNAP Model v4"), the Status view's Engine row, and
+   every confirmation. The inspector shows the full name.
+4. **Table widths.** Model `.width(min: 220, ideal: 320)`; Built `.width(min: 90, ideal: 100)`;
+   Size `.width(min: 70, ideal: 80)`; Status `.width(min: 150, ideal: 170)`;
+   Prepared for `.width(min: 110, ideal: 130)`. Inspector
+   `.inspectorColumnWidth(min: 280, ideal: 320, max: 440)`. Window default size
+   1000 by 640, minimum 860 by 540 (`.frame(minWidth:minHeight:)` on `MainWindow`).
+5. **Bottom bar text.** "Models 766 MB, engines 777.2 MB, 23.2 GB free".
+6. **Status view, Backend row.** Second line is "<runtime> <version>, <device>":
+   runtime "onnxruntime" for ort and "tinygrad" for tinygrad; version with any
+   "+local" suffix removed; device with the prefix up to and including the first
+   "-" removed and underscores turned into spaces ("METAL-Apple_M1_Pro" becomes
+   "Apple M1 Pro"). Example: "tinygrad 0.14.0, Apple M1 Pro".
+7. **Status view, Link row.** Show the detail line only when the link is
+   disconnected (the LinkError text) or when waiting over TCP (the listening
+   address). Hide the USB "waiting for a jetlink gadget" detail; the badge says it.
+8. **Status view, empty engine state.** No `ContentUnavailableView` inside the form.
+   A compact block: `Label("No model prepared", systemImage: "shippingbox")` in
+   `.headline`, the description in `.callout` secondary, and the "Open Models"
+   button, left aligned, about three lines tall.
+9. **Logs view.** The Auto-scroll control leaves the toolbar: a bottom bar with a
+   checkbox "Follow new lines" on the left and "1,234 lines" (`.secondary`) on
+   the right. The toolbar keeps Copy all, Clear, Reveal log file and the search field.
+10. **Settings, Backend picker.** The first choice reads "Automatic (CoreML on the
+    GPU)"; its caption starts "Recommended. " followed by the existing text.
+11. **Inspector.** Long values (ref, SHA-256, checkpoint, artifact paths) sit under
+    their label, left aligned, monospaced `.callout`, `.textSelection(.enabled)`,
+    `.fixedSize(horizontal: false, vertical: true)`, no hyphenated wrapping. Short
+    values (size, built, status) stay as `LabeledContent`.
+12. **Sizes.** `ByteCount` uses at most one decimal and drops it when the value is
+    a whole number of units ("766 MB", "1.8 GB", "23.2 GB").
