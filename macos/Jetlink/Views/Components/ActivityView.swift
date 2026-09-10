@@ -51,7 +51,10 @@ struct ToolbarActivityView: View {
     // Centred on the window, not the detail column, so it has to give way to
     // the title on the left and the run button on the right: a fixed width
     // that does not fit is dropped from the toolbar altogether.
-    .frame(minWidth: 240, idealWidth: ToolbarActivityView.width, maxWidth: ToolbarActivityView.width, minHeight: ToolbarActivityView.height, maxHeight: ToolbarActivityView.height)
+    .frame(
+      minWidth: 240, idealWidth: ToolbarActivityView.width, maxWidth: ToolbarActivityView.width,
+      minHeight: ToolbarActivityView.height, maxHeight: ToolbarActivityView.height
+    )
     .overlay(alignment: .bottom) { progressBar }
     .contentShape(RoundedRectangle(cornerRadius: 9))
     .modifier(ActivityBackground())
