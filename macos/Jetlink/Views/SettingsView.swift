@@ -134,10 +134,12 @@ struct ServerSettingsView: View {
       Section {
         DisclosureGroup("Advanced", isExpanded: $advancedExpanded) {
           VStack(alignment: .leading, spacing: 6) {
-            TextField("Python interpreter override", text: Binding(
-              get: { settings.pythonOverride ?? "" },
-              set: { settings.pythonOverride = $0.isEmpty ? nil : $0 }
-            ))
+            TextField(
+              "Python interpreter override",
+              text: Binding(
+                get: { settings.pythonOverride ?? "" },
+                set: { settings.pythonOverride = $0.isEmpty ? nil : $0 }
+              ))
             Text("For development. Leave empty to use the bundled runtime.")
               .font(.callout)
               .foregroundStyle(.secondary)

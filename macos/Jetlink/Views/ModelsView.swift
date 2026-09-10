@@ -96,7 +96,7 @@ struct ModelsView: View {
       }
       .alert(Text(confirmationTitle), isPresented: confirmationPresented, presenting: confirmation) { item in
         Button(confirmButtonTitle(item), role: isDestructive(item) ? .destructive : nil) { perform(item) }
-        Button("Cancel", role: .cancel) { }
+        Button("Cancel", role: .cancel) {}
       } message: { item in
         Text(confirmationMessage(item))
       }
@@ -334,14 +334,16 @@ struct ModelsView: View {
       let bytes = row.preparedFor.reduce(Int64(0)) { $0 + $1.bytes }
       let count = row.preparedFor.count
       let engines = count == 1 ? "engine" : "engines"
-      var text = "\(count) prepared \(engines) for \(row.displayName), \(ByteCount.string(bytes)) in all, are deleted. Preparing the model again takes as long as the first time."
+      var text =
+        "\(count) prepared \(engines) for \(row.displayName), \(ByteCount.string(bytes)) in all, are deleted. Preparing the model again takes as long as the first time."
       if row.isLoaded {
         text += " The model is loaded now, so it is unloaded first."
       }
       return text
     case let .prepareSwitch(row):
       let current = models.rows.first { $0.isLoaded }?.displayName ?? "another model"
-      return "The comma is connected and using \(current). Preparing \(row.displayName) switches the server to it; the comma falls back to its small model until it reconnects and that model is loaded."
+      return
+        "The comma is connected and using \(current). Preparing \(row.displayName) switches the server to it; the comma falls back to its small model until it reconnects and that model is loaded."
     }
   }
 
@@ -371,10 +373,16 @@ struct ModelsView: View {
 
 #Preview("Models") {
   ModelsView()
-    .environment(ServerStore.preview(runState: .serving, info: PreviewData.serverInfo, link: PreviewData.linkConnected,
-                                     engine: PreviewData.engineReady, stats: PreviewData.stats))
-    .environment(ModelStore.preview(catalog: PreviewData.catalog, inventory: PreviewData.inventory,
-                                    downloads: [PreviewData.download.sha256: PreviewData.download], engine: PreviewData.engineReady))
+    .environment(
+      ServerStore.preview(
+        runState: .serving, info: PreviewData.serverInfo, link: PreviewData.linkConnected,
+        engine: PreviewData.engineReady, stats: PreviewData.stats)
+    )
+    .environment(
+      ModelStore.preview(
+        catalog: PreviewData.catalog, inventory: PreviewData.inventory,
+        downloads: [PreviewData.download.sha256: PreviewData.download], engine: PreviewData.engineReady)
+    )
     .frame(width: 860, height: 480)
 }
 

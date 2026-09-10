@@ -202,11 +202,13 @@ final class ControlClient: @unchecked Sendable {
         waiter.resume(throwing: ControlClientError.notConnected)
         return
       }
-      connection.send(content: line, completion: .contentProcessed { [self] error in
-        if let error {
-          failPending(id: id, error: ControlClientError.sendFailed(error.localizedDescription))
-        }
-      })
+      connection.send(
+        content: line,
+        completion: .contentProcessed { [self] error in
+          if let error {
+            failPending(id: id, error: ControlClientError.sendFailed(error.localizedDescription))
+          }
+        })
     }
   }
 

@@ -113,10 +113,12 @@ enum PreviewData {
     defaultRef: bigModelRef,
     error: nil,
     models: [
-      CatalogModel(name: "Cinque Terre Model V2 (September 08, 2026)", shortName: "CTMV2", ref: cinqueRef,
-                   buildTime: "2026-09-08T11:04:00Z", index: 12, sha256: nil, bytes: nil),
-      CatalogModel(name: bigModelName, shortName: "BMRLNAP", ref: bigModelRef,
-                   buildTime: "2026-08-30T09:41:12Z", index: 11, sha256: bigModelSHA, bytes: 765_953_504),
+      CatalogModel(
+        name: "Cinque Terre Model V2 (September 08, 2026)", shortName: "CTMV2", ref: cinqueRef,
+        buildTime: "2026-09-08T11:04:00Z", index: 12, sha256: nil, bytes: nil),
+      CatalogModel(
+        name: bigModelName, shortName: "BMRLNAP", ref: bigModelRef,
+        buildTime: "2026-08-30T09:41:12Z", index: 11, sha256: bigModelSHA, bytes: 765_953_504),
     ]
   )
 

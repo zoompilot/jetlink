@@ -210,4 +210,7 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_26.6.app
 
       - name: Lint the Swift sources
-        run: xcrun swift-format lint --strict --recursive macos/Jetlink macos/JetlinkTests
+        run: xcrun swift-format lint --strict --configuration macos/.swift-format --recursive macos/Jetlink macos/JetlinkTests
+        # macos/.swift-format is the repo style: 2 spaces, 160 columns, and no
+        # UseSynthesizedInitializer, because the event structs keep their
+        # memberwise initializers on purpose (01-contracts.md section 7).

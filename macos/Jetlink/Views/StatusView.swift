@@ -29,7 +29,7 @@ struct StatusView: View {
     .formStyle(.grouped)
     .confirmationDialog("Unload the model?", isPresented: $confirmingUnload) {
       Button("Unload model") { models.unload() }
-      Button("Cancel", role: .cancel) { }
+      Button("Cancel", role: .cancel) {}
     } message: {
       Text("The comma will fall back to its small model until a model is loaded again.")
     }
@@ -189,10 +189,12 @@ struct StatusView: View {
         VStack(alignment: .leading, spacing: 6) {
           Label("No model prepared", systemImage: "shippingbox")
             .font(.headline)
-          Text("Download and prepare the model your comma uses in Models. Keep Jetlink running afterwards; the model stays loaded and the comma connects to it immediately.")
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+          Text(
+            "Download and prepare the model your comma uses in Models. Keep Jetlink running afterwards; the model stays loaded and the comma connects to it immediately."
+          )
+          .font(.callout)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
           Button("Open Models") { selection = .models }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -285,11 +287,12 @@ struct StatusView: View {
   /// "tinygrad 0.14.0, Apple M1 Pro": what is actually running, under the
   /// backend's plain name. The device loses the backend prefix it repeats.
   static func runtimeLine(backend: String, version: String, device: String) -> String {
-    let runtime = switch backend {
-    case "ort": "onnxruntime"
-    case "trt": "TensorRT"
-    default: backend
-    }
+    let runtime =
+      switch backend {
+      case "ort": "onnxruntime"
+      case "trt": "TensorRT"
+      default: backend
+      }
     let version = version.split(separator: "+", maxSplits: 1).first.map(String.init) ?? version
     var hardware = device
     if let dash = device.firstIndex(of: "-") {
@@ -336,8 +339,11 @@ struct StatusView: View {
 #Preview("Connected") {
   @Previewable @State var selection: SidebarItem? = .status
   StatusView(selection: $selection)
-    .environment(ServerStore.preview(runState: .serving, info: PreviewData.serverInfo, link: PreviewData.linkConnected,
-                                     engine: PreviewData.engineReady, stats: PreviewData.stats))
+    .environment(
+      ServerStore.preview(
+        runState: .serving, info: PreviewData.serverInfo, link: PreviewData.linkConnected,
+        engine: PreviewData.engineReady, stats: PreviewData.stats)
+    )
     .environment(ModelStore.preview(catalog: PreviewData.catalog, inventory: PreviewData.inventory, engine: PreviewData.engineReady))
     .environment(AppSettings.preview())
     .environment(LogBuffer.preview(lines: PreviewData.logLines))
@@ -347,8 +353,11 @@ struct StatusView: View {
 #Preview("Building") {
   @Previewable @State var selection: SidebarItem? = .status
   StatusView(selection: $selection)
-    .environment(ServerStore.preview(runState: .serving, info: PreviewData.serverInfo, link: PreviewData.linkWaiting,
-                                     engine: PreviewData.engineBuilding))
+    .environment(
+      ServerStore.preview(
+        runState: .serving, info: PreviewData.serverInfo, link: PreviewData.linkWaiting,
+        engine: PreviewData.engineBuilding)
+    )
     .environment(ModelStore.preview(catalog: PreviewData.catalog, inventory: PreviewData.inventory, engine: PreviewData.engineBuilding))
     .environment(AppSettings.preview())
     .environment(LogBuffer.preview(lines: PreviewData.logLines))

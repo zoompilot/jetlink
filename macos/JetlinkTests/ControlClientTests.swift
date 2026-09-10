@@ -111,7 +111,8 @@ struct ControlClientTests {
   }
 
   @Test func streamsEventsAndAnswersCommands() async throws {
-    let hello = #"{"event":"hello","t":1.0,"protocol":1,"pid":1,"version":"0.2.0","python":"3.14.7","platform":"darwin","cache":"/tmp","transport":"usb","port":null}"#
+    let hello =
+      #"{"event":"hello","t":1.0,"protocol":1,"pid":1,"version":"0.2.0","python":"3.14.7","platform":"darwin","cache":"/tmp","transport":"usb","port":null}"#
     let link = #"{"event":"link","t":1.1,"state":"connected","detail":"","peer":"usb"}"#
     let server = FakeControlServer(path: ControlClientTests.temporarySocketPath(), greeting: [hello, link])
     try server.start()

@@ -9,9 +9,9 @@ struct MenuBarView: View {
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
-    Button(statusLine) { }
+    Button(statusLine) {}
       .disabled(true)
-    Button(modelLine) { }
+    Button(modelLine) {}
       .disabled(true)
     Divider()
     switch server.runState {
@@ -20,7 +20,7 @@ struct MenuBarView: View {
     case .serving:
       Button("Stop server") { server.stop() }
     case .starting, .stopping:
-      Button("Start server") { }
+      Button("Start server") {}
         .disabled(true)
     }
     Button("Open Jetlink") {

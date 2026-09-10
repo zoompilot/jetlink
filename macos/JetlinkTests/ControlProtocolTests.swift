@@ -56,7 +56,8 @@ struct ControlProtocolTests {
 
   @Test func decodesLink() throws {
     guard case .link(let waiting) = try ControlEvent(jsonLine: events()[2]),
-          case .link(let connected) = try ControlEvent(jsonLine: events()[3]) else {
+      case .link(let connected) = try ControlEvent(jsonLine: events()[3])
+    else {
       Issue.record("expected two link events")
       return
     }
@@ -69,8 +70,9 @@ struct ControlProtocolTests {
 
   @Test func decodesEngine() throws {
     guard case .engine(let idle) = try ControlEvent(jsonLine: events()[4]),
-          case .engine(let building) = try ControlEvent(jsonLine: events()[5]),
-          case .engine(let ready) = try ControlEvent(jsonLine: events()[6]) else {
+      case .engine(let building) = try ControlEvent(jsonLine: events()[5]),
+      case .engine(let ready) = try ControlEvent(jsonLine: events()[6])
+    else {
       Issue.record("expected three engine events")
       return
     }
@@ -176,9 +178,10 @@ struct ControlProtocolTests {
 
   @Test func decodesReplies() throws {
     guard case .reply(let ok) = try ControlEvent(jsonLine: events()[12]),
-          case .reply(let failed) = try ControlEvent(jsonLine: events()[13]),
-          case .reply(let extras) = try ControlEvent(jsonLine: events()[14]),
-          case .reply(let noID) = try ControlEvent(jsonLine: events()[16]) else {
+      case .reply(let failed) = try ControlEvent(jsonLine: events()[13]),
+      case .reply(let extras) = try ControlEvent(jsonLine: events()[14]),
+      case .reply(let noID) = try ControlEvent(jsonLine: events()[16])
+    else {
       Issue.record("expected four reply events")
       return
     }
@@ -216,16 +219,22 @@ struct ControlProtocolTests {
       (.status, 1, #"{"cmd":"status","id":1}"#),
       (.catalog(refresh: true), 2, #"{"cmd":"catalog","id":2,"refresh":true}"#),
       (.catalog(refresh: false), 3, #"{"cmd":"catalog","id":3,"refresh":false}"#),
-      (.download(ref: "f877d7a0ccc3cce943c76e285214c020cd65c899", sha256: nil), 4,
-       #"{"cmd":"download","id":4,"ref":"f877d7a0ccc3cce943c76e285214c020cd65c899","sha256":null}"#),
+      (
+        .download(ref: "f877d7a0ccc3cce943c76e285214c020cd65c899", sha256: nil), 4,
+        #"{"cmd":"download","id":4,"ref":"f877d7a0ccc3cce943c76e285214c020cd65c899","sha256":null}"#
+      ),
       (.download(ref: nil, sha256: "a086"), 5, #"{"cmd":"download","id":5,"ref":null,"sha256":"a086"}"#),
       (.cancelDownload(sha256: "a086"), 6, #"{"cmd":"cancel_download","id":6,"sha256":"a086"}"#),
-      (.importModel(path: "/Users/me/Downloads/big.onnx"), 7,
-       #"{"cmd":"import","id":7,"path":"/Users/me/Downloads/big.onnx"}"#),
+      (
+        .importModel(path: "/Users/me/Downloads/big.onnx"), 7,
+        #"{"cmd":"import","id":7,"path":"/Users/me/Downloads/big.onnx"}"#
+      ),
       (.prepare(sha256: "a086", frameSkip: 4), 8, #"{"cmd":"prepare","frame_skip":4,"id":8,"sha256":"a086"}"#),
       (.unload, 9, #"{"cmd":"unload","id":9}"#),
-      (.forget(sha256: "a086", artifacts: true, model: false), 10,
-       #"{"artifacts":true,"cmd":"forget","id":10,"model":false,"sha256":"a086"}"#),
+      (
+        .forget(sha256: "a086", artifacts: true, model: false), 10,
+        #"{"artifacts":true,"cmd":"forget","id":10,"model":false,"sha256":"a086"}"#
+      ),
       (.inventory, 11, #"{"cmd":"inventory","id":11}"#),
       (.shutdown, 12, #"{"cmd":"shutdown","id":12}"#),
     ]

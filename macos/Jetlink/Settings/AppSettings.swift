@@ -75,7 +75,8 @@ final class AppSettings {
   nonisolated static let defaultTCPPort = 5599
 
   nonisolated static var applicationSupportDirectory: URL {
-    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    let base =
+      FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
       ?? URL(filePath: NSHomeDirectory()).appending(path: "Library/Application Support")
     return base.appending(path: "Jetlink")
   }
@@ -91,7 +92,8 @@ final class AppSettings {
   }
 
   nonisolated static var logFileURL: URL {
-    let base = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
+    let base =
+      FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
       ?? URL(filePath: NSHomeDirectory()).appending(path: "Library")
     return base.appending(path: "Logs/Jetlink/server.log")
   }
