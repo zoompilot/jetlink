@@ -57,7 +57,7 @@ struct GeneralSettingsView: View {
               Button("Restart now") { server.restart() }
             }
           }
-          Text("Models and prepared engines. A CoreML engine is about 5.5 GB. Changing the folder takes effect when the server restarts.")
+          Text("Models and prepared engines. A CoreML engine is about 10 GB. Takes effect when the server restarts.")
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -140,7 +140,7 @@ struct ServerSettingsView: View {
                 get: { settings.pythonOverride ?? "" },
                 set: { settings.pythonOverride = $0.isEmpty ? nil : $0 }
               ))
-            Text("For development. Leave empty to use the bundled runtime.")
+            Text("For development. Empty means the bundled runtime.")
               .font(.callout)
               .foregroundStyle(.secondary)
             Text(bundledText)
@@ -158,13 +158,13 @@ struct ServerSettingsView: View {
   static func backendCaption(_ backend: BackendChoice) -> String {
     switch backend {
     case .auto:
-      "Recommended. About 43 ms a frame on an M1 Pro. Preparing a model takes about 9 minutes, and loading one again takes as long, so keep Jetlink running."
+      "Recommended. About 43 ms a frame on an M1 Pro. Preparing takes about 18 minutes the first time and 9 minutes for each later load, so keep Jetlink running."
     case .coreml:
-      "About 43 ms a frame on an M1 Pro. Preparing a model takes about 9 minutes, and loading one again takes as long, so keep Jetlink running."
+      "About 43 ms a frame on an M1 Pro. Preparing takes about 18 minutes the first time and 9 minutes for each later load, so keep Jetlink running."
     case .ane:
-      "Faster back to back, slower at the comma's 20 Hz on an M1 Pro. Measure on your Mac before using it in the car."
+      "Faster back to back, slower at the comma's 20 Hz on an M1 Pro. Measure before using it in the car."
     case .tinygrad:
-      "Loads in a second. About 66 ms a frame on an M1 Pro, which is over the 50 ms budget; a newer Mac may be under it."
+      "Loads in a second. About 66 ms a frame on an M1 Pro, over the 50 ms budget; a newer Mac may be under it."
     }
   }
 

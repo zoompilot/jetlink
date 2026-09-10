@@ -47,12 +47,12 @@ struct MenuBarView: View {
     case .none:
       return "No model"
     case .building, .loading:
-      let name = engine.state == .building ? "Preparing" : "Loading"
-      return "\(name): \(Int((engine.frac * 100).rounded()))%"
+      let name = engine.state == .building ? "Preparing model" : "Loading model"
+      return "\(name), \(Int((engine.frac * 100).rounded()))%"
     case .ready:
       return "Loaded: \(loadedName)"
     case .failed:
-      return "The model failed"
+      return "Model failed"
     }
   }
 
