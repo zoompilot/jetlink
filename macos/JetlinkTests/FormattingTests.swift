@@ -12,38 +12,50 @@ struct FormattingTests {
     StatusBadge.summary(runState: runState, link: link, engine: engine)
   }
 
-  @Test("The server's own state wins over the link and the engine")
-  func summaryWhenNotServing() {
-    let link = PreviewData.linkConnected
-    let engine = PreviewData.engineReady
-    #expect(summary(.stopped, link, engine) == ("Stopped", .neutral))
-    #expect(summary(.starting, link, engine) == ("Starting…", .info))
-    #expect(summary(.stopping, link, engine) == ("Stopping…", .neutral))
-    #expect(summary(.failed("the server could not start"), link, engine) == ("Failed", .bad))
-  }
+  /// Every summary the app can produce, one row per state it can be in.
+  @Test("Every summary says one thing, and never what the badge already shows")
+  func summaryTable() {
+    let links: [(LinkState, LinkEvent)] = [
+      (.waiting, PreviewData.linkWaiting),
+      (.connected, PreviewData.linkConnected),
+      (.disconnected, PreviewData.linkDisconnected),
+    ]
+    let engines: [(EngineState, EngineEvent)] = [
+      (.none, PreviewData.engineNone),
+      (.ready, PreviewData.engineReady),
+      (.building, PreviewData.engineBuilding),
+      (.loading, PreviewData.engineLoading),
+      (.failed, PreviewData.engineFailed),
+    ]
 
-  @Test("Serving reads as the link state when the engine is idle or ready")
-  func summaryWhileServing() {
-    for engine in [PreviewData.engineNone, PreviewData.engineReady] {
-      #expect(summary(.serving, PreviewData.linkWaiting, engine) == ("Waiting for comma", .neutral))
-      #expect(summary(.serving, PreviewData.linkConnected, engine) == ("Comma connected", .good))
-      #expect(summary(.serving, PreviewData.linkDisconnected, engine) == ("Comma disconnected", .warning))
+    // The server's own state is the whole story until it is serving.
+    for (_, link) in links {
+      for (_, engine) in engines {
+        #expect(summary(.stopped, link, engine) == ("Stopped", .neutral))
+        #expect(summary(.starting, link, engine) == ("Starting…", .info))
+        #expect(summary(.stopping, link, engine) == ("Stopping…", .neutral))
+        #expect(summary(.failed("no backend came up"), link, engine) == ("Failed", .bad))
+      }
     }
-  }
 
-  @Test("A build or a load is worth saying, connected or not")
-  func summaryWhilePreparing() {
-    for engine in [PreviewData.engineBuilding, PreviewData.engineLoading] {
-      #expect(summary(.serving, PreviewData.linkWaiting, engine) == ("Preparing a model", .info))
-      #expect(summary(.serving, PreviewData.linkConnected, engine) == ("Comma connected, preparing", .info))
-      #expect(summary(.serving, PreviewData.linkDisconnected, engine) == ("Comma disconnected", .warning))
+    // While serving, a job in flight wins, then the link.
+    for (linkState, link) in links {
+      for (engineState, engine) in engines {
+        let expected: (String, StatusBadge.Tone) =
+          switch engineState {
+          case .building: ("Preparing model", .info)
+          case .loading: ("Loading model", .info)
+          case .failed: ("Model failed", .bad)
+          case .none, .ready:
+            switch linkState {
+            case .connected: ("Comma connected", .good)
+            case .waiting: ("Waiting for comma", .neutral)
+            case .disconnected: ("Comma disconnected", .warning)
+            }
+          }
+        #expect(summary(.serving, link, engine) == expected)
+      }
     }
-  }
-
-  @Test("A failed engine reads as failed while the server keeps serving")
-  func summaryWhenTheEngineFailed() {
-    #expect(summary(.serving, PreviewData.linkWaiting, PreviewData.engineFailed) == ("Model failed", .bad))
-    #expect(summary(.serving, PreviewData.linkConnected, PreviewData.engineFailed) == ("Comma connected, model failed", .bad))
   }
 
   // MARK: ByteCount
@@ -138,6 +150,16 @@ struct FormattingTests {
     #expect(StatusView.backendDescription(backend: "tinygrad", device: "METAL") == "tinygrad on Metal")
     #expect(StatusView.backendDescription(backend: "trt", device: "cuda") == "trt")
     #expect(StatusView.backendDescription(backend: nil, device: nil) == "Unknown")
+  }
+
+  @Test("An uptime under a minute says so instead of showing zero")
+  func uptime() {
+    let start = Date(timeIntervalSince1970: 1_757_440_000)
+    #expect(StatusView.uptimeText(from: start, to: start) == "Less than a minute")
+    #expect(StatusView.uptimeText(from: start, to: start.addingTimeInterval(59)) == "Less than a minute")
+    #expect(StatusView.uptimeText(from: start, to: start.addingTimeInterval(60)) == "1 minute")
+    #expect(StatusView.uptimeText(from: start, to: start.addingTimeInterval(150)) == "2 minutes")
+    #expect(StatusView.uptimeText(from: start, to: start.addingTimeInterval(3900)) == "1 hour, 5 minutes")
   }
 
   @Test("Frame times read as mean, p99 and max in milliseconds")

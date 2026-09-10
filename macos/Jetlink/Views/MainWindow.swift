@@ -69,10 +69,10 @@ struct MainWindow: View {
     switch server.runState {
     case .stopped, .failed:
       Button("Start server", systemImage: "play.fill") { server.start() }
-        .help("Start the Jetlink server")
+        .help("Start the server")
     case .serving:
       Button("Stop server", systemImage: "stop.fill") { server.stop() }
-        .help("Stop the Jetlink server")
+        .help("Stop the server")
     case .starting, .stopping:
       Button {
       } label: {

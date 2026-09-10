@@ -20,11 +20,11 @@ struct LogsView: View {
     .toolbar {
       ToolbarItem {
         Button("Copy all", systemImage: "doc.on.doc") { copyAll() }
-          .help("Copy every shown line")
+          .help("Copy the shown lines")
       }
       ToolbarItem {
         Button("Clear", systemImage: "trash") { logs.clear() }
-          .help("Clear the lines shown here. The log file keeps them")
+          .help("Clear the view. The log file keeps everything.")
       }
       ToolbarItem {
         Button("Reveal log file", systemImage: "folder") {

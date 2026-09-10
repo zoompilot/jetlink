@@ -328,22 +328,18 @@ struct ModelsView: View {
   private func confirmationMessage(_ item: Confirmation) -> String {
     switch item {
     case let .deleteDownload(row):
-      let size = row.bytes.map { " (\(ByteCount.string($0)))" } ?? ""
-      return "The model file for \(row.displayName)\(size) is deleted. The prepared engine stays, so the comma can use this model without downloading it again."
+      let size = row.bytes.map { "\(ByteCount.string($0)) " } ?? ""
+      return "Deletes the \(size)model file for \(row.displayName). The prepared engine stays, so the comma can still use this model."
     case let .deleteEngines(row):
       let bytes = row.preparedFor.reduce(Int64(0)) { $0 + $1.bytes }
-      let count = row.preparedFor.count
-      let engines = count == 1 ? "engine" : "engines"
-      var text =
-        "\(count) prepared \(engines) for \(row.displayName), \(ByteCount.string(bytes)) in all, are deleted. Preparing the model again takes as long as the first time."
+      var text = "Deletes every prepared engine for \(row.displayName), \(ByteCount.string(bytes)) in all. Preparing it again takes as long as the first time."
       if row.isLoaded {
-        text += " The model is loaded now, so it is unloaded first."
+        text += " The model is unloaded first."
       }
       return text
     case let .prepareSwitch(row):
       let current = models.rows.first { $0.isLoaded }?.displayName ?? "another model"
-      return
-        "The comma is connected and using \(current). Preparing \(row.displayName) switches the server to it; the comma falls back to its small model until it reconnects and that model is loaded."
+      return "The comma is using \(current). Switching drops it to its small model until \(row.displayName) is loaded and the comma reconnects."
     }
   }
 

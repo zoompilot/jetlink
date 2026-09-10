@@ -30,7 +30,7 @@ struct ModelDetailView: View {
 
       Section("Prepared engines") {
         if row.preparedFor.isEmpty {
-          Text("No engine has been prepared for this model.")
+          Text("No prepared engine yet.")
             .foregroundStyle(.secondary)
         } else {
           ForEach(row.preparedFor) { artifact in
@@ -61,7 +61,7 @@ struct ModelDetailView: View {
       Button("Delete", role: .destructive) { models.forget(row, artifacts: true, model: false) }
       Button("Cancel", role: .cancel) {}
     } message: {
-      Text("Every prepared engine for \(row.displayName) is deleted. Preparing the model again takes as long as the first time.")
+      Text("Deletes every prepared engine for \(row.displayName). Preparing it again takes as long as the first time.")
     }
     .frame(minWidth: 280)
   }

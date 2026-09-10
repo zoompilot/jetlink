@@ -31,7 +31,7 @@ struct StatusView: View {
       Button("Unload model") { models.unload() }
       Button("Cancel", role: .cancel) {}
     } message: {
-      Text("The comma will fall back to its small model until a model is loaded again.")
+      Text("The comma drives on its small model until one is loaded again.")
     }
   }
 
@@ -53,19 +53,15 @@ struct StatusView: View {
           }
         }
       }
-      LabeledContent("Uptime") {
-        if let startedAt = server.startedAt, server.runState == .serving {
+      if let startedAt = server.startedAt, server.runState == .serving {
+        LabeledContent("Uptime") {
           TimelineView(.periodic(from: .now, by: 30)) { context in
             Text(StatusView.uptimeText(from: startedAt, to: context.date))
           }
-        } else {
-          Text("Not running")
-            .foregroundStyle(.secondary)
         }
       }
       if case let .failed(reason) = server.runState {
         VStack(alignment: .leading, spacing: 8) {
-          Text("The server could not start.")
           Text(failureDetail(reason))
             .font(.system(size: 12, design: .monospaced))
             .foregroundStyle(.red)
@@ -140,7 +136,7 @@ struct StatusView: View {
     } header: {
       Text("Comma")
     } footer: {
-      Text("The comma connects when it is plugged into a USB-A port with an A-to-C data cable. The small model keeps driving whenever the link is down.")
+      Text("Plug the comma into a USB-A port with an A-to-C data cable. Until it connects, the comma drives on its small model.")
         .font(.callout)
         .foregroundStyle(.secondary)
     }
@@ -189,12 +185,10 @@ struct StatusView: View {
         VStack(alignment: .leading, spacing: 6) {
           Label("No model prepared", systemImage: "shippingbox")
             .font(.headline)
-          Text(
-            "Download and prepare the model your comma uses in Models. Keep Jetlink running afterwards; the model stays loaded and the comma connects to it immediately."
-          )
-          .font(.callout)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+          Text("Download and prepare the model your comma uses in Models. Leave Jetlink running afterwards so it stays loaded.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
           Button("Open Models") { selection = .models }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -332,6 +326,9 @@ struct StatusView: View {
 
   static func uptimeText(from start: Date, to now: Date) -> String {
     let seconds = max(0, Int(now.timeIntervalSince(start)))
+    if seconds < 60 {
+      return "Less than a minute"
+    }
     return Duration.seconds(seconds).formatted(.units(allowed: [.hours, .minutes], width: .wide))
   }
 }
