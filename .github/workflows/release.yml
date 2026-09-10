@@ -46,7 +46,7 @@ jobs:
         run: python -m build
 
       - name: Upload the distributions
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-dist
           path: dist/*
@@ -181,7 +181,7 @@ jobs:
           rm -f "$RUNNER_TEMP/AuthKey.p8"
 
       - name: Upload the app artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-app
           path: |
