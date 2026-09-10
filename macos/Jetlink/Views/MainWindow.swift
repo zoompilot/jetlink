@@ -52,9 +52,7 @@ struct MainWindow: View {
         .navigationTitle(navigation.selection?.title ?? "Jetlink")
         .toolbar {
           ToolbarItem(placement: .principal) {
-            StatusBadge(text: summary.0, tone: summary.1, style: .plain)
-              .lineLimit(1)
-              .fixedSize()
+            ToolbarActivityView()
           }
           ToolbarItem(placement: .primaryAction) {
             runButton
@@ -72,10 +70,6 @@ struct MainWindow: View {
     case .models: ModelsView()
     case .logs: LogsView()
     }
-  }
-
-  private var summary: (String, StatusBadge.Tone) {
-    StatusBadge.summary(runState: server.runState, link: server.link, engine: server.engine)
   }
 
   @ViewBuilder

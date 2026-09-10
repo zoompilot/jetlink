@@ -366,14 +366,36 @@ Summary (`StatusBadge.summary`, toolbar and menu bar first line): "Stopped",
 | Settings, override caption | "For development. Empty means the bundled runtime." |
 | Inspector, no engines | "No prepared engine yet." |
 
-## Toolbar status indicator (decided 2026-09-09)
+## Toolbar activity view (decided 2026-09-09, replaces the plain badge)
 
-The toolbar summary must not draw its own background: macOS 26 toolbars are
-Liquid Glass and a hand-drawn tinted capsule inside one looks foreign.
-`StatusBadge` gets a style parameter: `.pill` (the current capsule, used in the
-form rows) and `.plain` (a `Label` with a `circle.fill` symbol in the tone
-colour and the text in `.secondary`, no background, no padding). The toolbar
-uses `.plain`. On macOS 26 and later the `.pill` style applies
-`.glassEffect(.regular.tint(tone.color.opacity(0.35)), in: .capsule)` instead of
-the manual fill, gated with `if #available(macOS 26, *)`; on macOS 15 the manual
-fill stays. Nothing else in the toolbar changes.
+The toolbar's centre is `ToolbarActivityView`
+(`Views/Components/ActivityView.swift`), shaped like Xcode's activity view:
+
+- 480 by 30 points at most (minimum 240, it gives way to the title and the
+  run button because the toolbar centres it on the window), `.font(.callout)`,
+  in the `.principal` placement. On macOS 26 the toolbar wraps the item in its
+  own glass capsule, so it draws no background; on macOS 15 it is
+  `.quaternary` in a 9 point rounded rectangle, the inset Xcode 16 used.
+- Not a `Button`. Bisected on macOS 26: a `Button` in the principal placement
+  is taken for a toolbar button and the whole item is dropped from the
+  toolbar, whatever its label. The click is an `.onTapGesture`, with the
+  button trait and action set for accessibility.
+- Left, two crumbs with a small tertiary chevron between them: the model
+  (`shippingbox`, the loaded or loading model's `displayName`, "No model"
+  otherwise) and the backend (`cpu`, `StatusView.backendDescription` from the
+  server info, or `BackendChoice.title` for the setting before the server has
+  said). Long crumbs truncate in the middle.
+- Right, `StatusBadge.summary` in `.primary`, red for `.bad`, orange for
+  `.warning`. No dot. A `.mini` spinner while starting or stopping.
+- Along the bottom edge, a 3 point capsule bar in the tint over `.quaternary`,
+  `engine.frac` wide, while a model is being prepared or loaded. It is the
+  only progress the toolbar shows.
+- Clicking it selects Status. Its accessibility label is the three strings.
+
+`StatusBadge` keeps only the capsule style; the `.plain` style is gone.
+
+Beside this, the Status view's failure block no longer repeats itself: the
+store's exit message is one sentence (`ServerStore.exitMessage`, "The server
+was killed by signal 9 (SIGKILL). Console may have a crash report for
+python3.14 under Crash Reports.") and the view shows the last 20 log lines
+under it once.

@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// A coloured dot and a short piece of text, used wherever a state has to be
-/// readable at a glance. The pill carries its own shape in a form row; the
-/// plain style draws no background, which is what a toolbar wants.
+/// A coloured dot and a short piece of text in a capsule, used in form rows
+/// wherever a state has to be readable at a glance. The toolbar's summary is
+/// `ToolbarActivityView`, which shares `summary` with the menu bar.
 struct StatusBadge: View {
   enum Tone: Equatable, Sendable {
     case neutral, info, good, warning, bad
@@ -18,32 +18,17 @@ struct StatusBadge: View {
     }
   }
 
-  enum Style: Equatable, Sendable {
-    case pill, plain
-  }
-
   let text: String
   let tone: Tone
-  var style: Style = .pill
   var showsProgress: Bool = false
 
-  init(text: String, tone: Tone, style: Style = .pill, showsProgress: Bool = false) {
+  init(text: String, tone: Tone, showsProgress: Bool = false) {
     self.text = text
     self.tone = tone
-    self.style = style
     self.showsProgress = showsProgress
   }
 
   var body: some View {
-    switch style {
-    case .pill:
-      pill
-    case .plain:
-      plain
-    }
-  }
-
-  private var pill: some View {
     HStack(spacing: 6) {
       Circle()
         .fill(tone.color)
@@ -54,23 +39,6 @@ struct StatusBadge: View {
     .padding(.horizontal, 8)
     .padding(.vertical, 3)
     .modifier(PillBackground(tone: tone))
-    .accessibilityElement(children: .combine)
-  }
-
-  private var plain: some View {
-    HStack(spacing: 6) {
-      Label {
-        Text(text)
-          .foregroundStyle(.secondary)
-      } icon: {
-        Image(systemName: "circle.fill")
-          .imageScale(.small)
-          .foregroundStyle(tone.color)
-      }
-      // A toolbar shows icons only unless the label is told otherwise.
-      .labelStyle(.titleAndIcon)
-      progress
-    }
     .accessibilityElement(children: .combine)
   }
 
@@ -142,9 +110,6 @@ struct StatusBadge: View {
     StatusBadge(text: "Serving", tone: .good)
     StatusBadge(text: "Disconnected", tone: .warning)
     StatusBadge(text: "Failed", tone: .bad)
-    Divider()
-    StatusBadge(text: "Comma connected", tone: .good, style: .plain)
-    StatusBadge(text: "Model failed", tone: .bad, style: .plain)
   }
   .padding()
 }

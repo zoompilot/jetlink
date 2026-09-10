@@ -502,3 +502,22 @@ Working directory: the cache directory.
   in this case.
 - The app treats an unexpected exit while serving as a crash and restarts with
   backoff (5, 10, 20, 40, 60 s; gives up after five restarts in ten minutes).
+
+Implemented notes (2026-09-09, after the first Xcode Run of the Debug build):
+
+- With `--parent-pid` the server calls `os.setpgrp()` and so leads its own
+  process group. When the server exits by an uncaught signal, or ignores
+  SIGTERM and gets SIGKILL from the app, the app also sends SIGKILL to the
+  group. Without that the spawned `jetlink-ort` worker outlived a killed
+  server, holding up to 4 GB while it finished creating a CoreML session
+  nobody would use. Not done without `--parent-pid`: a terminal's Ctrl-C
+  reaches the shell's group.
+- The failure text is one sentence from `ServerStore.exitMessage` (status, or
+  the signal by name, plus a pointer to Console for a crash); the last 20 log
+  lines are shown by the Status view under it, once.
+- `embed-python.sh` re-signs `usb1/libusb-1.0.dylib` ad hoc after
+  `install_name_tool`, checks every `.so` and `.dylib` for a signature that no
+  longer matches its file, and opens a `usb1.USBContext()` in the runtime
+  check. The modified Homebrew signature was a `SIGKILL (Code Signature
+  Invalid)` the moment ctypes opened it, which `scripts/sign.sh` hid in the
+  release bundle and the Xcode Debug build (a plain rsync of the tree) showed.
