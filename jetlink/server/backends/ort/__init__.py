@@ -188,12 +188,64 @@ def _prepared_model(onnx_path: Path, for_ane: bool):
   return model
 
 
+# The metadata_props key onnxruntime reads (coreml_provider_factory.h). Under
+# any other name it keys the compiled-model cache on a hash of the model's
+# path instead, so a compile done under the build's temp dir was never found
+# from the artifact's final path: the first load compiled the whole model a
+# second time, 8.5 min and 4.8 GB on an M1 Pro, and the disk kept both.
+COREML_CACHE_KEY = 'COREML_CACHE_KEY'
+
+
 def _with_cache_key(model, key: str):
-  # The compiled-model cache is looked up by this rather than by a hash of the
-  # file, so the same key finds the same compile after a move.
-  entry = next((p for p in model.metadata_props if p.key == 'CACHE_KEY'), None) or model.metadata_props.add()
-  entry.key, entry.value = 'CACHE_KEY', key
+  # The compiled-model cache is looked up by this rather than by the path, so
+  # the same key finds the same compile after the move out of the temp dir.
+  for prop in [p for p in model.metadata_props if p.key in (COREML_CACHE_KEY, 'CACHE_KEY')]:
+    model.metadata_props.remove(prop)
+  entry = model.metadata_props.add()
+  entry.key, entry.value = COREML_CACHE_KEY, key
   return model
+
+
+def _has_cache_key(model, key: str) -> bool:
+  return any(p.key == COREML_CACHE_KEY and p.value == key for p in model.metadata_props)
+
+
+def repair_coreml_cache(artifact: Path, model_name: str, cache: Path, key: str) -> None:
+  """Bring an artifact built under the wrong metadata key up to date, in place.
+
+  onnxruntime keyed those caches on the model path: one compile sits under a
+  hash of the build's temp path, never to be found again, and after the first
+  load another sits under a hash of the final path. The second is the same
+  compiled program the key would name, so it is renamed rather than rebuilt;
+  everything else in the cache directory is stale and goes. The model gets the
+  key written in so the next load hits the renamed directory.
+  """
+  import onnx
+
+  model_path = artifact / model_name
+  model = onnx.load(str(model_path), load_external_data=False)
+  if not _has_cache_key(model, key):
+    log.info("writing the CoreML cache key into %s", model_path.name)
+    onnx.save(_with_cache_key(model, key), str(model_path))
+  for entry in sorted(cache.iterdir()):
+    if not entry.is_dir() or entry.name == key:
+      continue
+    recorded = ''
+    try:
+      recorded = (entry / 'model.txt').read_text().strip()
+    except OSError:
+      pass
+    compiled_here = False
+    try:
+      compiled_here = bool(recorded) and Path(recorded).resolve() == model_path.resolve()
+    except OSError:
+      pass
+    if compiled_here and not (cache / key).exists():
+      log.info("keeping the CoreML compile for this artifact as %s (was %s)", key, entry.name)
+      entry.rename(cache / key)
+    else:
+      log.info("removing a stale CoreML compile %s (compiled for %s)", entry.name, recorded or 'unknown')
+      shutil.rmtree(entry, ignore_errors=True)
 
 
 def load_ticker(report, message):
@@ -366,6 +418,12 @@ class OrtBackend:
       if not (artifact / entry['model']).is_file():
         raise ArtifactInvalid(f"{artifact}: no {entry['model']} inside")
       cache = artifact / entry['cache'] if entry.get('cache') else None
+      if cache is not None and cache.is_dir():
+        key = _cache_key(artifact, Path(entry['model']).stem)
+        if not (cache / key).is_dir():
+          if report is not None:
+            report('load', 0.0, 'bringing the compiled model cache up to date')
+          repair_coreml_cache(artifact, entry['model'], cache, key)
       # An empty cache would make onnxruntime recompile for minutes under a
       # "loading engine" that never moves. Rebuild instead, which reports
       # progress and ends with a cache.
