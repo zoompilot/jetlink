@@ -269,16 +269,16 @@ def test_the_ping_does_not_need_an_engine(linked):
   assert P.VERSION == client.hello(timeout=5)['protocol']
 
 
-def test_the_ort_load_ticker_logs_once_a_minute(caplog):
-  """A CoreML load ticks every 5 s for nine minutes: a hundred log lines, but
-  the progress a client draws has to move on every one of them."""
+def test_the_ort_coreml_ticker_logs_once_a_minute(caplog):
+  """A CoreML load ticks every 2 s for minutes: hundreds of log lines, but the
+  progress a client draws has to move on every one of them."""
   import logging
 
-  from jetlink.server.backends.ort import load_ticker
+  from jetlink.server.backends.ort import CoreMLProgress, coreml_ticker
 
   reports = []
-  tick = load_ticker(lambda stage, frac, msg: reports.append((stage, frac, msg)),
-                     lambda elapsed: f'{elapsed / 60:.0f} min elapsed')
+  progress = CoreMLProgress([], expect={'load_seconds': 100.0}, loading=True)
+  tick = coreml_ticker(lambda stage, frac, msg: reports.append((stage, frac, msg)), progress)
   elapsed = [5.0, 10.2, 30.5, 55.1, 60.3, 65.4, 119.8, 120.6, 180.9]
   with caplog.at_level(logging.DEBUG, logger='jetlink.ort'):
     for e in elapsed:
@@ -286,9 +286,129 @@ def test_the_ort_load_ticker_logs_once_a_minute(caplog):
 
   info = [r for r in caplog.records if r.levelno == logging.INFO]
   assert len(info) == 4, 'the first tick and one a minute after it'
-  assert 'still creating the onnxruntime sessions, 5 s' in info[0].getMessage()
-  assert [round(float(r.getMessage().split(', ')[1].split(' ')[0])) for r in info] == [5, 60, 121, 181]
   assert len([r for r in caplog.records if r.levelno == logging.DEBUG]) == len(elapsed) - 4
   # Every tick still moves the progress, whatever the log did.
   assert len(reports) == len(elapsed)
-  assert reports[0] == ('load', 0.0, '0 min elapsed')
+  assert [s for s, _, _ in reports] == ['load'] * len(elapsed)
+  assert reports[0][1] == pytest.approx(0.05)
+  assert '5 s of about 100 s' in reports[0][2]
+
+
+class TestCoreMLProgress:
+  """CoreML says nothing until it is done, so the stages come from the bytes
+  it leaves in the cache directory. No CoreML needed to check that: the
+  directory layout is all this reads.
+  """
+
+  @staticmethod
+  def _sparse(path, size):
+    # the real files are gigabytes; sparse ones are the same to os.scandir
+    with open(path, 'wb') as fh:
+      fh.truncate(size)
+
+  @classmethod
+  def _cache(cls, tmp_path, converted=0, compiled=0):
+    part = tmp_path / 'coreml' / 'key' / '0_dynamic_mlprogram' / 'model'
+    data = part / 'Data' / 'com.microsoft.OnnxRuntime' / 'weights'
+    data.mkdir(parents=True)
+    cls._sparse(data / 'weight.bin', converted)
+    if compiled:
+      mlmodelc = part / 'compiled_model.mlmodelc'
+      mlmodelc.mkdir(parents=True)
+      cls._sparse(mlmodelc / 'model.mil', compiled)
+    return tmp_path / 'coreml'
+
+  def test_bytes_are_split_by_the_compiled_directory(self, tmp_path):
+    from jetlink.server.backends.ort import tree_bytes
+    cache = self._cache(tmp_path, converted=300, compiled=700)
+    assert tree_bytes(cache, split='compiled_model.mlmodelc') == (300, 700)
+
+  def test_a_missing_directory_is_no_bytes(self, tmp_path):
+    from jetlink.server.backends.ort import tree_bytes
+    assert tree_bytes(tmp_path / 'not there', split='x') == (0, 0)
+
+  def test_writing_the_mlprogram_is_the_convert_stage(self, tmp_path):
+    from jetlink.server.backends.ort import CoreMLProgress
+    cache = self._cache(tmp_path, converted=400_000_000)
+    stage, frac, msg = CoreMLProgress([cache], weights_bytes=1_000_000_000).tick(12.0)
+    assert stage == 'convert'
+    assert frac == pytest.approx(0.4)
+    assert msg == 'converting for CoreML, 400 MB of 1.0 GB written'
+
+  def test_the_compiled_model_appearing_is_the_compile_stage(self, tmp_path):
+    from jetlink.server.backends.ort import CoreMLProgress
+    cache = self._cache(tmp_path, converted=1_000_000_000, compiled=250_000_000)
+    progress = CoreMLProgress([cache], weights_bytes=1_000_000_000,
+                              expect={'compile_bytes': 1_000_000_000})
+    stage, frac, msg = progress.tick(12.0)
+    assert stage == 'compile'
+    assert frac == pytest.approx(0.25)
+    assert msg == 'compiling for CoreML, 250 MB of 1.0 GB written'
+
+  def test_a_first_build_falls_back_to_the_clock(self, tmp_path):
+    """Nothing recorded for this model yet, so the fraction is the clock and
+    the message says only what it can see: the bytes and the time."""
+    from jetlink.server.backends.ort import EXPECTED_COREML_SECONDS, CoreMLProgress
+    cache = self._cache(tmp_path, converted=1_000_000_000, compiled=250_000_000)
+    stage, frac, msg = CoreMLProgress([cache], weights_bytes=1_000_000_000).tick(
+      EXPECTED_COREML_SECONDS / 2)
+    assert stage == 'compile'
+    assert frac == pytest.approx(0.5)
+    assert msg == 'compiling for CoreML, 250 MB written, 5 s elapsed'
+
+  def test_a_long_compile_is_reported_in_minutes(self, tmp_path):
+    from jetlink.server.backends.ort import CoreMLProgress
+    cache = self._cache(tmp_path, converted=1_000_000_000, compiled=250_000_000)
+    _, _, msg = CoreMLProgress([cache], weights_bytes=1_000_000_000,
+                               expect={'compile_seconds': 600.0}).tick(300.0)
+    assert msg == 'compiling for CoreML, 250 MB written, 5 min elapsed'
+
+  def test_a_load_reports_resident_size_against_the_last_one(self, tmp_path, monkeypatch):
+    from jetlink.server.backends import ort as ort_backend
+    monkeypatch.setattr(ort_backend, 'worker_rss', lambda pid: 2_000_000_000)
+    progress = ort_backend.CoreMLProgress(
+      [self._cache(tmp_path, converted=1, compiled=1)],
+      expect={'load_rss_bytes': 4_000_000_000}, loading=True)
+    stage, frac, msg = progress.tick(3.0, pid=42)
+    assert stage == 'load'
+    assert frac == pytest.approx(0.5)
+    assert '2.0 GB of 4.0 GB resident' in msg
+    assert progress.peak_rss == 2_000_000_000
+
+  def test_a_load_with_nothing_recorded_still_says_what_it_is_doing(self, tmp_path, monkeypatch):
+    from jetlink.server.backends import ort as ort_backend
+    monkeypatch.setattr(ort_backend, 'worker_rss', lambda pid: 0)
+    stage, frac, msg = ort_backend.CoreMLProgress([], loading=True).tick(7.0)
+    assert (stage, frac) == ('load', 0.0)
+    assert '7 s elapsed' in msg
+
+  def test_a_convert_that_ends_inside_the_first_tick_still_gets_its_line(self, tmp_path):
+    """The build reports convert at 0 before the first tick. If the compile
+    has already started by then, that tick is the one that has to close
+    convert, or it never reaches 100 %."""
+    from jetlink.server.backends.ort import CoreMLProgress, coreml_ticker
+    cache = self._cache(tmp_path, converted=1_000_000_000, compiled=500_000_000)
+    progress = CoreMLProgress([cache], weights_bytes=1_000_000_000,
+                              expect={'compile_bytes': 1_000_000_000})
+    reports = []
+    tick = coreml_ticker(lambda *a: reports.append(a), progress, initial='convert')
+    tick(2.0)
+    assert [s for s, _, _ in reports] == ['convert', 'compile']
+    assert reports[0] == ('convert', 1.0, 'convert done in 2 s')
+
+  def test_a_finished_stage_gets_its_hundred_percent_line(self, tmp_path):
+    from jetlink.server.backends.ort import CoreMLProgress, coreml_ticker
+    cache = self._cache(tmp_path, converted=1_000_000_000)
+    progress = CoreMLProgress([cache], weights_bytes=1_000_000_000,
+                              expect={'compile_bytes': 1_000_000_000})
+    reports = []
+    tick = coreml_ticker(lambda *a: reports.append(a), progress)
+    tick(2.0)
+    mlmodelc = cache / 'key' / '0_dynamic_mlprogram' / 'model' / 'compiled_model.mlmodelc'
+    mlmodelc.mkdir(parents=True)
+    self._sparse(mlmodelc / 'model.mil', 500_000_000)
+    tick(9.0)
+    assert [s for s, _, _ in reports] == ['convert', 'convert', 'compile']
+    # convert ran from the first tick's zero to the tick that saw the compile
+    assert reports[1] == ('convert', 1.0, 'convert done in 9 s')
+    assert reports[2][1] == pytest.approx(0.5)

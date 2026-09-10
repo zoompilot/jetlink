@@ -9,9 +9,9 @@ temperature, or failure condition.
 - **Jetson Orin Nano Super, 8 GB:** tested on the car and in recorded-drive
   replay with TensorRT 10.3.
 - **Apple silicon:** bench-tested on a 16 GB M1 Pro. CoreML on the GPU meets
-  the 50 ms frame budget, but takes about 9 minutes to load a model each time
-  the server starts. tinygrad loads in a second but misses the budget on that
-  machine. See [measurements](backends.md#mac-measured).
+  the 50 ms frame budget and loads a prepared model in about 2 seconds.
+  tinygrad loads in a second but misses the budget on that machine. See
+  [measurements](backends.md#mac-measured).
 - **Linux NVIDIA and Windows WSL2:** implemented, not yet tested on hardware.
 - **CPU:** functional testing only.
 

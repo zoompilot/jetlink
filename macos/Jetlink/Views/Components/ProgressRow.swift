@@ -37,6 +37,8 @@ struct ProgressRow: View {
     case "upload": "Receiving model"
     case "patch": "Preparing the model"
     case "parse": "Reading the model"
+    case "convert": "Converting for CoreML"
+    case "compile": "Compiling"
     case "build": "Building"
     case "save": "Saving"
     case "load": "Loading"
@@ -48,7 +50,8 @@ struct ProgressRow: View {
 
 #Preview {
   VStack(alignment: .leading, spacing: 16) {
-    ProgressRow(stage: "build", frac: 0.42, msg: "compiling for CoreML, 3 min elapsed; the big model takes 11 min on an M1 Pro")
+    ProgressRow(stage: "convert", frac: 0.42, msg: "converting for CoreML, 412 MB of 766 MB written")
+    ProgressRow(stage: "compile", frac: 0.68, msg: "compiling for CoreML, 1.4 GB of 2.1 GB written")
     ProgressRow(stage: "load", frac: 0, msg: "")
   }
   .frame(width: 360)

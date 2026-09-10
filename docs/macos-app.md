@@ -82,15 +82,15 @@ What the steps mean:
 | Prepared | A compiled engine is on disk, but it is not loaded. |
 | Loaded | The model is in memory and the comma gets it immediately. |
 
-Preparing with CoreML takes about 18 minutes the first time: about 9 minutes
-compiling the model, then about 9 minutes creating the session that runs it.
-The Mac pays the second half of that again, about 9 minutes, every later time
-the server loads that engine. That is why the app exists: leave Jetlink running
-and the model stays loaded.
+Preparing with CoreML takes about 10 seconds the first time, and loading a
+prepared engine again takes about 2 seconds. It used to be about 9 minutes
+each way: the compiled model carried 4 GB of its weights as text, which every
+load parsed. The weights now go to the compiled model's weight file, so both
+ends are seconds.
 
 Closing the window is fine. The server keeps running and the menu bar icon
-stays. Quitting Jetlink stops the server, and the next start pays the 9 minutes
-again.
+stays. Quitting Jetlink stops the server, and the next start loads the engine
+again in about 2 seconds.
 
 ## Plug in
 
@@ -150,12 +150,12 @@ assumed. Details and the full method are in
 
 | Backend | Frame time on an M1 Pro | Prepare and load | Pick it when |
 | --- | --- | --- | --- |
-| Automatic (recommended) | 43 ms | About 18 minutes the first time, 9 minutes each later load | Always, unless you have a reason not to. |
-| CoreML on the GPU | 43 ms, no frame over budget in 390 | About 18 minutes the first time, 9 minutes each later load | You want the automatic choice pinned. |
-| CoreML with the Neural Engine | 45 ms at 20 Hz, 69 frames of 390 over budget | About 10 minutes per stage, so longer again | You are measuring on a faster Mac. |
+| Automatic (recommended) | 43 ms | About 10 seconds to prepare, about 2 seconds each later load | Always, unless you have a reason not to. |
+| CoreML on the GPU | 43 ms, no frame over budget in 390 | About 10 seconds to prepare, about 2 seconds each later load | You want the automatic choice pinned. |
+| CoreML with the Neural Engine | 45 ms at 20 Hz, 69 frames of 390 over budget | Not measured again since the weights moved out of the compiled model | You are measuring on a faster Mac. |
 | tinygrad on Metal | 66 ms, over the 50 ms budget every frame | About 15 seconds to prepare, about a second to load | You want a quick start for a bench test. |
 
-Disk goes with that choice: a CoreML engine is about 10 GB, a tinygrad engine
+Disk goes with that choice: a CoreML engine is about 2.3 GB, a tinygrad engine
 is 777 MB.
 
 ## Troubleshooting
@@ -164,7 +164,7 @@ is 777 MB.
 | --- | --- |
 | The server failed to start | Open **Logs**. The last lines say why. The usual causes are another server already holding the USB device, and a cache folder that is not writable. |
 | It waits for the comma forever | Use a USB-A port on a hub, dock or adapter, use a USB 3 data cable, and check that **Accelerator Link** is on under Settings > Models on the comma. |
-| Preparing takes a long time | About 18 minutes is normal for CoreML the first time, and about 9 minutes for each later load. Memory pressure makes it longer, so close other large applications while it prepares. |
+| Preparing takes a long time | CoreML should take about 10 seconds to prepare and about 2 seconds to load. Minutes means an engine prepared before the weights moved out of the compiled model; forget it under **Models** and prepare it again. Memory pressure makes it longer either way, so close other large applications while it prepares. |
 | The comma says **Big Model Lost** | Check the cable first. Then check that the Mac did not sleep: turn on **Keep the Mac awake while serving** and keep the Mac on power. |
 | Everything rebuilt after an update | A new runtime version means a new prepared engine, so the model is prepared again. The download is kept and is not fetched twice. |
 | The model list is empty | The Mac needs internet for the list. Open **Models** and choose **Refresh**. |

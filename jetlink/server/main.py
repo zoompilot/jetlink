@@ -338,12 +338,17 @@ def main(argv=None) -> int:
       log.info("already built: %s", entry.meta())
       return 0
 
-    last = [0.0]
+    # Per stage, not per build: the CoreML stages each run 0 to 1, and a
+    # fraction carried over from the last one would swallow every line of the
+    # next until it passed the mark the last one finished at.
+    seen = {'stage': None, 'frac': 0.0}
 
     def report(stage, frac, msg):
-      if frac - last[0] >= 0.02 or frac >= 1.0 or frac == 0.0:
-        last[0] = frac
-        log.info("%-6s %5.1f%%  %s", stage, frac * 100, msg)
+      if stage != seen['stage']:
+        seen['stage'], seen['frac'] = stage, 0.0
+      if frac - seen['frac'] >= 0.02 or frac >= 1.0 or frac == 0.0:
+        seen['frac'] = frac
+        log.info("%-8s %5.1f%%  %s", stage, frac * 100, msg)
 
     # Carry the spec into the sidecar like a served build does, so the first
     # client to connect loads the artifact instead of reparsing the ONNX for it.

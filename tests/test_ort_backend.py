@@ -31,8 +31,10 @@ from jetlink.server.backends.ort import (  # noqa: E402
   MANIFEST,
   OrtBackend,
   _cache_key,
+  _has_cache_key,
   _pick_device,
   available_providers,
+  repair_coreml_cache,
   runtime_version,
 )
 from tests import tiny_model  # noqa: E402
@@ -104,6 +106,74 @@ def test_build_makes_a_directory_with_the_prepared_model(built):
   meta = out.with_suffix('.json').read_text()
   assert '"backend": "ort"' in meta and '"spec"' in meta and '"sessions"' in meta
   assert [s for s, _, _ in stages][0] == 'patch' and stages[-1][1] == 1.0
+
+
+class TestRepairCoreMLCache:
+  """An artifact built under the old metadata key carries two compiles, one
+  under a hash of the build's temp path and one under a hash of the final
+  path, and neither is found by key. The repair renames the one that belongs
+  to this artifact and drops the rest, without a rebuild. CoreML is not
+  needed to check any of that, only the directory layout it leaves behind.
+  """
+
+  @staticmethod
+  def _layout(tmp_path, compiles):
+    """An artifact whose coreml/ holds `{dir name: what model.txt says}`."""
+    artifact = tmp_path / 'a086.ort1.29.0.coreml-Apple_M1_Pro.ortcache'
+    artifact.mkdir()
+    onnx.save(onnx.load(str(tiny_model.write(tmp_path / 'src.onnx'))), str(artifact / 'model.onnx'))
+    cache = artifact / 'coreml'
+    cache.mkdir()
+    for name, recorded in compiles.items():
+      d = cache / name
+      (d / '0_dynamic_mlprogram' / 'model' / 'compiled_model.mlmodelc' / 'weights').mkdir(parents=True)
+      (d / '0_dynamic_mlprogram' / 'model' / 'compiled_model.mlmodelc' / 'model.mil').write_text('program(1.3)')
+      (d / 'model.txt').write_text(str(recorded))
+    return artifact, cache, _cache_key(artifact, 'model')
+
+  def test_the_compile_for_this_artifact_is_kept_under_the_key(self, tmp_path):
+    artifact, cache, key = self._layout(tmp_path, {
+      '9229090538059370699': tmp_path / 'tmpzr7xwcwm' / 'artifact' / 'model.onnx',
+      '15625364929042385060': tmp_path / 'a086.ort1.29.0.coreml-Apple_M1_Pro.ortcache' / 'model.onnx',
+    })
+    repair_coreml_cache(artifact, 'model.onnx', cache, key)
+    assert [d.name for d in sorted(cache.iterdir())] == [key], 'one directory, named by the key'
+    mil = cache / key / '0_dynamic_mlprogram' / 'model' / 'compiled_model.mlmodelc' / 'model.mil'
+    assert mil.read_text() == 'program(1.3)', 'the compiled program was rebuilt, not renamed'
+
+  def test_the_key_is_written_into_the_model(self, tmp_path):
+    artifact, cache, key = self._layout(tmp_path, {})
+    model = onnx.load(str(artifact / 'model.onnx'))
+    assert not _has_cache_key(model, key)
+    repair_coreml_cache(artifact, 'model.onnx', cache, key)
+    assert _has_cache_key(onnx.load(str(artifact / 'model.onnx')), key)
+
+  def test_a_compile_for_another_artifact_is_removed(self, tmp_path):
+    artifact, cache, key = self._layout(tmp_path, {'999': tmp_path / 'somewhere' / 'else.onnx'})
+    repair_coreml_cache(artifact, 'model.onnx', cache, key)
+    assert list(cache.iterdir()) == [], 'a stale compile was left to be loaded'
+
+  def test_a_second_repair_changes_nothing(self, tmp_path):
+    artifact, cache, key = self._layout(tmp_path, {
+      '15625364929042385060': tmp_path / 'a086.ort1.29.0.coreml-Apple_M1_Pro.ortcache' / 'model.onnx',
+    })
+    repair_coreml_cache(artifact, 'model.onnx', cache, key)
+    before = sorted(p.name for p in cache.rglob('*'))
+    repair_coreml_cache(artifact, 'model.onnx', cache, key)
+    assert sorted(p.name for p in cache.rglob('*')) == before
+
+  def test_a_compile_already_under_the_key_survives_a_stale_neighbour(self, tmp_path):
+    artifact, cache, key = self._layout(tmp_path, {'999': tmp_path / 'somewhere' / 'else.onnx'})
+    (cache / key).mkdir()
+    (cache / key / 'model.txt').write_text(str(artifact / 'model.onnx'))
+    repair_coreml_cache(artifact, 'model.onnx', cache, key)
+    assert [d.name for d in cache.iterdir()] == [key]
+
+  def test_a_compile_with_no_model_txt_is_treated_as_stale(self, tmp_path):
+    artifact, cache, key = self._layout(tmp_path, {'999': tmp_path / 'x.onnx'})
+    (cache / '999' / 'model.txt').unlink()
+    repair_coreml_cache(artifact, 'model.onnx', cache, key)
+    assert list(cache.iterdir()) == []
 
 
 def test_the_loaded_session_agrees_with_numpy(backend, built):

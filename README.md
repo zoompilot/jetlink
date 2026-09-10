@@ -53,8 +53,8 @@ On the Jetson, use a USB-A port, not its USB-C.
 
 Stay parked with the comma online. The home-button icon pulses while the comma
 downloads the model, sends it over, and the server prepares it. A Jetson takes
-about 3 minutes for the default model. A Mac takes about 18 minutes the first
-time, then about 9 minutes every time the server restarts, so keep it running.
+about 3 minutes for the default model. A Mac takes about 10 seconds the first
+time, then about 2 seconds every time the server restarts.
 
 | Icon | Meaning |
 | --- | --- |

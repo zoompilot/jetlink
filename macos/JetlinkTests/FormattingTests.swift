@@ -133,6 +133,8 @@ struct FormattingTests {
     #expect(ProgressRow.stageName("upload") == "Receiving model")
     #expect(ProgressRow.stageName("patch") == "Preparing the model")
     #expect(ProgressRow.stageName("parse") == "Reading the model")
+    #expect(ProgressRow.stageName("convert") == "Converting for CoreML")
+    #expect(ProgressRow.stageName("compile") == "Compiling")
     #expect(ProgressRow.stageName("build") == "Building")
     #expect(ProgressRow.stageName("save") == "Saving")
     #expect(ProgressRow.stageName("load") == "Loading")
