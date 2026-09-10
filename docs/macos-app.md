@@ -12,14 +12,6 @@ prepares them, and keeps the one you chose loaded, so the comma is ready at
 once. It also shows what is on disk, which is worth watching: a prepared model
 is about 5.5 GB.
 
-![The Status screen](assets/macos-status.png)
-
-![The Models screen](assets/macos-models.png)
-
-![The Logs screen](assets/macos-logs.png)
-
-![Settings](assets/macos-settings.png)
-
 ## Requirements
 
 | What you need | Why |
