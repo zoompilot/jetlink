@@ -1,0 +1,16 @@
+{
+ "transfer": "basic",
+ "objects": [
+  {
+   "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+   "size": 765953504,
+   "actions": {
+    "download": {
+     "href": "https://gitlab.com/commaai/openpilot-lfs.git/gitlab-lfs/objects/a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+     "header": {}
+    }
+   },
+   "authenticated": true
+  }
+ ]
+}
