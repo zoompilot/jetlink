@@ -1,5 +1,12 @@
 # CUDA laptop/desktop server. The Jetson image is docker/Dockerfile.
-FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04
+#
+# `-base`, not `-runtime`. TensorRT's PyPI wheels carry their own copies of the
+# CUDA libraries they need: tensorrt-cu12-libs declares no dependencies and is
+# still 4.4 GB. Stacking those on `-runtime`, which exists to provide the same
+# libraries, paid for CUDA twice and put 2.3 GB in the image that nothing
+# loaded. `-base` is 138 MB against 2,442 MB and carries cudart, which is what
+# is left to want.
+FROM nvidia/cuda:12.9.1-base-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -14,9 +21,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && python3 -m venv /opt/venv
 
 WORKDIR /opt/jetlink
+
+# On its own, and before the source: this is the 4.4 GB layer, and editing a
+# Python file must not rebuild it. Pinned exactly because `tensorrt-cu12` on
+# PyPI is a stub sdist of a few hundred bytes whose setup.py fetches the real
+# wheels from pypi.nvidia.com while pip runs, so the version resolved here is
+# the only record of what went in.
+ARG TENSORRT_VERSION=11.3.0.99
+RUN python -m pip install --no-cache-dir "tensorrt-cu12==${TENSORRT_VERSION}"
+
 COPY pyproject.toml README.md LICENSE ./
 COPY jetlink ./jetlink
 COPY scripts ./scripts
+# tensorrt is already satisfied by the layer above; this adds its neighbours.
 RUN python -m pip install --no-cache-dir ".[trt,usb,nvml]"
 
 EXPOSE 5599

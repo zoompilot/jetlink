@@ -1,0 +1,120 @@
+# Build both container images without pushing them.
+#
+# The release workflow is the only thing that pushes, and twice now an image
+# has broken in a way only a tag could reveal: the first time buildx was handed
+# an empty tag list, the second time a build record was mistaken for a release
+# asset. Building here on every change to the images or to what goes inside
+# them moves that discovery off the release.
+#
+# Paths, not every push: the CUDA image pulls 4.4 GB of TensorRT.
+name: Docker images
+
+on:
+  push:
+    paths:
+      - 'docker/**'
+      - 'jetlink/**'
+      - 'pyproject.toml'
+      - '.github/workflows/docker.yml'
+  pull_request:
+    paths:
+      - 'docker/**'
+      - 'jetlink/**'
+      - 'pyproject.toml'
+      - '.github/workflows/docker.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  jetson:
+    name: Jetson image builds
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/arm64
+          push: false
+          load: true
+          tags: jetlink:jetson
+          cache-from: type=gha,scope=jetson
+          cache-to: type=gha,mode=max,scope=jetson
+
+      - name: Check the server starts
+        run: |
+          # --help rather than a run: there is no Jetson GPU here. It still
+          # proves the interpreter, the package and its imports are intact.
+          docker run --rm --entrypoint python3 jetlink:jetson \
+            -m jetlink.server.main --help > /dev/null
+          echo "the Jetson image runs"
+
+  cuda:
+    name: CUDA image builds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Make room for the image
+        run: |
+          # TensorRT is 4.4 GB before the image is even loaded back.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.cuda
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: jetlink:cuda
+          cache-from: type=gha,scope=cuda
+          cache-to: type=gha,mode=max,scope=cuda
+
+      - name: Check TensorRT resolves against the base image
+        run: |
+          # The point of the test. `-base` is 2.3 GB smaller than `-runtime`
+          # because TensorRT's wheels vendor the CUDA libraries they need; if
+          # that is ever wrong, it shows up as an unresolved DT_NEEDED here
+          # rather than on somebody's laptop.
+          #
+          # libcuda.so.1 is excluded on purpose: it belongs to the driver and
+          # the container runtime injects it at run time, so it is legitimately
+          # absent on a runner with no GPU.
+          docker run --rm --entrypoint bash jetlink:cuda -c '
+            set -euo pipefail
+            LIBDIR=$(python -c "import tensorrt_libs, os; print(os.path.dirname(tensorrt_libs.__file__))")
+            echo "tensorrt libraries in $LIBDIR"
+            MISSING=$(ldd "$LIBDIR"/libnvinfer.so.* | grep "not found" | grep -v "libcuda.so.1" || true)
+            if [ -n "$MISSING" ]; then
+              echo "unresolved libraries, so the base image is too thin:"
+              echo "$MISSING"
+              exit 1
+            fi
+            echo "every TensorRT dependency resolves"
+            python -c "import jetlink; print(\"jetlink imports\")"
+          '
+
+      - name: Report the image size
+        run: docker image ls jetlink:cuda --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
