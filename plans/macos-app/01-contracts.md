@@ -372,6 +372,25 @@ struct ModelRow: Identifiable, Equatable, Sendable {
   var backend: BackendChoice; var transport: TransportChoice; var tcpPort: Int; var cacheDirectory: URL
   var startServerOnLaunch: Bool; var keepAwakeWhileServing: Bool; var logLevel: String; var pythonOverride: String?
 }
+
+// Preview and test factories (C implements, D uses in #Preview and FormattingTests).
+// Internal, never called from production paths. They build a store with the given
+// state and no live process or socket behind it; actions on such a store are no-ops.
+extension ServerStore {
+  static func preview(runState: ServerRunState = .serving, info: ServerInfo? = nil, link: LinkEvent, engine: EngineEvent, stats: StatsEvent? = nil) -> ServerStore
+}
+extension ModelStore {
+  static func preview(catalog: CatalogEvent?, inventory: InventoryEvent?, downloads: [String: DownloadEvent] = [:], engine: EngineEvent) -> ModelStore
+}
+extension LogBuffer { static func preview(lines: [String]) -> LogBuffer }
+extension AppSettings { static func preview() -> AppSettings }   // backed by UserDefaults(suiteName: "io.zoompilot.jetlink.preview"), reset on each call
+```
+
+The app wires the stores together in `AppState` (C owns it): `@MainActor @Observable final class AppState { let settings: AppSettings; let server: ServerStore; let models: ModelStore; let logs: LogBuffer }`.
+D's views take the stores they need as `@Environment(ServerStore.self)`-style
+environment objects; `JetlinkApp` (D) creates one `AppState` and injects
+`appState.settings`, `.server`, `.models`, `.logs` with `.environment(...)`.
+```swift
 ```
 
 ## 8. UserDefaults keys
