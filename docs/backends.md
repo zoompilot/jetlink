@@ -117,6 +117,15 @@ Two things the runtimes made the server do differently:
   is already gone, and the process aborts (one test run in three, crash
   report in `backends/ort/__init__.py`). The backend calls
   `disable_telemetry_events()` in every process that imports onnxruntime.
+- **tinygrad must come from git**, at or after commit
+  `e837e367aac9e1a66e689f4f32ce20ca9367df13` of
+  <https://github.com/sunnypilot/tinygrad>; the PyPI 0.14.0 wheel has no
+  `org.tinygrad` ONNX domain and cannot load the exported models. Install it
+  with:
+
+```bash
+pip install --no-deps "tinygrad @ git+https://github.com/sunnypilot/tinygrad@e837e367aac9e1a66e689f4f32ce20ca9367df13"
+```
 
 ## Risks and decisions
 

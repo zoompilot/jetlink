@@ -13,6 +13,13 @@ cd jetlink
 
 ## Mac (Apple silicon)
 
+Most people should use the app. Download Jetlink for Mac from the Releases
+page, open it, and leave it running; it carries its own Python and needs no
+Homebrew. The [Mac guide](macos-app.md) covers installing it, preparing a model
+ahead of a drive, and its settings.
+
+### From a terminal
+
 Needs Homebrew's Python (macOS ships 3.9, the project needs 3.10+) and libusb:
 
 ```bash
@@ -69,6 +76,12 @@ jetlink-server --backend trt --transport usb
 Plug the comma into a USB-A port. The udev rule grants USB access without
 root; unplug and replug the comma after installing it. In a new terminal, run
 `source .venv/bin/activate` before using `jetlink-server` again.
+
+**Prefetching models.** The same install provides `jetlink-models`, which
+downloads a model from sunnypilot's big-model catalog over this machine's
+network and prepares it before the comma ever asks. That turns the comma's
+first request into an immediate answer. See
+[models and the model CLI](models.md).
 
 ## Windows (NVIDIA GPU)
 

@@ -27,7 +27,11 @@ VENV="${JETLINK_VENV:-.venv}"
 if [ ! -x "$VENV/bin/python" ]; then
   python3 -m venv "$VENV"
   "$VENV/bin/python" -m pip install --quiet --upgrade pip
-  "$VENV/bin/python" -m pip install --quiet -e ".[ort,tinygrad,usb]"
+  "$VENV/bin/python" -m pip install --quiet -e ".[ort,usb]"
+  # tinygrad comes from git, not PyPI: the 0.14.0 wheel has no org.tinygrad ONNX
+  # domain and cannot load the exported models.
+  "$VENV/bin/python" -m pip install --quiet --no-deps \
+    "tinygrad @ git+https://github.com/sunnypilot/tinygrad@e837e367aac9e1a66e689f4f32ce20ca9367df13"
 fi
 export JETLINK_CACHE="${JETLINK_CACHE:-$PWD/models_cache}"
 mkdir -p "$JETLINK_CACHE"
