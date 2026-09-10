@@ -11,7 +11,7 @@
 # A-to-C cable; the server waits for the gadget until then.
 #
 # The cache is models_cache/ beside this checkout unless JETLINK_CACHE says
-# otherwise: a CoreML artifact is 5.5 GB and took nine minutes, so it should be
+# otherwise: a CoreML artifact is 10 GB and took eighteen minutes, so it should be
 # where you can see it, back it up and move it with the checkout, not under
 # ~/Library/Caches where a cleaner tool deletes it.
 #
