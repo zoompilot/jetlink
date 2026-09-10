@@ -24,10 +24,13 @@ case "$JETLINK_VERSION" in
   *) JETLINK_VERSION=0.0.0 ;;
 esac
 JETLINK_BUILD="${JETLINK_BUILD:-$(git -C "$MACOS_DIR" rev-list --count HEAD 2>/dev/null || echo 1)}"
-export JETLINK_VERSION JETLINK_BUILD
 
 echo "==> generating the project (version $JETLINK_VERSION, build $JETLINK_BUILD)"
-xcodegen generate --spec "$MACOS_DIR/project.yml" --project "$MACOS_DIR" --quiet
+# The generated project is committed, so it is always generated with the
+# placeholder version; writing this commit's version into it would make the
+# checked in file stale after every commit. The real values go to xcodebuild
+# below, where they override the project settings.
+JETLINK_VERSION=0.0.0 JETLINK_BUILD=1 xcodegen generate --spec "$MACOS_DIR/project.yml" --project "$MACOS_DIR" --quiet
 
 echo "==> building"
 XCODEBUILD_ARGS=(
@@ -36,6 +39,8 @@ XCODEBUILD_ARGS=(
   -configuration Release
   -derivedDataPath "$MACOS_DIR/build/DerivedData"
   build
+  "MARKETING_VERSION=$JETLINK_VERSION"
+  "CURRENT_PROJECT_VERSION=$JETLINK_BUILD"
   "CODE_SIGN_IDENTITY=${SIGN_IDENTITY:--}"
   CODE_SIGNING_ALLOWED=YES
 )

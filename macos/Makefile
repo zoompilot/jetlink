@@ -32,8 +32,12 @@ JETLINK_PYTHON ?= $(REPO_ROOT)/.venv/bin/python
 
 all: app
 
+# Generated with the placeholder version, never the one from git: the project
+# is committed, and baking `git rev-list --count HEAD` into it would make it
+# stale again on every commit. The real version reaches the build as an
+# xcodebuild command line setting (scripts/build-app.sh).
 project:
-	xcodegen generate --spec $(MACOS_DIR)/project.yml --project $(MACOS_DIR)
+	JETLINK_VERSION=0.0.0 JETLINK_BUILD=1 xcodegen generate --spec $(MACOS_DIR)/project.yml --project $(MACOS_DIR)
 
 python:
 	$(MACOS_DIR)/Python/embed-python.sh
