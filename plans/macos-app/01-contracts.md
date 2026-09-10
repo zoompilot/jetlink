@@ -273,6 +273,9 @@ already cached (the size is needed); the control server resolves the catalog fir
 `inventory()['loaded']` is always `None` from the registry; the control server fills it.
 A model file whose full identity is unknown is listed with its 16 character prefix as `sha256`.
 
+`Registry.remove(sha256, artifacts, model)` with `model` true also drops the
+matching `local-models.json` record.
+
 `Registry` never imports a backend and never imports `jetlink.server.session`.
 It may import `jetlink.server.cache` for `EngineCache`, `CacheEntry` and the
 sha validation regex, and `jetlink.spec.sha256_file`.
@@ -289,6 +292,19 @@ class EngineHost:
 
 # kinds emitted: 'progress' {stage, frac, msg}; 'engine' snapshot(); 'link' {state, detail, peer} (from main.py)
 ```
+
+Implemented notes (after the acceptance run, 2026-09-09): `emit` drops an
+`engine` payload identical to the previous one, and a new job resets the
+remembered stage so its first event never carries the last job's progress.
+Two deviations from decision D10 were approved because they fix what the
+run showed: `Backend.load(artifact, report=None)` gained the optional
+progress callback `build` already had, and the ORT backend reports
+`('load', 0.0, 'creating the CoreML session, N min elapsed; ...')` every 5 s
+during session creation; `tinygrad_identity()` reads the pip
+`direct_url.json` commit first and only runs a version-control lookup when
+tinygrad's own directory is a checkout, because the old lookup walked up to
+whichever repository enclosed site-packages and changed the cache key on
+every commit of that repository.
 
 ## 7. Swift types (agent C implements, agent D consumes)
 
