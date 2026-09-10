@@ -382,6 +382,20 @@ class TestCoreMLProgress:
     assert (stage, frac) == ('load', 0.0)
     assert '7 s elapsed' in msg
 
+  def test_a_convert_that_ends_inside_the_first_tick_still_gets_its_line(self, tmp_path):
+    """The build reports convert at 0 before the first tick. If the compile
+    has already started by then, that tick is the one that has to close
+    convert, or it never reaches 100 %."""
+    from jetlink.server.backends.ort import CoreMLProgress, coreml_ticker
+    cache = self._cache(tmp_path, converted=1_000_000_000, compiled=500_000_000)
+    progress = CoreMLProgress([cache], weights_bytes=1_000_000_000,
+                              expect={'compile_bytes': 1_000_000_000})
+    reports = []
+    tick = coreml_ticker(lambda *a: reports.append(a), progress, initial='convert')
+    tick(2.0)
+    assert [s for s, _, _ in reports] == ['convert', 'compile']
+    assert reports[0] == ('convert', 1.0, 'convert done in 2 s')
+
   def test_a_finished_stage_gets_its_hundred_percent_line(self, tmp_path):
     from jetlink.server.backends.ort import CoreMLProgress, coreml_ticker
     cache = self._cache(tmp_path, converted=1_000_000_000)

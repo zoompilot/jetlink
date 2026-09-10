@@ -58,6 +58,10 @@ over TCP loopback through the real server at 20 Hz.
 | peak RSS while building | 0.6 GB | 3.0 GB | 9.1 GB |
 | peak RSS while loading | not measured | 2.5 GB | not measured |
 
+Resident sizes are the whole process tree, the spawned `jetlink-ort` worker
+included, sampled once a second; the worker is where the session is created,
+so the server's own resident size says nothing about a build or a load.
+
 The CoreML build and load were 524 s and 527 s until 2026-09-10, when the
 weights stopped travelling through the compiled model as text. onnxruntime's
 MatMulAddFusion emits `Gemm` with `transB=0`, and the CoreML EP's Gemm builder
@@ -74,19 +78,19 @@ the same machine, back to back, before and after:
 | build | 526.4 s | 8.2 s |
 | load, warm cache | 464.6 s | 2.0 s |
 | artifact on disk | 5.91 GB | 2.30 GB |
+| peak RSS while building | 9.39 GB | 2.99 GB |
 | peak RSS while loading | 9.59 GB | 2.52 GB |
 | trunk `model.mil` | 4,109,111,037 B | 1,339,974 B |
 | trunk `weights/weight.bin` | 47,246,080 B | 717,700,480 B |
 | trunk BLOBFILE consts / fp16 immediates | 241 / 74 | 315 / 0 |
 | parity gate, worst column | 0.999619 pass | 0.999619 pass |
 
-The arithmetic is untouched: the MIL op is `linear` either way, the parity
-columns agree digit for digit, and the server-side GPU time was 41.28 ms
-before against 41.19 to 41.28 ms over three runs after. Round trips that
-session were 45.8 ms mean before and 45.6 to 45.8 ms after, with 1 frame of
-390 over budget before and 0 to 4 after; the machine was under more memory
-pressure than when the 43.3 ms row above was taken, so read those as a
-before-and-after pair rather than against the table.
+The arithmetic is untouched: the MIL op is `linear` either way and the parity
+columns agree digit for digit. Frame time is unchanged too. Measured back to
+back while another build held the machine, both sides ran 45.8 ms mean; on an
+idle machine afterwards the rewritten engine ran 43.3 / 44.6 / 45.1 ms over
+three runs with 1, 0 and 0 frames of 390 over budget, which is the 43.3 row
+above. Read the 45.8 pair against each other, not against the table.
 
 An engine prepared before this change still loads in minutes. The artifact is
 still valid and the cache key still finds it, so nothing forces a rebuild;

@@ -387,7 +387,7 @@ class CoreMLProgress:
     return 'load', 0.0, f"loading the CoreML model, {elapsed:.0f} s elapsed"
 
 
-def coreml_ticker(report, progress: CoreMLProgress):
+def coreml_ticker(report, progress: CoreMLProgress, initial: str | None = None):
   """One tick: the progress a client draws, and a line for the log.
 
   Progress goes out on every tick, because the comma and the app would
@@ -397,9 +397,13 @@ def coreml_ticker(report, progress: CoreMLProgress):
   it, so it is info on the first tick of a stage and once a minute after
   that, debug for the rest. A stage that ends gets its 100 % line with the
   time it took, so the CLI transcript reads as a list of finished phases.
+
+  `initial` is the stage the caller has already reported at 0. Without it a
+  convert that finishes inside the first tick has no previous stage for that
+  tick to close, and goes from 0 straight to whatever compile reports.
   """
   said = [-1]
-  state: dict = {'stage': None, 'since': 0.0}
+  state: dict = {'stage': initial, 'since': 0.0}
 
   def tick(elapsed: float, pid: int = 0) -> None:
     stage, frac, msg = progress.tick(elapsed, pid)
@@ -529,7 +533,7 @@ class OrtBackend:
         progress = CoreMLProgress(self._caches(staged, manifest), self._weights_bytes,
                                   expect=self._sidecar(out_path))
         report('convert', 0.0, 'converting for CoreML')
-        tick = coreml_ticker(report, progress)
+        tick = coreml_ticker(report, progress, initial='convert')
       else:
         report('build', 0.0, f'creating the onnxruntime session ({self.device})')
         tick = lambda elapsed, pid=0: report(  # noqa: E731
@@ -608,7 +612,7 @@ class OrtBackend:
       progress = CoreMLProgress(self._caches(artifact, manifest), expect=sidecar, loading=True)
       if report is not None:
         report('load', 0.0, 'loading the CoreML model')
-      tick = coreml_ticker(report, progress)
+      tick = coreml_ticker(report, progress, initial='load')
     else:
       tick = None if report is None else (lambda elapsed, pid=0: report(
         'load', 0.0, f'creating the onnxruntime session ({self.device})'))
