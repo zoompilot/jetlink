@@ -1,0 +1,13 @@
+{
+ "transfer": "basic",
+ "objects": [
+  {
+   "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+   "size": 765953504,
+   "error": {
+    "code": 404,
+    "message": "Object does not exist"
+   }
+  }
+ ]
+}

@@ -30,6 +30,7 @@ dev = ["pytest>=7", "ruff", "onnx>=1.16"]
 
 [project.scripts]
 jetlink-server = "jetlink.server.main:main"
+jetlink-models = "jetlink.registry.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["jetlink*"]
