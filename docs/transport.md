@@ -121,9 +121,17 @@ and unbinds cleanly.
 
 ```bash
 sudo scripts/setup_gadget.sh          # manual integration only: on the comma, once per boot
-# jetlinkd/modeld then open ep0, write descriptors and bind the UDC
+# jetlinkd then opens ep0, writes descriptors and binds the UDC
 docker/run.sh --transport usb         # on the Jetson: it is the host
 ```
+
+One process holds `ep0` and the bind for as long as the link is on, so the
+gadget does not leave the bus when a drive starts or ends. `ep0` takes a single
+opener; the endpoint files take a second one, so the process that drives
+(`modeld`) opens `ep1`/`ep2` itself for the length of a drive and the owner
+stays off them. FunctionFS keeps a queued read queued until something completes
+it, which is why only one of them may read an endpoint at a time, and why the
+owner puts the endpoints down after each exchange rather than at a handover.
 
 `setup_gadget.sh` deliberately does not bind the UDC: a FunctionFS gadget cannot
 attach to a controller until its descriptors are written, and the client writes
@@ -177,16 +185,18 @@ USB is the wake source, and *both* edges wake it: the comma presenting the
 gadget and the comma dropping it. So ignition-off, which pulls the gadget,
 wakes the Jetson, and the policy has to be a loop, not a command. The server
 runs it (`--sleep-after`, `jetlink/server/sleep.py`): awake with no gadget for
-120 s means nobody wants us, suspend again. 120 s is longer than the gadget's
-re-enumeration at the jetlinkd/modeld handover (45 to 70 s observed), so a
-handover never sleeps through. The same rule covers a mid-drive disconnect
-longer than that: the next enumeration is a wake.
+120 s means nobody wants us, suspend again. 120 s is longer than any
+re-enumeration the comma causes, so one never sleeps through. The same rule
+covers a mid-drive disconnect longer than that: the next enumeration is a wake.
 
-The comma side does have to let go: a parked comma stays awake for up to 30
-hours holding the gadget, and with the gadget held the Jetson never sleeps.
-jetlinkd releases it once the engine is ready and a minute has passed since
-ignition-off (`DORMANT_HOLD` in the fork), and presents it again only for
-work or for the shutdown below. The compatible integration manages this release automatically.
+The comma side does have to let go, but only for a box that sleeps: a parked
+comma stays awake for up to 30 hours holding the gadget, and with the gadget
+held the Jetson never sleeps. The server reports its `--sleep-after` in the
+greeting, and jetlinkd releases the gadget only when it is non-zero, once the
+engine is ready and a minute has passed since ignition-off (`DORMANT_HOLD` in
+the fork). It presents it again for work, for a drive, or for the shutdown
+below. Without `--sleep-after` the link stays up for the whole parked period.
+The compatible integration manages all of this automatically.
 
 ### Powering off with the comma
 

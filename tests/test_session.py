@@ -566,21 +566,44 @@ class TestEngineStateWithoutAnUpload:
     host = EngineHost(EngineCache(tmp_path, FakeBackend(make_spec())))
     assert host.status('d' * 64, 4)['state'] == 'need_upload'
 
-  def test_a_finished_job_for_another_model_starts_the_one_asked_for(self, tmp_path):
-    spec = make_spec()
-    cache = self._cached(tmp_path, spec)
-    host = EngineHost(cache, telemetry=FakeSensor())
+  def _waiting(self, tmp_path, spec):
+    """A session waiting on `spec` while another model owns the GPU."""
+    host = EngineHost(self._cached(tmp_path, spec), telemetry=FakeSensor())
     sent = []
     session = Session(SimpleNamespace(send=lambda *a: sent.append(a)), host)
     session.request = Request(spec.sha256, spec.nbytes, spec.frame_skip)
     other = FakeEngine(spec)
     host.loaded = Loaded('c' * 64, spec, other, PolicyQueues(spec), {})
-    host.job = Job('c' * 64, load_only=True, state='ready')
+    return host, session, sent
+
+  def test_a_finished_job_for_another_model_starts_the_one_asked_for(self, tmp_path):
+    spec = make_spec()
+    host, session, _ = self._waiting(tmp_path, spec)
     started = []
     host._start = lambda job, req, entry, mp, sp: started.append(job.sha256)
 
-    session.engine_update()
+    host._serve_pending(Job('c' * 64, load_only=True, state='ready'), session)
 
     assert started == [spec.sha256], "nobody loaded the model this client asked for"
-    assert sent[0][0] == P.Msg.ENGINE_RESP
-    assert json.loads(bytes(sent[0][2][0]))['state'] == 'building'
+
+  @pytest.mark.parametrize('state', ['ready', 'failed'])
+  def test_the_client_own_job_is_never_restarted_on_its_own_outcome(self, tmp_path, state):
+    # a load that failed would otherwise be started again by the completion it
+    # just reported, for as long as it kept failing
+    spec = make_spec()
+    host, session, _ = self._waiting(tmp_path, spec)
+    started = []
+    host._start = lambda *a: started.append(a)
+
+    host._serve_pending(Job(spec.sha256, load_only=True, state=state), session)
+
+    assert started == []
+
+  def test_a_session_with_nothing_outstanding_starts_nothing(self, tmp_path):
+    spec = make_spec()
+    host, session, _ = self._waiting(tmp_path, spec)
+    session.request = None
+    started = []
+    host._start = lambda *a: started.append(a)
+    host._serve_pending(Job('c' * 64, load_only=True, state='ready'), session)
+    assert started == []

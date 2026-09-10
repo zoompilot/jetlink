@@ -59,18 +59,26 @@ time, then about 2 seconds every time the server restarts.
 | Icon | Meaning |
 | --- | --- |
 | Pulsing | Downloading, transferring, or preparing the model. Keep waiting. |
-| Green | Ready. |
+| Green | Parked: ready. Driving: the large model is driving. |
+| Green, dimmed | Driving: ready and waiting for a chance to switch. Stop with cruise off, or turn lateral control off. |
 | Orange | Preparation failed. Read the alert on the home screen. |
-| Back to normal a minute later | The comma released the idle connection. This is expected. |
+| Back to normal a minute later | Only with `--sleep-after`: the comma let the link go so the computer can sleep. Otherwise it stays connected the whole time you are parked. |
 
 ## What to expect when driving
 
-- The small model drives while the server starts. A **Big Model Ready** chime
-  means the large model is available.
-- The large model takes over only while disengaged. If you are engaged when it
-  becomes ready, the comma says **Big Model Available, disengage to switch**.
+- The small model drives while the server starts. On a computer that powers up
+  with the car, the large model is prepared 65 to 96 seconds later.
+- It takes over only when nothing is steering: **at a stop with cruise off, or
+  with lateral control off**. Until then the icon is dimmed and the comma says
+  **Big Model Available** at every stop. Disengaging alone is not enough on a
+  car with lateral control always on.
+- A **Big Model Ready** chime means it has taken over.
+- Picking a new model needs the comma online once, while parked, to download
+  it. After that it is prepared wherever you are: drive off in the middle and
+  the small model drives, the panel counts the preparation down, and the large
+  model joins at the first chance to switch.
 - **Big Model Lost** while engaged is a soft disable. Take over. The small model
-  drives, and Jetlink reconnects and switches back the next time you disengage.
+  drives, and Jetlink reconnects and switches back at the next chance.
 
 To stop using Jetlink, turn off **Settings > Models > Accelerator Link**.
 

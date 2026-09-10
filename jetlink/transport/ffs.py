@@ -154,6 +154,50 @@ class FfsTransport(StreamTransport):
 
   def __init__(self, mount: str = '/dev/ffs-jetlink', gadget: str | None = None,
                udc: str | None = None):
+    self._prepare(mount, gadget)
+    try:
+      self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
+      os.write(self.ep0, build_descriptors())
+      os.write(self.ep0, build_strings())
+      if gadget is not None:
+        # Bind last: a FunctionFS gadget cannot attach until its descriptors
+        # are written, which is why setup_gadget.sh leaves UDC empty.
+        self.bind(udc)
+      # ep1/ep2 exist now, but opening one before a host enables it costs the
+      # gadget until the next reboot; see _ensure_epfiles.
+    except BaseException:
+      self.close()   # otherwise a failed bring-up leaks the descriptors it did open
+      raise
+
+  @classmethod
+  def borrowed(cls, mount: str, udc: str, bounce=None, owner_gadget: str | None = None) -> FfsTransport:
+    """A transport over a gadget another process owns.
+
+    That process holds ep0 and the UDC bind for its whole life, so the gadget
+    does not leave the bus when the link changes hands: this end only opens the
+    endpoint files and moves bytes, and nothing here writes descriptors, binds
+    or unbinds. The endpoint files take a second open happily; ep0 does not,
+    which is why the owner keeps it.
+
+    The ep0 rule is unchanged and `udc` is what keeps it: the endpoints are
+    still opened only once that controller reads configured. `bounce` is how a
+    write with no reader is freed, since the unbind that frees it belongs to
+    the owner. `owner_gadget` is the last resort for when the owner does not
+    answer at all; see _abort_write.
+    """
+    if not udc:
+      # _configured() would answer "no controller of ours to ask, assume
+      # ready" and _ensure_epfiles would open an endpoint no host has enabled,
+      # which costs the gadget until the comma is rebooted.
+      raise LinkError('a borrowed gadget must name its controller')
+    t = cls.__new__(cls)
+    t._prepare(mount, gadget=None)
+    t.bound_udc = udc
+    t._bounce = bounce
+    t._owner_gadget = owner_gadget
+    return t
+
+  def _prepare(self, mount: str, gadget: str | None) -> None:
     # This end only receives replies: an INFER_RESP is ~74 KB with telemetry and
     # padding, and the upload goes the other way. 256 KB is a 3x margin the
     # memory-tight comma can spare, and RxBuffer grows past it on demand.
@@ -161,6 +205,8 @@ class FfsTransport(StreamTransport):
     self.mount = mount
     self.gadget = gadget
     self.bound_udc: str | None = None
+    self._bounce = None
+    self._owner_gadget: str | None = None
     self.ep0 = self.ep_out = self.ep_in = -1
     self._state_fd = -1   # held-open UDC 'state' fd; see _udc_state
     self._ready_deadline: float | None = None
@@ -177,19 +223,6 @@ class FfsTransport(StreamTransport):
     self._write_aborted = False
     self._reader: threading.Thread | None = None
     self._write_guard = WriteWatchdog(self._abort_write)
-    try:
-      self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
-      os.write(self.ep0, build_descriptors())
-      os.write(self.ep0, build_strings())
-      if gadget is not None:
-        # Bind last: a FunctionFS gadget cannot attach until its descriptors
-        # are written, which is why setup_gadget.sh leaves UDC empty.
-        self.bind(udc)
-      # ep1/ep2 exist now, but opening one before a host enables it costs the
-      # gadget until the next reboot; see _ensure_epfiles.
-    except BaseException:
-      self.close()   # otherwise a failed bring-up leaks the descriptors it did open
-      raise
 
   def _udc_state(self) -> str | None:
     """The controller's gadget state, off a held-open fd.
@@ -263,6 +296,42 @@ class FfsTransport(StreamTransport):
       self._reader = threading.Thread(target=self._read_loop, name='jetlink-ffs-read', daemon=True)
       self._reader.start()
 
+  def release_endpoints(self) -> bool:
+    """Put the endpoint files down, keeping ep0 and the descriptors.
+
+    An exchange leaves a read queued on the endpoint, and FunctionFS keeps it
+    queued until something completes it: nobody else may read that endpoint
+    until it does, and the only thing that dequeues it is the unbind. So the
+    owner gives the endpoints up like this and binds straight back - one
+    re-enumeration - without ever letting go of ep0, which is the whole point,
+    since the gadget exists only while somebody holds it.
+
+    False when there is nothing to give up. Afterwards this transport is bare
+    and bound, and using it again reopens the endpoints as any first use does.
+    """
+    if self.gadget is None or self._closing or self.ep_out < 0:
+      return False
+    udc, self._had_host = self.bound_udc, False
+    self.unbind()          # completes the queued read with ESHUTDOWN
+    reader, self._reader = self._reader, None
+    if reader is not None and reader is not threading.current_thread():
+      reader.join(READER_JOIN_TIMEOUT)
+    self._close_fds(('ep_in', 'ep_out'), reader)
+    # Whatever the last exchange left behind goes with the endpoints: half a
+    # message would frame the next one's first reply as garbage.
+    with self._cv:
+      self._chunks.clear()
+      self._free.clear()
+      self._queued = 0
+      self._reader_error = None
+      self._cv.notify_all()
+    self.rx.start = self.rx.end = 0
+    self._ready_deadline = None
+    self._write_aborted = False
+    time.sleep(REBIND_SETTLE)
+    self.bind(udc)
+    return True
+
   def bind(self, udc: str | None = None) -> None:
     if self.gadget is None:
       raise LinkError("no gadget path given")
@@ -275,6 +344,18 @@ class FfsTransport(StreamTransport):
       f.write(udc + '\n')
     self.bound_udc = udc
 
+  @property
+  def lendable(self) -> bool:
+    """Bound to a controller, with no endpoint file open on this end.
+
+    The state another process can take the endpoints over from. FunctionFS
+    keeps a queued read queued until something completes it, so a reader here
+    would sit in front of the borrower and take its reply; and without a bound
+    controller there is nothing to take over.
+    """
+    return bool(self.gadget is not None and self.bound_udc and self.ep_out < 0
+                and not self._closing)
+
   def rebind(self) -> bool:
     """One unplug and replug, as the host sees it.
 
@@ -282,25 +363,30 @@ class FfsTransport(StreamTransport):
     UDC sits in `default` or `addressed` and only another edge moves it. A
     Jetson whose hubs are not armed for remote wakeup does exactly that.
 
-    Refused once a host has enabled the endpoints. Unbinding then completes
-    the reader's request with ESHUTDOWN and the transport is done; the caller
-    wants a working link, not a freshly bound dead one.
+    Refused while this end has the endpoint files open. Unbinding then
+    completes the reader's request with ESHUTDOWN and the transport is done;
+    the caller wants a working link, not a freshly bound dead one.
     """
-    if self.gadget is None or self._closing or self._had_host or self.ep_out >= 0:
+    if self._closing or self.ep_out >= 0:
+      return False
+    if self._bounce is not None:
+      return bool(self._bounce())   # a borrowed gadget: the bind is the owner's
+    if not self.lendable:
       return False
     udc = self.bound_udc
-    if udc is None:
-      return False
     self.unbind()
     time.sleep(REBIND_SETTLE)
     self.bind(udc)
     return True
 
-  def unbind(self) -> None:
-    if self.gadget is None or self.bound_udc is None:
+  def unbind(self, gadget: str | None = None) -> None:
+    """Take the gadget off the bus. `gadget` overrides our own path, which is
+    how a borrower reaches an owner that has stopped answering."""
+    gadget = gadget or self.gadget
+    if gadget is None or self.bound_udc is None:
       return
     try:
-      with open(os.path.join(self.gadget, 'UDC'), 'w') as f:
+      with open(os.path.join(gadget, 'UDC'), 'w') as f:
         f.write('\n')
     except OSError:
       pass
@@ -338,7 +424,18 @@ class FfsTransport(StreamTransport):
     self._write_aborted = True
     log.warning("jetlink: no reader for %.3f s, dropping the gadget to free the write",
                 getattr(self, '_write_budget', WRITE_TIMEOUT))
-    self.unbind()
+    if self._bounce is None:
+      return self.unbind()
+    # A borrowed gadget: the unbind that dequeues this belongs to whoever owns
+    # ep0, so ask. If nobody answers - the owner died, or is wedged itself -
+    # take the gadget down from here anyway. This runs while a frame thread is
+    # inside a writev the kernel will never return from on its own, and a
+    # re-enumeration costs one rejoin where a wedged modeld costs the whole
+    # drive, the small model included.
+    if self._bounce():
+      return
+    log.error("jetlink: the gadget's owner did not answer; dropping the link from here")
+    self.unbind(self._owner_gadget)
 
   def send(self, *args, **kwargs) -> None:
     # Reset the quantum at each message: a latched shrink would split every
@@ -554,17 +651,23 @@ class FfsTransport(StreamTransport):
       reader.join(READER_JOIN_TIMEOUT)
     with self._cv:
       self._cv.notify_all()
-    # Clear each fd as it is closed: a second close() would otherwise shut
-    # whatever those descriptor numbers had been recycled into.
-    for name in ('_state_fd', 'ep_in', 'ep_out', 'ep0'):
+    self._close_fds(('_state_fd', 'ep_in', 'ep_out', 'ep0'), reader)
+
+  def _close_fds(self, names, reader: threading.Thread | None) -> None:
+    """Close these descriptors, clearing each as it goes.
+
+    Clearing matters because a second close() would otherwise shut whatever
+    those descriptor numbers had been recycled into. ep_out is closed on its
+    own thread while a read is still outstanding: the read never came back
+    (nothing to unbind, or a kernel that will not complete it), and close()
+    returns regardless on Linux but the caller must not be risked on that.
+    """
+    for name in names:
       fd = getattr(self, name, -1)
       setattr(self, name, -1)
       if fd is None or fd < 0:
         continue
       if name == 'ep_out' and reader is not None and reader.is_alive():
-        # The read never came back (nothing to unbind, or a kernel that will
-        # not complete it). close() returns regardless on Linux, but do not
-        # risk the caller on that.
         threading.Thread(target=_close_quietly, args=(fd,), daemon=True).start()
         continue
       _close_quietly(fd)
