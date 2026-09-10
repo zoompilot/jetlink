@@ -63,7 +63,7 @@ struct AppCommands: Commands {
   let appState: AppState
 
   var body: some Commands {
-    CommandGroup(replacing: .newItem) { }
+    CommandGroup(replacing: .newItem) {}
     CommandMenu("Server") {
       Button("Start server") { appState.server.start() }
         .keyboardShortcut("r", modifiers: .command)

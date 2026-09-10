@@ -74,7 +74,8 @@ struct MainWindow: View {
       Button("Stop server", systemImage: "stop.fill") { server.stop() }
         .help("Stop the Jetlink server")
     case .starting, .stopping:
-      Button { } label: {
+      Button {
+      } label: {
         ProgressView()
           .controlSize(.small)
       }

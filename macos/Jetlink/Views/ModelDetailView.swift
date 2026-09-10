@@ -59,7 +59,7 @@ struct ModelDetailView: View {
     .formStyle(.grouped)
     .alert("Delete the prepared engines?", isPresented: $confirmingDelete) {
       Button("Delete", role: .destructive) { models.forget(row, artifacts: true, model: false) }
-      Button("Cancel", role: .cancel) { }
+      Button("Cancel", role: .cancel) {}
     } message: {
       Text("Every prepared engine for \(row.displayName) is deleted. Preparing the model again takes as long as the first time.")
     }
