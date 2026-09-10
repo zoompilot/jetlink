@@ -61,7 +61,7 @@ See the [Mac guide](docs/macos-app.md) for model downloads, settings, and logs.
 
 ### Jetson
 
-For **Jetson Orin Nano Super (8 GB) with JetPack 6.1**. Use a power supply
+For **Jetson Orin Nano Super (8 GB) with JetPack 6.2**. Use a power supply
 sized for 25 W mode and allow several GB of free space on `/mnt/data`.
 
 Run these commands in a terminal on the Jetson:
@@ -102,7 +102,7 @@ in place of `jetlink:latest` in that guide's image-inspection command.
 ### CUDA laptop
 
 For a **Linux laptop with an NVIDIA GPU**, a working NVIDIA driver, and
-**Python 3.10 or later**. This path is implemented but not yet hardware-tested.
+**Python 3.10 or later**. This setup is hardware-tested.
 
 On Ubuntu or Debian, run in a terminal:
 

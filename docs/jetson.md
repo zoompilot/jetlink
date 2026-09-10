@@ -13,8 +13,9 @@ password; typing it shows nothing.
 
 ## Install and run
 
-Docker runs the server with its dependencies. JetPack 6.1 (L4T r36.4,
-TensorRT 10.3) is what the image is built against.
+The tested Jetson runs **JetPack 6.2 (L4T r36.4.3)**. Docker runs the server
+with its dependencies; the container uses the `l4t-jetpack:r36.4.0` base
+image with CUDA 12.6 and TensorRT 10.3.
 
 ```bash
 sudo apt update

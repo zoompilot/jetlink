@@ -12,7 +12,8 @@ temperature, or failure condition.
   the 50 ms frame budget and loads a prepared model in about 2 seconds.
   tinygrad loads in a second but misses the budget on that machine. See
   [measurements](backends.md#mac-measured).
-- **Linux NVIDIA and Windows WSL2:** implemented, not yet tested on hardware.
+- **Linux NVIDIA (CUDA laptop):** hardware-tested.
+- **Windows WSL2:** implemented, not yet tested on hardware.
 - **CPU:** functional testing only.
 
 ## Measured performance

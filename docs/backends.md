@@ -35,7 +35,7 @@ plans load without a rebuild.
 | Telemetry | Tegra sysfs | NVML (`pip install "jetlink[nvml]"`) | NVML | none: the sensors need privileges, and the comma is told nothing rather than zeros |
 | Sleep, poweroff | yes | `--sleep-after` works where `/sys/power` does; nothing wakes a laptop on a USB edge | no | no; `scripts/run-mac.sh` holds `caffeinate` |
 | Install | Docker image, unchanged | `pip install -e ".[trt,usb,nvml]"` | pip inside WSL2 | `scripts/run-mac.sh`, which makes the venv |
-| Status | validated on the car | expected to work; not yet run | untested | measured below |
+| Status | validated on the car | hardware-tested | untested | measured below |
 
 ## Mac, measured
 

@@ -1,8 +1,7 @@
 # Platform setup
 
 How to run the server on something other than a Jetson. Mac is bench-tested.
-Linux and Windows with an NVIDIA GPU are implemented but not yet run on
-hardware. Set up the comma with the steps in the [README](../README.md#quick-start).
+Linux with an NVIDIA GPU is hardware-tested. Windows WSL2 remains unvalidated. Set up the comma with the steps in the [README](../README.md#quick-start).
 
 All paths start with a checkout:
 

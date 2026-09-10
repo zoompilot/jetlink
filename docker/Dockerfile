@@ -1,4 +1,5 @@
-# jetlink inference server for Jetson (JetPack 6.1 / L4T r36.4).
+# Jetson inference server: tested host is JetPack 6.2 / L4T r36.4.3.
+# Container base is pinned separately to L4T r36.4.0.
 #
 # l4t-jetpack already carries CUDA 12.6, cuDNN and TensorRT 10.3. Do not
 # "upgrade" the Python: its TensorRT bindings are built for 3.10 only.
