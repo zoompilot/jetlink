@@ -527,7 +527,10 @@ def test_a_served_frame_reaches_the_stats_ticker(bench):
   assert c.wait_for('link', state='connected')['peer'] == 'usb'
   infer_once(session, spec, frame_id=2)
   stats = c.wait_for('stats', timeout=4.0)
-  assert stats['frames'] >= 1 and stats['fps'] > 0 and stats['window_s'] == 1.0
+  assert stats['frames'] >= 1 and stats['fps'] > 0
+  # window_s is the measured time since the last tick, so a loaded machine
+  # widens it; what matters is that it is one tick's worth and not a session.
+  assert 0.8 <= stats['window_s'] <= 3.0
 
 
 def test_frame_stats_is_empty_until_a_frame_lands(bench):
