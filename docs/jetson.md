@@ -62,15 +62,26 @@ ignition-switched supply. If the Jetson has always-on power, read
 [always-on supply and suspend](transport.md#always-on-supply-and-suspend) first
 and skip that line.
 
-On switched power, the large model is ready about a minute after the car
-starts; the small model drives until then.
+`--sleep-after` decides two things, because the comma reads it from the
+server's greeting. With it, the comma lets the link go about a minute after
+the engine is ready, so the Jetson can suspend and the USB edge wakes it again.
+Without it, the comma holds the link for the whole time you are parked and the
+icon stays green.
+
+On switched power the Jetson boots after the car starts: reckon on 65 to 96
+seconds from Jetson power to a prepared engine. The small model drives through
+all of it, the icon pulses, and then dims until the first stop with cruise off,
+which is when the large model takes over.
 
 To stop the service: `sudo systemctl disable --now jetlink-server`.
 
 ## Choosing a model
 
-Pick another model under **Settings > Models > Big Model** while parked, then
-wait for it to prepare. The list is sunnypilot's big-model catalog, the one a
+Pick another model under **Settings > Models > Big Model** while parked and
+online, and wait for it to prepare. Only the download needs the internet and a
+parked car; if you drive off part way through the preparation the small model
+drives, the panel counts the build down, and the large model joins at the
+first stop with cruise off. The list is sunnypilot's big-model catalog, the one a
 chestnut board picks from; the comma stores your choice, fetches the ONNX only
 when the Jetson asks for it, and never downloads the chestnut's files unless a
 board is fitted. New models appear in the list without a comma or Jetlink
