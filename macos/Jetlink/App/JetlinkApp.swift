@@ -5,22 +5,25 @@ import SwiftUI
 struct JetlinkApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
   @State private var appState = AppState()
+  @State private var navigation = Navigation()
 
   var body: some Scene {
     Window("Jetlink", id: "main") {
       MainWindow()
         .jetlinkEnvironment(appState)
+        .environment(navigation)
         .onAppear {
           delegate.appState = appState
           appState.launch()
         }
     }
     .defaultSize(width: 1000, height: 640)
-    .commands { AppCommands(appState: appState) }
+    .commands { AppCommands(appState: appState, navigation: navigation) }
 
     MenuBarExtra("Jetlink", systemImage: menuBarSymbol) {
       MenuBarView()
         .jetlinkEnvironment(appState)
+        .environment(navigation)
         .onAppear {
           delegate.appState = appState
           appState.launch()
@@ -31,6 +34,7 @@ struct JetlinkApp: App {
     Settings {
       SettingsView()
         .jetlinkEnvironment(appState)
+        .environment(navigation)
     }
   }
 
@@ -61,9 +65,19 @@ extension View {
 
 struct AppCommands: Commands {
   let appState: AppState
+  let navigation: Navigation
 
   var body: some Commands {
     CommandGroup(replacing: .newItem) {}
+    CommandGroup(after: .sidebar) {
+      Divider()
+      Button("Status") { navigation.selection = .status }
+        .keyboardShortcut("1", modifiers: .command)
+      Button("Models") { navigation.selection = .models }
+        .keyboardShortcut("2", modifiers: .command)
+      Button("Logs") { navigation.selection = .logs }
+        .keyboardShortcut("3", modifiers: .command)
+    }
     CommandMenu("Server") {
       Button("Start server") { appState.server.start() }
         .keyboardShortcut("r", modifiers: .command)
