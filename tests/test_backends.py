@@ -267,3 +267,28 @@ def test_the_ping_does_not_need_an_engine(linked):
   assert client.ping(timeout=5) < 5.0
   assert client.state(timeout=5)['engine_state'] == 'none'
   assert P.VERSION == client.hello(timeout=5)['protocol']
+
+
+def test_the_ort_load_ticker_logs_once_a_minute(caplog):
+  """A CoreML load ticks every 5 s for nine minutes: a hundred log lines, but
+  the progress a client draws has to move on every one of them."""
+  import logging
+
+  from jetlink.server.backends.ort import load_ticker
+
+  reports = []
+  tick = load_ticker(lambda stage, frac, msg: reports.append((stage, frac, msg)),
+                     lambda elapsed: f'{elapsed / 60:.0f} min elapsed')
+  elapsed = [5.0, 10.2, 30.5, 55.1, 60.3, 65.4, 119.8, 120.6, 180.9]
+  with caplog.at_level(logging.DEBUG, logger='jetlink.ort'):
+    for e in elapsed:
+      tick(e)
+
+  info = [r for r in caplog.records if r.levelno == logging.INFO]
+  assert len(info) == 4, 'the first tick and one a minute after it'
+  assert 'still creating the onnxruntime sessions, 5 s' in info[0].getMessage()
+  assert [round(float(r.getMessage().split(', ')[1].split(' ')[0])) for r in info] == [5, 60, 121, 181]
+  assert len([r for r in caplog.records if r.levelno == logging.DEBUG]) == len(elapsed) - 4
+  # Every tick still moves the progress, whatever the log did.
+  assert len(reports) == len(elapsed)
+  assert reports[0] == ('load', 0.0, '0 min elapsed')

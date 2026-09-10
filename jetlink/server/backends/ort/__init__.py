@@ -196,6 +196,29 @@ def _with_cache_key(model, key: str):
   return model
 
 
+def load_ticker(report, message):
+  """One tick of a load: the progress a client draws, and a line for the log.
+
+  Progress goes out every tick, because the comma and the app would otherwise
+  sit on stage load, frac 0, "deserializing engine" for the nine minutes
+  CoreML takes, which reads as a hung server. The log does not: a tick every
+  5 s is over a hundred identical lines per load and the Logs view has nothing
+  else in it, so it is info on the first tick and once a minute after that,
+  debug for the rest.
+  """
+  said = [-1]
+
+  def tick(elapsed: float) -> None:
+    minute = int(elapsed // 60)
+    log.log(logging.INFO if minute != said[0] else logging.DEBUG,
+            "still creating the onnxruntime sessions, %.0f s", elapsed)
+    said[0] = minute
+    if report is not None:
+      report('load', 0.0, message(elapsed))
+
+  return tick
+
+
 class OrtBackend:
   name = 'ort'
   suffix = '.ortcache'
@@ -314,17 +337,6 @@ class OrtBackend:
     report('build', 1.0, f"done in {meta['build_seconds']}s")
     return out_path
 
-  def _loading(self, report, elapsed: float) -> None:
-    """One tick of a load: the log line, and the same thing on the wire.
-
-    Without this the comma and the app both sat on stage load, frac 0, msg
-    "deserializing engine" for the nine minutes CoreML takes, which is
-    indistinguishable from a hung server.
-    """
-    log.info("still creating the onnxruntime sessions, %.0f s", elapsed)
-    if report is not None:
-      report('load', 0.0, self._load_message(elapsed))
-
   def _load_message(self, elapsed: float) -> str:
     if self._on_coreml:
       return (f'creating the CoreML session, {elapsed / 60:.0f} min elapsed; the big model takes '
@@ -363,7 +375,7 @@ class OrtBackend:
     if self._on_coreml:
       log.info("creating the CoreML session; measured at %.0f min on an M1 Pro, cache or no cache",
                EXPECTED_COREML_SECONDS / 60)
-    engine = self._engine(artifact, manifest, on_tick=lambda elapsed: self._loading(report, elapsed))
+    engine = self._engine(artifact, manifest, on_tick=load_ticker(report, self._load_message))
     log.info("onnxruntime sessions on %s in %.1f s, providers %s", self.device, time.time() - t0,
              engine.providers)
     return engine
