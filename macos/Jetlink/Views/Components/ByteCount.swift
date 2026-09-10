@@ -12,9 +12,26 @@ struct ByteCount: View {
     Text(bytes.map { ByteCount.string($0) } ?? "")
   }
 
-  /// "5.9 GB", the same decimal units the Finder shows.
+  /// "766 MB", "1.8 GB": the Finder's decimal units, one decimal at most, and
+  /// no decimal at all on a whole number of units.
   static func string(_ bytes: Int64) -> String {
-    bytes.formatted(.byteCount(style: .file))
+    let units = ["bytes", "KB", "MB", "GB", "TB", "PB"]
+    var value = Double(bytes)
+    var unit = 0
+    while abs(value) >= 1000, unit < units.count - 1 {
+      value /= 1000
+      unit += 1
+    }
+    if unit == 0 {
+      return "\(bytes) bytes"
+    }
+    var rounded = (value * 10).rounded() / 10
+    if abs(rounded) >= 1000, unit < units.count - 1 {
+      rounded = ((rounded / 1000) * 10).rounded() / 10
+      unit += 1
+    }
+    let fraction = rounded == rounded.rounded() ? 0 : 1
+    return "\(rounded.formatted(.number.precision(.fractionLength(fraction)))) \(units[unit])"
   }
 
   /// A transfer rate, "41.2 MB/s". Rates below a byte a second read as "0 bytes/s".

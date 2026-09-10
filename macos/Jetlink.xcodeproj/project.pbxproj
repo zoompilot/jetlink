@@ -42,6 +42,7 @@
 		D52A5FEC31C64D0362D1C241 /* ModelRowBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9DA1FD8B58599C58011034A /* ModelRowBuilder.swift */; };
 		DB7F8DA71830ED1B08411E02 /* ServerConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB634CA9F18BF099D8D923B0 /* ServerConfigurationTests.swift */; };
 		E50546AB6D1FFF4F633F1D7B /* ControlClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B6101A302AB815094A1A71B /* ControlClientTests.swift */; };
+		E6B3254D0AEFA63B51E14767 /* ModelName.swift in Sources */ = {isa = PBXBuildFile; fileRef = 263F21D988CFF3440C37780D /* ModelName.swift */; };
 		F5090618E99AD0DF044297DB /* ByteCount.swift in Sources */ = {isa = PBXBuildFile; fileRef = 246B6131F06A6BB2833E7648 /* ByteCount.swift */; };
 /* End PBXBuildFile section */
 
@@ -59,6 +60,7 @@
 		0C6279207493AD7D245284F1 /* ModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsView.swift; sourceTree = "<group>"; };
 		1E4EAEB195364585F1758B21 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		246B6131F06A6BB2833E7648 /* ByteCount.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ByteCount.swift; sourceTree = "<group>"; };
+		263F21D988CFF3440C37780D /* ModelName.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelName.swift; sourceTree = "<group>"; };
 		298B7562E3BC072DD1917643 /* ServerProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerProcess.swift; sourceTree = "<group>"; };
 		2ADA99B4B335CC732D1EF4A4 /* ControlProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlProtocol.swift; sourceTree = "<group>"; };
 		2EBEA3F97A13888F496AF418 /* ModelStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelStore.swift; sourceTree = "<group>"; };
@@ -200,6 +202,7 @@
 			isa = PBXGroup;
 			children = (
 				246B6131F06A6BB2833E7648 /* ByteCount.swift */,
+				263F21D988CFF3440C37780D /* ModelName.swift */,
 				4F5A9541625DBE0986C9F54B /* ModelStatusLabel.swift */,
 				45DBD17986ED74D8DB8CBADC /* ProgressRow.swift */,
 				4BEA6A4DA5B0C2666AC2A710 /* StatusBadge.swift */,
@@ -392,6 +395,7 @@
 				AD3E2507E4A2AF42BAE2468D /* MainWindow.swift in Sources */,
 				1BA2A83D1E8AB9FCB9B9737F /* MenuBarView.swift in Sources */,
 				51087A49B1F3CB59C5FC6A6E /* ModelDetailView.swift in Sources */,
+				E6B3254D0AEFA63B51E14767 /* ModelName.swift in Sources */,
 				D52A5FEC31C64D0362D1C241 /* ModelRowBuilder.swift in Sources */,
 				1C0B2BD28B1379F9DC98C7AB /* ModelStatusLabel.swift in Sources */,
 				6866930D6102B8EE51B8B03D /* ModelStore.swift in Sources */,

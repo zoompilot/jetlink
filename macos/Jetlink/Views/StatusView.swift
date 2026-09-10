@@ -47,7 +47,7 @@ struct StatusView: View {
         VStack(alignment: .trailing, spacing: 2) {
           Text(StatusView.backendDescription(backend: server.info?.backend, device: server.info?.device))
           if let info = server.info {
-            Text("\(info.runtimeVersion), \(info.device)")
+            Text(StatusView.runtimeLine(backend: info.backend, version: info.runtimeVersion, device: info.device))
               .font(.callout)
               .foregroundStyle(.secondary)
           }
@@ -119,7 +119,7 @@ struct StatusView: View {
       LabeledContent("Link") {
         VStack(alignment: .trailing, spacing: 2) {
           StatusBadge(text: linkText, tone: linkTone)
-          if !server.link.detail.isEmpty {
+          if showsLinkDetail {
             Text(server.link.detail)
               .font(.callout)
               .foregroundStyle(.secondary)
@@ -161,6 +161,17 @@ struct StatusView: View {
     }
   }
 
+  /// The disconnect reason, and the address a TCP server is listening on. The
+  /// USB "waiting for a jetlink gadget" line only repeats the badge.
+  private var showsLinkDetail: Bool {
+    guard !server.link.detail.isEmpty else { return false }
+    switch server.link.state {
+    case .disconnected: return true
+    case .waiting: return server.info?.transport == "tcp"
+    case .connected: return false
+    }
+  }
+
   private var linkTone: StatusBadge.Tone {
     switch server.link.state {
     case .waiting: .neutral
@@ -175,13 +186,16 @@ struct StatusView: View {
   private var engineSection: some View {
     Section("Engine") {
       if showsEmptyState {
-        ContentUnavailableView {
+        VStack(alignment: .leading, spacing: 6) {
           Label("No model prepared", systemImage: "shippingbox")
-        } description: {
+            .font(.headline)
           Text("Download and prepare the model your comma uses in Models. Keep Jetlink running afterwards; the model stays loaded and the comma connects to it immediately.")
-        } actions: {
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
           Button("Open Models") { selection = .models }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
       } else {
         LabeledContent("Model") {
           VStack(alignment: .trailing, spacing: 2) {
@@ -215,7 +229,7 @@ struct StatusView: View {
 
   private var loadedModelName: String {
     guard let sha = server.engine.sha256 else { return "None" }
-    return models.rows.first { $0.sha256 == sha }?.name ?? "Unknown model"
+    return models.rows.first { $0.sha256 == sha }?.displayName ?? "Unknown model"
   }
 
   private var engineStateText: String {
@@ -266,6 +280,24 @@ struct StatusView: View {
       return URL(fileURLWithPath: cache)
     }
     return settings.cacheDirectory
+  }
+
+  /// "tinygrad 0.14.0, Apple M1 Pro": what is actually running, under the
+  /// backend's plain name. The device loses the backend prefix it repeats.
+  static func runtimeLine(backend: String, version: String, device: String) -> String {
+    let runtime = switch backend {
+    case "ort": "onnxruntime"
+    case "trt": "TensorRT"
+    default: backend
+    }
+    let version = version.split(separator: "+", maxSplits: 1).first.map(String.init) ?? version
+    var hardware = device
+    if let dash = device.firstIndex(of: "-") {
+      hardware = String(device[device.index(after: dash)...])
+    }
+    hardware = hardware.replacingOccurrences(of: "_", with: " ")
+    let head = version.isEmpty ? runtime : "\(runtime) \(version)"
+    return hardware.isEmpty ? head : "\(head), \(hardware)"
   }
 
   /// "CoreML on the GPU", "CoreML with the Neural Engine", "tinygrad on Metal",

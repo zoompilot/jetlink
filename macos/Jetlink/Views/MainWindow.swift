@@ -38,15 +38,17 @@ struct MainWindow: View {
       detail
         .navigationTitle(selection?.title ?? "Jetlink")
         .toolbar {
+          ToolbarItem(placement: .principal) {
+            StatusBadge(text: summary.0, tone: summary.1)
+              .lineLimit(1)
+              .fixedSize()
+          }
           ToolbarItem(placement: .primaryAction) {
             runButton
           }
-          ToolbarItem(placement: .primaryAction) {
-            Text(summary.0)
-              .foregroundStyle(.secondary)
-          }
         }
     }
+    .frame(minWidth: 860, minHeight: 540)
   }
 
   @ViewBuilder
