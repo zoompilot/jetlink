@@ -373,9 +373,12 @@ The toolbar's centre is `ToolbarActivityView`
 
 - 480 by 30 points at most (minimum 240, it gives way to the title and the
   run button because the toolbar centres it on the window), `.font(.callout)`,
-  in the `.principal` placement. On macOS 26 the toolbar wraps the item in its
-  own glass capsule, so it draws no background; on macOS 15 it is
-  `.quaternary` in a 9 point rounded rectangle, the inset Xcode 16 used.
+  in the `.principal` placement. An inset, not a pill (decided 2026-09-10 on
+  a screenshot: the toolbar's glass capsule around the item read as foreign):
+  the item has `.sharedBackgroundVisibility(.hidden)` on macOS 26, and the
+  view draws a 9 point continuous rounded rectangle filled black at 22 %
+  (dark) or 6 % (light) with a one point hairline of `.primary` at 10 % or
+  8 %, the recessed well Xcode's activity view sits in. Same on macOS 15.
 - Not a `Button`. Bisected on macOS 26: a `Button` in the principal placement
   is taken for a toolbar button and the whole item is dropped from the
   toolbar, whatever its label. The click is an `.onTapGesture`, with the

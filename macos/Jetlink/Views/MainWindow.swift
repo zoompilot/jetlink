@@ -51,8 +51,17 @@ struct MainWindow: View {
       detail
         .navigationTitle(navigation.selection?.title ?? "Jetlink")
         .toolbar {
-          ToolbarItem(placement: .principal) {
-            ToolbarActivityView()
+          // The activity view is an inset, not a glass pill: the toolbar's own
+          // background around the item is turned off where the toolbar has one.
+          if #available(macOS 26, *) {
+            ToolbarItem(placement: .principal) {
+              ToolbarActivityView()
+            }
+            .sharedBackgroundVisibility(.hidden)
+          } else {
+            ToolbarItem(placement: .principal) {
+              ToolbarActivityView()
+            }
           }
           ToolbarItem(placement: .primaryAction) {
             runButton

@@ -123,14 +123,18 @@ struct ToolbarActivityView: View {
     server.runState == .serving && (server.engine.state == .building || server.engine.state == .loading)
   }
 
+  /// The recessed well Xcode's activity view sits in: a shade darker than the
+  /// toolbar with a hairline edge, no glass, no material. The toolbar's own
+  /// background around the item is hidden by the window (macOS 26).
   private struct ActivityBackground: ViewModifier {
-    @ViewBuilder
+    @Environment(\.colorScheme) private var colorScheme
+
     func body(content: Content) -> some View {
-      if #available(macOS 26, *) {
+      let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+      return
         content
-      } else {
-        content.background(.quaternary, in: RoundedRectangle(cornerRadius: 9))
-      }
+        .background(shape.fill(Color.black.opacity(colorScheme == .dark ? 0.22 : 0.06)))
+        .overlay(shape.strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.1 : 0.08), lineWidth: 1))
     }
   }
 }
