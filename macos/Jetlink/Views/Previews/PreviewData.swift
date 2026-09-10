@@ -37,12 +37,12 @@ enum PreviewData {
     state: .building,
     sha256: bigModelSHA,
     detail: "",
-    stage: "build",
+    stage: "convert",
     frac: 0.27,
-    msg: "compiling for CoreML, 3 min elapsed; the big model takes 11 min on an M1 Pro",
+    msg: "converting for CoreML, 207 MB of 766 MB written",
     loadOnly: false
   )
-  static let engineLoading = EngineEvent(state: .loading, sha256: bigModelSHA, detail: "", stage: "load", frac: 0.5, msg: "loading the engine", loadOnly: true)
+  static let engineLoading = EngineEvent(state: .loading, sha256: bigModelSHA, detail: "", stage: "load", frac: 0.5, msg: "loading the CoreML model, 1.2 GB of 2.5 GB resident", loadOnly: true)
   static let engineReady = EngineEvent(state: .ready, sha256: bigModelSHA, detail: "", stage: nil, frac: 1, msg: "", loadOnly: false)
   static let engineFailed = EngineEvent(
     state: .failed,

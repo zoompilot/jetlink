@@ -158,9 +158,9 @@ struct ServerSettingsView: View {
   static func backendCaption(_ backend: BackendChoice) -> String {
     switch backend {
     case .auto:
-      "Recommended. About 43 ms a frame on an M1 Pro. Preparing takes about 18 minutes the first time and 9 minutes for each later load, so keep Jetlink running."
+      "Recommended. About 43 ms a frame on an M1 Pro. Preparing takes about 10 seconds the first time and a couple of seconds for each later load."
     case .coreml:
-      "About 43 ms a frame on an M1 Pro. Preparing takes about 18 minutes the first time and 9 minutes for each later load, so keep Jetlink running."
+      "About 43 ms a frame on an M1 Pro. Preparing takes about 10 seconds the first time and a couple of seconds for each later load."
     case .ane:
       "Faster back to back, slower at the comma's 20 Hz on an M1 Pro. Measure before using it in the car."
     case .tinygrad:

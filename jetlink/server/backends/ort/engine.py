@@ -38,8 +38,10 @@ ORT_DTYPES = {
 # model; the comma gave up on the link long before.
 RUN_TIMEOUT = 30.0
 # Tick this often while the child creates its session, so a caller waiting on
-# a CoreML compile can report that it is still going.
-TICK = 5.0
+# a CoreML compile can report that it is still going. The CoreML stages read
+# the bytes in the cache directory on every tick, which is a scandir walk of a
+# few thousand entries: cheap beside a compile that writes gigabytes.
+TICK = 2.0
 
 
 class WorkerDied(RuntimeError):
@@ -50,8 +52,9 @@ class OrtEngine:
   def __init__(self, sessions: list[tuple[str, list]], device: str, log_severity: int = 3,
                on_tick=None):
     """Start the child and wait for its sessions, `[(model path, providers)]`
-    run back to back. `on_tick(elapsed_s)` is called every few seconds
-    meanwhile; the build uses it for progress."""
+    run back to back. `on_tick(elapsed_s, worker_pid)` is called every couple
+    of seconds meanwhile; the build and the load use it for progress, and the
+    pid is how a load that writes nothing is measured."""
     self.device = device
     self.last_gpu_us = 0
     self._block = None
@@ -68,7 +71,7 @@ class OrtEngine:
         if not self._proc.is_alive():
           raise WorkerDied('the onnxruntime worker exited before its session was ready')
         if on_tick is not None:
-          on_tick(time.monotonic() - t0)
+          on_tick(time.monotonic() - t0, self._proc.pid)
       msg = self._recv()
       if msg[0] == 'error':
         raise RuntimeError(f"onnxruntime worker: {msg[1].strip()}")

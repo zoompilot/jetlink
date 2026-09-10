@@ -35,12 +35,11 @@ reliably; a plain C-to-C cable may not.
 
 Things to know:
 
-- CoreML takes **about 18 minutes** to prepare the model the first time, and
-  about 9 minutes to load it again every time the server restarts. Keep it
-  running.
+- CoreML takes **about 10 seconds** to prepare the model the first time, and
+  about 2 seconds to load it again every time the server restarts.
 - The script holds the Mac awake on AC power. On battery, keep the lid open.
 - Models and prepared engines live in `models_cache/` next to the checkout,
-  about 11 GB per model with CoreML: a 766 MB download plus a 10 GB engine.
+  about 3 GB per model with CoreML: a 766 MB download plus a 2.3 GB engine.
   Set `JETLINK_CACHE` to move them.
 
 Options:
@@ -49,7 +48,7 @@ Options:
 # Serve a bench client over TCP instead of the comma (see Test without a comma)
 JETLINK_TRANSPORT=tcp scripts/run-mac.sh
 
-# tinygrad on Metal: starts in a second instead of 9 minutes, but 66 ms a frame on an M1 Pro
+# tinygrad on Metal: 66 ms a frame on an M1 Pro, against CoreML's 43
 JETLINK_BACKEND=tinygrad scripts/run-mac.sh
 
 # Prepare a model ahead of time, then exit
@@ -191,7 +190,7 @@ docker run --rm -it --network container:jetlink-cuda \
 | USB permission error on Linux | Install the udev rule, then replug the comma |
 | TCP connection refused | Server running with `--transport tcp`? Right address, port 5599 open? |
 | GPU not found in Docker | Redo the GPU access setup and rerun the `nvidia-smi` check |
-| Mac looks stuck loading | Allow about 18 minutes the first time and about 9 minutes for each later load; check the server output |
+| Mac looks stuck loading | CoreML prepares in about 10 seconds and loads in about 2; minutes means an engine prepared before the weights moved out of the compiled model, so prepare it again. Check the server output |
 | Link drops when laptop sleeps | Keep it awake, powered, and open |
 
 Desktop caches use `JETLINK_CACHE` if set, otherwise `~/.cache/jetlink`, or

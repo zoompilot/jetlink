@@ -53,15 +53,44 @@ over TCP loopback through the real server at 20 Hz.
 | round trip back to back through the server, mean / p99 | 66.2 / 67.6 ms | 39.9 ms server side | 32.6 / 38.7 ms |
 | parity gate, worst column | 0.99954 pass | 0.99957 pass | 0.99957 pass |
 | parity, mean error on `plan` / `lead_prob` | 0.0060 / 0.0156 | 0.0046 / 0.0150 | 0.0057 / 0.0138 |
-| build / load in a fresh process | 13 s / 1.1 s | 524 s / 527 s | 621 s / 635 s |
-| artifact on disk | 777 MB | 10.3 GB | 10.3 GB |
-| peak RSS while building | 0.6 GB | 7.9 GB | 9.1 GB |
+| build / load in a fresh process | 13 s / 1.1 s | 8.2 s / 2.0 s | not re-measured |
+| artifact on disk | 777 MB | 2.3 GB | not re-measured |
+| peak RSS while building | 0.6 GB | 3.0 GB | 9.1 GB |
+| peak RSS while loading | not measured | 2.5 GB | not measured |
 
-The CoreML artifact size was re-measured in the end-to-end run through the Mac
-app on the same machine, over the whole `.ortcache` directory, and came to
-10.3 GB; an earlier figure of 5.5 GB was wrong. That run also timed a first
-prepare at about 18 minutes end to end, which is the build and the load above
-back to back.
+The CoreML build and load were 524 s and 527 s until 2026-09-10, when the
+weights stopped travelling through the compiled model as text. onnxruntime's
+MatMulAddFusion emits `Gemm` with `transB=0`, and the CoreML EP's Gemm builder
+transposes that weight on the host and writes it into `model.mil` as hex float
+literals at 6.06 bytes per fp16 value: the trunk's MIL was 4.109 GB against a
+47 MB `weight.bin`, and coremlc wrote all of it on a build and parsed all of
+it on every load. `onnx_patch.gemm_with_transposed_weight` does the same
+fusion first with the weight transposed and `transB=1`, which the builder
+passes through as a TensorProto, so it lands in the weight file. Measured on
+the same machine, back to back, before and after:
+
+| | before | after |
+| --- | ---: | ---: |
+| build | 526.4 s | 8.2 s |
+| load, warm cache | 464.6 s | 2.0 s |
+| artifact on disk | 5.91 GB | 2.30 GB |
+| peak RSS while loading | 9.59 GB | 2.52 GB |
+| trunk `model.mil` | 4,109,111,037 B | 1,339,974 B |
+| trunk `weights/weight.bin` | 47,246,080 B | 717,700,480 B |
+| trunk BLOBFILE consts / fp16 immediates | 241 / 74 | 315 / 0 |
+| parity gate, worst column | 0.999619 pass | 0.999619 pass |
+
+The arithmetic is untouched: the MIL op is `linear` either way, the parity
+columns agree digit for digit, and the server-side GPU time was 41.28 ms
+before against 41.19 to 41.28 ms over three runs after. Round trips that
+session were 45.8 ms mean before and 45.6 to 45.8 ms after, with 1 frame of
+390 over budget before and 0 to 4 after; the machine was under more memory
+pressure than when the 43.3 ms row above was taken, so read those as a
+before-and-after pair rather than against the table.
+
+An engine prepared before this change still loads in minutes. The artifact is
+still valid and the cache key still finds it, so nothing forces a rebuild;
+preparing the model again is what makes it fast.
 
 Read it this way:
 
@@ -71,14 +100,12 @@ Read it this way:
   which a faster GPU only partly removes. A newer Mac is expected under budget
   and has to be measured, not assumed.
 - **CoreML on the GPU is correct, under budget, and the Mac default.** 43 ms
-  round trip with a p99 of 44, no frame over budget in 390. It costs nine
-  minutes of compile every time a process creates the session, and
-  onnxruntime's `ModelCacheDirectory` did not shorten a second session; the
-  compile runs in a worker process while the server keeps answering (526
-  pings during a 527 s load, worst 11 ms), so the comma sees a long "loading
-  engine" and the small model drives, the same wait and the same fallback as
-  a Jetson rebuilding a plan. `--backend tinygrad` trades that for a
-  one-second start and a 66 ms frame.
+  round trip with a p99 of 44, no frame over budget in 390. It used to cost
+  nine minutes of compile every time a process created the session, which is
+  what the compiled model carrying its weights as text cost; with the weights
+  in the weight file a build is 8 s and a load 2 s. The compile still runs in
+  a worker process while the server keeps answering, so a first prepare never
+  blocks the comma. `--backend tinygrad` trades a 43 ms frame for a 66 ms one.
 - **The Neural Engine is correct now, and faster only back to back.** As
   exported it was 25 ms and wrong (whole-output correlation 0.91 to 0.97).
   A sub-model bisect found one node: `Gather(add_53, -1)`, the last-token
