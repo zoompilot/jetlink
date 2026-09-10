@@ -276,6 +276,124 @@ def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
   return model
 
 
+# A weight smaller than this stays as it is. onnxruntime writes an initializer
+# of ten elements or more to the weight file, but rewriting a graph is only
+# worth it where the MIL text would be large, and a bias-sized constant costs
+# a few hundred bytes either way.
+BLOB_MIN_ELEMENTS = 1024
+
+
+def gemm_with_transposed_weight(model: onnx.ModelProto) -> int:
+  """Rewrite `MatMul(x, W)` followed by `Add(b)` as `Gemm(x, W.T, b,
+  transB=1)`. In place, returns how many were rewritten.
+
+  onnxruntime's MatMulAddFusion already does this fusion at optimization
+  level 1, but it emits `transB=0` and leaves W as it was. The CoreML EP's
+  Gemm builder then transposes W on the host and adds it through
+  `AddConstant`, which is always an immediate, so the weight is written into
+  `model.mil` as hex float text: 6.06 bytes per fp16 value measured on an M1
+  Pro, which is how the trunk's MIL reached 4.1 GB against a 47 MB
+  weight.bin. Every load parses all of it. Handed W already transposed with
+  `transB=1`, the builder passes the initializer through as a TensorProto and
+  it lands in the weight file instead. The MIL op is `linear` either way, so
+  this moves bytes and changes no arithmetic.
+
+  Doing it here rather than leaving it to onnxruntime leaves the fusion
+  nothing to fuse. ORT flattens a rank-3 or rank-4 A to 2-D around the Gemm
+  and reshapes the result back, because ONNX Gemm is 2-D only; this inserts
+  the same pair, so the graph onnxruntime receives is the one its own fusion
+  would have built. `session.disable_specified_optimizers` was tried first
+  and does not reach this transformer in onnxruntime 1.29.0: the 106 fused
+  nodes keep their MatMulAddFusion names under every spelling of it.
+  """
+  g = model.graph
+  init = {t.name: t for t in g.initializer}
+  consumers: dict[str, list] = {}
+  for node in g.node:
+    for name in node.input:
+      consumers.setdefault(name, []).append(node)
+  outputs = {vi.name for vi in g.output}
+
+  candidates = [n for n in g.node if n.op_type == 'MatMul' and len(n.input) == 2
+                and n.input[1] in init and n.output[0] not in outputs]
+  dims, _ = _static_info(model, {n.input[0] for n in candidates})
+
+  replacements: dict[int, list] = {}
+  drop: set[int] = set()
+  order = {id(n): i for i, n in enumerate(g.node)}
+  rewritten = 0
+  for node in candidates:
+    weight = init[node.input[1]]
+    if len(weight.dims) != 2 or weight.dims[0] * weight.dims[1] < BLOB_MIN_ELEMENTS:
+      continue
+    after = consumers.get(node.output[0], [])
+    if len(after) != 1 or after[0].op_type != 'Add':
+      continue
+    add = after[0]
+    bias = next((i for i in add.input if i in init), None)
+    # The bias has to be the one that broadcasts over the output's last axis;
+    # anything else is a real elementwise Add and not a Gemm's C.
+    if bias is None or list(init[bias].dims) != [weight.dims[1]]:
+      continue
+    shape = dims.get(node.input[0])
+    if shape is None or len(shape) < 2 or shape[-1] != weight.dims[0] or any(d <= 0 for d in shape):
+      continue
+
+    stem = node.output[0]
+    array = numpy_helper.to_array(weight)
+    transposed = f"{stem}__wt"
+    g.initializer.append(numpy_helper.from_array(np.ascontiguousarray(array.T), transposed))
+    del array
+
+    new: list = []
+    a_name = node.input[0]
+    if len(shape) > 2:
+      flat = f"{stem}__flat_shape"
+      g.initializer.append(numpy_helper.from_array(
+        np.array([-1, weight.dims[0]], dtype=np.int64), flat))
+      a_name = f"{stem}__flat"
+      new.append(helper.make_node('Reshape', [node.input[0], flat], [a_name],
+                                  name=f"{stem}__reshape_in"))
+
+    gemm_out = add.output[0] if len(shape) == 2 else f"{stem}__gemm"
+    new.append(helper.make_node('Gemm', [a_name, transposed, bias], [gemm_out],
+                                name=f"{stem}__gemm", transB=1))
+    if len(shape) > 2:
+      back = f"{stem}__out_shape"
+      g.initializer.append(numpy_helper.from_array(
+        np.array(list(shape[:-1]) + [weight.dims[1]], dtype=np.int64), back))
+      new.append(helper.make_node('Reshape', [gemm_out, back], [add.output[0]],
+                                  name=f"{stem}__reshape_out"))
+
+    replacements[order[id(node)]] = new
+    drop.add(order[id(add)])
+    rewritten += 1
+
+  if not rewritten:
+    return 0
+
+  rebuilt = []
+  for i, node in enumerate(g.node):
+    if i in drop:
+      continue
+    rebuilt.extend(replacements.get(i, [node]))
+  del g.node[:]
+  g.node.extend(rebuilt)
+  _drop_unused_initializers(model)
+  return rewritten
+
+
+def _drop_unused_initializers(model: onnx.ModelProto) -> int:
+  """The weights the rewrite left behind. A transposed copy replaces the
+  original, and the model would otherwise carry 671 MB of both."""
+  g = model.graph
+  used = {name for node in g.node for name in node.input}
+  stale = [t for t in g.initializer if t.name not in used]
+  for t in stale:
+    g.initializer.remove(t)
+  return len(stale)
+
+
 def _head_casts(g) -> list:
   """The Cast nodes turning the uint8 image inputs into fp16, in either shape."""
   per_input = [n for n in g.node

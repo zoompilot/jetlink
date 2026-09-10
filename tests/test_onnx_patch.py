@@ -19,6 +19,7 @@ from onnx import TensorProto, helper, numpy_helper  # noqa: E402
 
 from jetlink.onnx_patch import (  # noqa: E402
   TINYGRAD_DOMAIN,
+  gemm_with_transposed_weight,
   layernorm_in_fp32,
   needs_patch,
   normalize_gather_indices,
@@ -365,3 +366,110 @@ class TestVisionNodes:
                           [helper.make_tensor_value_info('y', TensorProto.FLOAT16, [1])])
     with pytest.raises(ValueError, match='graph inputs'):
       vision_nodes(helper.make_model(g, opset_imports=[helper.make_opsetid('', 17)]))
+
+
+class TestGemmWithTransposedWeight:
+  """The CoreML EP writes a Gemm's weight into the MIL as text unless it
+  arrives already transposed, at about six bytes per fp16 value. These check
+  the rewrite that hands it one, and that it leaves everything else alone.
+  """
+
+  @staticmethod
+  def _matmul_add(a_shape, k=64, n=32, bias_dims=None, with_add=True):
+    w = np.arange(k * n, dtype=np.float16).reshape(k, n) / (k * n)
+    b = np.arange(n, dtype=np.float16) / n
+    out_shape = list(a_shape[:-1]) + [n]
+    nodes = [helper.make_node('MatMul', ['a', 'W'], ['mm'], name='mm')]
+    inits = [numpy_helper.from_array(w, 'W')]
+    if with_add:
+      nodes.append(helper.make_node('Add', ['mm', 'B'], ['out'], name='add'))
+      inits.append(numpy_helper.from_array(
+        b.reshape(bias_dims) if bias_dims is not None else b, 'B'))
+    else:
+      nodes.append(helper.make_node('Identity', ['mm'], ['out'], name='id'))
+    graph = helper.make_graph(
+      nodes, 'g', [helper.make_tensor_value_info('a', TensorProto.FLOAT16, list(a_shape))],
+      [helper.make_tensor_value_info('out', TensorProto.FLOAT16, out_shape)], inits)
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid('', 17)])
+
+  def test_a_rank_2_matmul_add_becomes_one_gemm(self):
+    m = self._matmul_add([8, 64])
+    assert gemm_with_transposed_weight(m) == 1
+    assert [n.op_type for n in m.graph.node] == ['Gemm']
+    gemm = m.graph.node[0]
+    assert next(a.i for a in gemm.attribute if a.name == 'transB') == 1
+    assert gemm.output[0] == 'out'
+    onnx.checker.check_model(m)
+
+  def test_the_weight_is_stored_transposed_and_the_original_is_dropped(self):
+    m = self._matmul_add([8, 64])
+    before = numpy_helper.to_array(next(t for t in m.graph.initializer if t.name == 'W'))
+    gemm_with_transposed_weight(m)
+    assert 'W' not in {t.name for t in m.graph.initializer}
+    stored = numpy_helper.to_array(next(t for t in m.graph.initializer if t.name.endswith('__wt')))
+    assert stored.shape == (before.shape[1], before.shape[0])
+    np.testing.assert_array_equal(stored, before.T)
+
+  @pytest.mark.parametrize('a_shape', [[1, 8, 64], [1, 4, 8, 64]])
+  def test_a_higher_rank_matmul_gets_the_reshape_pair_onnxruntime_would_add(self, a_shape):
+    m = self._matmul_add(a_shape)
+    assert gemm_with_transposed_weight(m) == 1
+    assert [n.op_type for n in m.graph.node] == ['Reshape', 'Gemm', 'Reshape']
+    flat = numpy_helper.to_array(
+      next(t for t in m.graph.initializer if t.name.endswith('__flat_shape')))
+    back = numpy_helper.to_array(
+      next(t for t in m.graph.initializer if t.name.endswith('__out_shape')))
+    np.testing.assert_array_equal(flat, [-1, 64])
+    np.testing.assert_array_equal(back, list(a_shape[:-1]) + [32])
+    assert m.graph.node[-1].output[0] == 'out'
+    onnx.checker.check_model(m)
+
+  @pytest.mark.parametrize('a_shape', [[8, 64], [1, 8, 64], [1, 4, 8, 64]])
+  def test_the_rewrite_keeps_the_arithmetic(self, a_shape):
+    # onnx's own evaluator, never onnxruntime: importing that into the test
+    # process aborts the suite at exit (see backends.ort.quiet)
+    from onnx.reference import ReferenceEvaluator
+    m = self._matmul_add(a_shape)
+    size = int(np.prod(a_shape))
+    a = ((np.arange(size, dtype=np.float32).reshape(a_shape) / size) - 0.5).astype(np.float16)
+    before = ReferenceEvaluator(m).run(None, {'a': a})[0]
+    gemm_with_transposed_weight(m)
+    after = ReferenceEvaluator(m).run(None, {'a': a})[0]
+    assert before.shape == after.shape
+    np.testing.assert_allclose(before.astype(np.float32), after.astype(np.float32),
+                               rtol=1e-3, atol=1e-3)
+
+  def test_a_matmul_with_no_add_is_left_alone(self):
+    # a bare MatMul already lowers to a CoreML matmul that reads the weight file
+    m = self._matmul_add([8, 64], with_add=False)
+    assert gemm_with_transposed_weight(m) == 0
+
+  def test_a_weight_below_the_threshold_is_left_alone(self):
+    m = self._matmul_add([4, 8], k=8, n=8)
+    assert gemm_with_transposed_weight(m) == 0
+
+  def test_an_add_that_is_not_a_bias_is_left_alone(self):
+    # a full-width Add is elementwise arithmetic, not a Gemm's C
+    m = self._matmul_add([8, 64], bias_dims=(1, 32))
+    assert gemm_with_transposed_weight(m) == 0
+
+  def test_a_matmul_whose_output_leaves_the_graph_is_left_alone(self):
+    m = self._matmul_add([8, 64])
+    m.graph.output.append(helper.make_tensor_value_info('mm', TensorProto.FLOAT16, [8, 32]))
+    assert gemm_with_transposed_weight(m) == 0
+
+  def test_a_matmul_without_a_static_shape_is_left_alone(self):
+    m = self._matmul_add([8, 64])
+    del m.graph.input[0].type.tensor_type.shape.dim[:]
+    assert gemm_with_transposed_weight(m) == 0
+
+  def test_a_shared_weight_is_transposed_once_per_use(self):
+    m = self._matmul_add([8, 64])
+    g = m.graph
+    g.node.extend([helper.make_node('MatMul', ['a', 'W'], ['mm2'], name='mm2'),
+                   helper.make_node('Add', ['mm2', 'B'], ['out2'], name='add2')])
+    g.output.append(helper.make_tensor_value_info('out2', TensorProto.FLOAT16, [8, 32]))
+    assert gemm_with_transposed_weight(m) == 2
+    assert sum(1 for t in g.initializer if t.name.endswith('__wt')) == 2
+    assert 'W' not in {t.name for t in g.initializer}
+    onnx.checker.check_model(m)

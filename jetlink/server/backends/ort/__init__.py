@@ -160,11 +160,12 @@ def _cache_key(out_path: Path, part: str) -> str:
   return re.sub(r'[^A-Za-z0-9]', '', out_path.stem + part)[:63]
 
 
-def _prepared_model(onnx_path: Path, for_ane: bool):
+def _prepared_model(onnx_path: Path, for_ane: bool, for_coreml: bool = False):
   """The ONNX as onnxruntime will see it, in memory."""
   import onnx
 
   from jetlink.onnx_patch import (
+    gemm_with_transposed_weight,
     layernorm_in_fp32,
     needs_patch,
     normalize_gather_indices,
@@ -182,9 +183,14 @@ def _prepared_model(onnx_path: Path, for_ane: bool):
   if for_ane:
     policy = {n.name for n in model.graph.node} - vision_nodes(model)
     norms = layernorm_in_fp32(model, only=policy)
+  # Only for CoreML: it is what puts the weights in the weight file instead of
+  # the MIL text. The CUDA and CPU providers are happy with the transB=0 Gemm
+  # onnxruntime's own fusion makes, and gain nothing from the rewrite.
+  gemms = gemm_with_transposed_weight(model) if for_coreml else 0
   log.info("prepared %s: stripped %d tinygrad op(s), %s, %d negative Gather index(es) normalized, "
-           "%d LayerNormalization(s) in fp32", onnx_path.name, stripped,
-           'images retyped to fp16' if patched else 'inputs left as declared', gathers, norms)
+           "%d LayerNormalization(s) in fp32, %d MatMul+Add rewritten as Gemm(transB=1)",
+           onnx_path.name, stripped,
+           'images retyped to fp16' if patched else 'inputs left as declared', gathers, norms, gemms)
   return model
 
 
@@ -334,7 +340,7 @@ class OrtBackend:
     import onnx
 
     coreml = self._on_coreml
-    model = _prepared_model(onnx_path, for_ane=self.device == 'ane')
+    model = _prepared_model(onnx_path, for_ane=self.device == 'ane', for_coreml=coreml)
     onnx.save(_with_cache_key(model, _cache_key(out_path, 'model')), str(staged / 'model.onnx'))
     manifest = [{'model': 'model.onnx', 'units': COREML_UNITS[self.device] if coreml else None,
                  'cache': 'coreml' if coreml else None}]
