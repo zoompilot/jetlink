@@ -245,7 +245,7 @@ jobs:
           # something that cannot run. Naming the platform says which is which.
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile
@@ -307,7 +307,7 @@ jobs:
             type=match,pattern=v(.*),group=1
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile.cuda
