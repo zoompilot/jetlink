@@ -1,0 +1,127 @@
+{
+  "event": "catalog",
+  "t": 1757440603.0,
+  "fetched_at": 1757440000.0,
+  "url": "https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_chestnut_v25.json",
+  "default_ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+  "error": null,
+  "models": [
+    {
+      "name": "Cinque Terre Model V2 (September 08, 2026)",
+      "short_name": "CTMV2",
+      "ref": "37bfa1413edcdc2e8844984b83727c33f81d8f46",
+      "build_time": "2026-09-08T23:11:14Z",
+      "index": 12,
+      "sha256": "1c0f7e2b7bb1d0f4a2c58e6d3f9a4b7c8e5d2a1f0b3c6d9e8f7a4b1c2d3e4f50",
+      "bytes": 765950064
+    },
+    {
+      "name": "Cinque Terre Model (September 04, 2026)",
+      "short_name": "CTM",
+      "ref": "68b5f8e48602f4f88041efd7de6c99e97fda454e",
+      "build_time": "2026-09-05T21:23:01Z",
+      "index": 11,
+      "sha256": "2d1e8f3c9cc2e1f5b3d69f7e4a0b5c8d9f6e3b2a1c4d7e0f9a8b5c2d3e4f5061",
+      "bytes": 765950100
+    },
+    {
+      "name": "BMRLNAP Model v6 (September 01, 2026)",
+      "short_name": "BMV6",
+      "ref": "9d683c06518c0358fb402f38468a7030700c38ac",
+      "build_time": "2026-09-02T03:06:35Z",
+      "index": 10,
+      "sha256": null,
+      "bytes": null
+    },
+    {
+      "name": "BMRLNAP Model v4 (August 30, 2026)",
+      "short_name": "BMV4",
+      "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+      "build_time": "2026-09-01T05:39:17Z",
+      "index": 9,
+      "sha256": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+      "bytes": 765953504
+    },
+    {
+      "name": "Sad Model (August 28, 2026)",
+      "short_name": "SM",
+      "ref": "30de303d5ffb63957f8acbdb256fd4c7d360455a",
+      "build_time": "2026-09-01T05:49:40Z",
+      "index": 8,
+      "sha256": "3e2f9a4d0dd3f2a6c4e70a8f5b1c6d9e0a7f4c3b2d5e8f1a0b9c6d3e4f506172",
+      "bytes": 765951000
+    },
+    {
+      "name": "BMRLNAP Model v3 (August 26, 2026)",
+      "short_name": "BMV3",
+      "ref": "47377ac2f726651fc1470eb725cf73418307e5aa",
+      "build_time": "2026-09-01T06:21:43Z",
+      "index": 7,
+      "sha256": "4f3a0b5e1ee4a3b7d5f81b9a6c2d7e0f1b8a5d4c3e6f9a2b1c0d7e4f50617283",
+      "bytes": 765951200
+    },
+    {
+      "name": "BMRLNAP Model v2 (August 24, 2026)",
+      "short_name": "BMV2",
+      "ref": "ba37c02c7c64225b8aec79411d1a8c2f5c1aa343",
+      "build_time": "2026-09-01T06:59:13Z",
+      "index": 6,
+      "sha256": null,
+      "bytes": null
+    },
+    {
+      "name": "Happy Birthday Model (August 24, 2026)",
+      "short_name": "HBM",
+      "ref": "db06f5f36caa379e112bafd38423e37b66fa4149",
+      "build_time": "2026-09-01T07:32:34Z",
+      "index": 5,
+      "sha256": null,
+      "bytes": null
+    },
+    {
+      "name": "I Desire Model (August 21, 2026)",
+      "short_name": "IDM",
+      "ref": "6691f163a4ed8a9c4e2ca95efc29c04478ec0250",
+      "build_time": "2026-09-01T07:16:10Z",
+      "index": 4,
+      "sha256": null,
+      "bytes": null
+    },
+    {
+      "name": "BMRLNAP Model (August 20, 2026)",
+      "short_name": "BM",
+      "ref": "7e3ff7e914a40ac25399a2caedbce3580fdde6a2",
+      "build_time": "2026-09-01T06:05:02Z",
+      "index": 3,
+      "sha256": null,
+      "bytes": null
+    },
+    {
+      "name": "TTTTFBRLM (August 18, 2026)",
+      "short_name": "TTTTFBRL",
+      "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
+      "build_time": "2026-09-01T07:49:46Z",
+      "index": 2,
+      "sha256": null,
+      "bytes": null
+    },
+    {
+      "name": "Tee Time (August 18, 2026)",
+      "short_name": "TT",
+      "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
+      "build_time": "2026-09-01T10:49:49Z",
+      "index": 1,
+      "sha256": null,
+      "bytes": null
+    },
+    {
+      "name": "Lebowski Model (July 01, 2026)",
+      "short_name": "LM",
+      "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
+      "build_time": "2026-09-01T06:38:29Z",
+      "index": 0,
+      "sha256": null,
+      "bytes": null
+    }
+  ]
+}
