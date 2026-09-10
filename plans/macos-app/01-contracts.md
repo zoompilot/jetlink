@@ -22,7 +22,7 @@ here first and tell the other side.
 | flatbuffers | 25.12.19 | onnxruntime dependency |
 | packaging | 26.3 | onnxruntime dependency |
 | tinygrad | git `https://github.com/sunnypilot/tinygrad` at commit `e837e367aac9e1a66e689f4f32ce20ca9367df13` (the sunnypilot fork; the commit is not on any upstream branch, so pip cannot fetch it from tinygrad/tinygrad) | PyPI 0.14.0 lacks the `org.tinygrad` ONNX domain |
-| libusb (native) | Homebrew `libusb` 1.0.30, file `libusb-1.0.0.dylib` | copied into the bundle |
+| libusb (native) | Homebrew `libusb`, file `libusb-1.0.0.dylib`, whatever version brew installs (1.0.29 on the build Mac on 2026-09-09); the version is recorded in `MANIFEST.json` | copied into the bundle |
 | xcodegen | latest Homebrew | generates the Xcode project |
 
 ## 2. Paths
