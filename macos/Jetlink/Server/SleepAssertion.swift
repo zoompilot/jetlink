@@ -15,8 +15,13 @@ final class SleepAssertion {
   /// Called on the main actor when the power source changes.
   var onPowerSourceChange: (@MainActor () -> Void)?
 
+  /// The power source the Mac is running on. A desktop with no battery has no
+  /// external adapter details, so ask which source is providing power instead,
+  /// and treat an answer we cannot read as AC.
   var isOnACPower: Bool {
-    IOPSCopyExternalPowerAdapterDetails()?.takeRetainedValue() != nil
+    guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else { return true }
+    guard let source = IOPSGetProvidingPowerSourceType(snapshot)?.takeUnretainedValue() else { return true }
+    return (source as String) == kIOPMACPowerKey
   }
 
   var isHoldingAssertion: Bool { isActive }

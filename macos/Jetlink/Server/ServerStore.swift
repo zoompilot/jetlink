@@ -75,6 +75,9 @@ final class ServerStore {
   @ObservationIgnored private var consumeTask: Task<Void, Never>?
   @ObservationIgnored private var restartTask: Task<Void, Never>?
   @ObservationIgnored private var stopRequested = false
+  /// Set while `handleConnectFailure` is taking the process down itself, so the
+  /// exit it causes is not mistaken for a crash. Cleared by the next `start()`.
+  @ObservationIgnored private var suppressExitHandling = false
   @ObservationIgnored private var restartTimes: [Date] = []
 
   private static let backoff: [Duration] = [.seconds(5), .seconds(10), .seconds(20), .seconds(40), .seconds(60)]
@@ -107,6 +110,7 @@ final class ServerStore {
     runState = .starting
     lastFailure = nil
     stopRequested = false
+    suppressExitHandling = false
 
     let runtime: PythonRuntime
     switch PythonRuntime.locate(settings: settings) {
@@ -153,7 +157,7 @@ final class ServerStore {
         // A CoreML probe can hold the server for a while before it listens.
         try await client.connect(retryingFor: .seconds(120))
       } catch {
-        self?.handleConnectFailure(error)
+        await self?.handleConnectFailure(error)
         return
       }
       self?.startConsuming(client)
@@ -274,16 +278,25 @@ final class ServerStore {
     }
   }
 
-  private func handleConnectFailure(_ error: any Error) {
+  private func handleConnectFailure(_ error: any Error) async {
     guard !stopRequested else { return }
     log.error("could not reach the control channel: \(error.localizedDescription, privacy: .public)")
+    // A server that never listened is still holding the GPU and the USB device,
+    // so take it down before showing the failure.
+    suppressExitHandling = true
+    await process.stop()
+    cancelTasks()
+    client?.close()
+    client = nil
     let detail = "The server started but its control channel never answered."
     lastFailure = detail
     runState = .failed(detail)
+    resetLiveState()
     updateSleepAssertion()
   }
 
   private func handleExit(status: Int32, reason: Process.TerminationReason) {
+    guard !suppressExitHandling else { return }
     cancelTasks()
     client?.close()
     client = nil

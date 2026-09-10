@@ -71,7 +71,7 @@ enum PythonRuntimeError: Error, LocalizedError, Equatable {
   var errorDescription: String? {
     switch self {
     case .notBundled:
-      return "Jetlink cannot find its Python runtime. Run make python in the macos directory, or set JETLINK_PYTHON to an interpreter that has the jetlink package installed."
+      return "This build has no bundled Python runtime. Run `make python` in macos/, or set JETLINK_PYTHON to a Python 3.14 interpreter with the jetlink package installed."
     case .overrideMissing(let path):
       return "The Python interpreter at \(path) does not exist or is not executable."
     }
