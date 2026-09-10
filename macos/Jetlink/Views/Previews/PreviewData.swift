@@ -42,7 +42,8 @@ enum PreviewData {
     msg: "converting for CoreML, 207 MB of 766 MB written",
     loadOnly: false
   )
-  static let engineLoading = EngineEvent(state: .loading, sha256: bigModelSHA, detail: "", stage: "load", frac: 0.5, msg: "loading the CoreML model, 1.2 GB of 2.5 GB resident", loadOnly: true)
+  static let engineLoading = EngineEvent(
+    state: .loading, sha256: bigModelSHA, detail: "", stage: "load", frac: 0.5, msg: "loading the CoreML model, 1.2 GB of 2.5 GB resident", loadOnly: true)
   static let engineReady = EngineEvent(state: .ready, sha256: bigModelSHA, detail: "", stage: nil, frac: 1, msg: "", loadOnly: false)
   static let engineFailed = EngineEvent(
     state: .failed,
