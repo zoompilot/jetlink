@@ -25,6 +25,7 @@ than the whole model twice.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 import pickle
@@ -65,10 +66,18 @@ class Staged:
 def tinygrad_identity() -> str:
   """What version of tinygrad this is, precisely enough to key a pickle on.
 
-  The package version first, then the git commit when the source is a
-  checkout: openpilot pins tinygrad as a submodule at a sha, and its metadata
-  version can lag the code by a release. A pickle from another commit may
-  still load; one that does not is ArtifactInvalid and rebuilds.
+  The package version first, then the git commit when there is one: openpilot
+  pins tinygrad as a submodule at a sha, and its metadata version can lag the
+  code by a release. A pickle from another commit may still load; one that
+  does not is ArtifactInvalid and rebuilds.
+
+  Where the commit comes from matters. `git rev-parse` in the source directory
+  walks *up* until it finds a repository, so an installed tinygrad inside an
+  app bundle or a venv under a checkout reported that checkout's HEAD: the
+  identity, and with it the cache key, changed on every commit to this repo
+  and every prepared engine came back stale. pip records the real commit in
+  direct_url.json for a git install, so ask that first, and only run git when
+  the source directory is itself a repository.
   """
   import tinygrad
   version = 'unknown'
@@ -77,7 +86,12 @@ def tinygrad_identity() -> str:
     version = pkg_version('tinygrad')
   except Exception:
     pass
+  commit = _direct_url_commit()
+  if commit:
+    return f"{version}+{commit}"
   src = Path(tinygrad.__file__).resolve().parent.parent
+  if not (src / '.git').exists():
+    return version
   try:
     sha = subprocess.run(['git', '-C', str(src), 'rev-parse', '--short=12', 'HEAD'],
                          capture_output=True, text=True, timeout=5).stdout.strip()
@@ -86,6 +100,19 @@ def tinygrad_identity() -> str:
   except (OSError, subprocess.SubprocessError):
     pass
   return version
+
+
+def _direct_url_commit() -> str | None:
+  """The commit pip installed tinygrad from, per PEP 610, or None."""
+  try:
+    from importlib.metadata import distribution
+    raw = distribution('tinygrad').read_text('direct_url.json')
+    if not raw:
+      return None
+    commit = json.loads(raw).get('vcs_info', {}).get('commit_id')
+    return str(commit)[:12] if commit else None
+  except Exception:
+    return None
 
 
 def host_dtype_for(model_dtype: np.dtype) -> np.dtype:
