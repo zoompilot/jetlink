@@ -495,3 +495,33 @@ def test_reader_priority_is_best_effort_without_permission(monkeypatch):
     SCHED_FIFO=1, sched_param=lambda p: SimpleNamespace(sched_priority=p),
     sched_setscheduler=denied))
   _bare_transport()._raise_reader_priority()   # must not raise on a box without RTPRIO
+
+
+def test_close_releases_the_endpoints_even_when_the_watchdog_hangs(mount, monkeypatch):
+  """The leak that outlived the link.
+
+  close() used to raise before touching an fd if the write guard had not come
+  back within a second, which it has not when it is stuck inside its own
+  abort's unbind. ep0 then stayed open for the life of the process and every
+  descriptor write after it answered ESRCH: only a reboot brought the gadget
+  back.
+  """
+  monkeypatch.setattr(ffs, 'READER_JOIN_TIMEOUT', 0.05)
+  t = FfsTransport(str(mount))
+  ep0 = t.ep0
+  stuck = threading.Event()
+  guard = threading.Thread(target=stuck.wait, daemon=True)
+  guard.start()
+  t._write_guard.thread = guard
+  try:
+    t.close()
+  finally:
+    stuck.set()
+
+  assert t.ep0 == -1
+  with pytest.raises(OSError):
+    os.fstat(ep0)   # really closed, not merely forgotten
+
+  # And the gadget opens again, which is the half the raise used to cost.
+  again = FfsTransport(str(mount))
+  again.close()

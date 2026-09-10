@@ -513,8 +513,15 @@ class FfsTransport(StreamTransport):
     self._write_guard.close()
     self._write_guard.thread.join(READER_JOIN_TIMEOUT)
     if self._write_guard.thread.is_alive():
-      # Keep ownership rather than allow a late abort to unbind a new owner.
-      raise LinkError('gadget watchdog teardown did not finish')
+      # It is stuck inside its own abort, which is already unbinding the
+      # gadget. This used to raise, to keep a late abort from unbinding a
+      # gadget the next owner had bound - but the raise came before a single
+      # fd was closed, so ep0 stayed open for the life of the process and
+      # every descriptor write after it answered ESRCH. unbind() is
+      # idempotent, so a late abort finds nothing left to let go of; the leak
+      # was the worse half by far.
+      log.warning("jetlink: gadget watchdog teardown did not finish in %.0f s, "
+                  "closing the endpoints anyway", READER_JOIN_TIMEOUT)
     # Unbinding disables the endpoints, which completes the reader's pending
     # request with ESHUTDOWN and lets the thread exit before its fd goes away.
     self.unbind()
