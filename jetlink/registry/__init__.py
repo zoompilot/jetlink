@@ -288,6 +288,13 @@ class Registry:
       path = self.model_path(sha256)
       path.unlink(missing_ok=True)
       path.with_name(path.name + '.part').unlink(missing_ok=True)
+      # The local record is what gives an imported model its name. Left behind,
+      # it names a file that is gone and the app offers to prepare it.
+      with self._lock:
+        records = self._local_records()
+        kept = [r for r in records if r.get('sha256') != sha256]
+        if len(kept) != len(records):
+          self._write_json(self.local_path, kept)
 
   # --- internals -------------------------------------------------------------
 

@@ -435,6 +435,31 @@ def test_remove_of_the_model_only_keeps_the_engines(tmp_path):
   assert [a['sha256'] for a in registry.inventory()['artifacts'] if a['sha256'] == fake_sha]
 
 
+def test_removing_an_imported_model_drops_its_local_record(tmp_path):
+  registry = Registry(tmp_path)
+  source = tmp_path / 'mine.onnx'
+  source.write_bytes(BLOB)
+  registry.import_model(source, name='mine')
+  keeper = tmp_path / 'other.onnx'
+  keeper.write_bytes(b'other bytes')
+  other = registry.import_model(keeper, name='other')
+
+  registry.remove(BLOB_SHA, artifacts=False, model=True)
+
+  assert [m.sha256 for m in registry.local_models()] == [other.sha256]
+  assert registry.name_for(BLOB_SHA) == (None, None)
+  assert [m['sha256'] for m in registry.inventory()['models']] == [other.sha256]
+
+
+def test_removing_the_artifacts_only_keeps_the_local_record(tmp_path):
+  registry = Registry(tmp_path)
+  source = tmp_path / 'mine.onnx'
+  source.write_bytes(BLOB)
+  registry.import_model(source, name='mine')
+  registry.remove(BLOB_SHA, artifacts=True, model=False)
+  assert [m.name for m in registry.local_models()] == ['mine']
+
+
 def test_remove_of_a_directory_artifact(tmp_path):
   _, ort_sha = build_cache(tmp_path)
   registry = Registry(tmp_path)
