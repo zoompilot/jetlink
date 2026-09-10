@@ -1,0 +1,10 @@
+# tinygrad, from git rather than PyPI.
+#
+# The 0.14.0 wheel on PyPI has no `org.tinygrad` domain in its ONNX parser, so
+# it cannot load the exported driving models. The commit below is the master
+# head of the sunnypilot fork and does have it. The same commit is not on any
+# branch of tinygrad/tinygrad, so pip cannot fetch it from there.
+#
+# Installed in a second `pip install --no-deps` pass because --require-hashes
+# cannot cover a git source.
+tinygrad @ git+https://github.com/sunnypilot/tinygrad@e837e367aac9e1a66e689f4f32ce20ca9367df13

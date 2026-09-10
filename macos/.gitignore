@@ -1,0 +1,6 @@
+# Everything the build produces, including the download cache (build/downloads)
+# and the extracted Python prefix (build/python).
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
