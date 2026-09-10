@@ -28,8 +28,8 @@ the steps in the [README](../README.md#quick-start).
 
 ## Install
 
-1. Download the DMG from the project's Releases page.
-2. Open it and drag Jetlink to Applications.
+1. Download the Mac ZIP from [Releases](https://github.com/zoompilot/jetlink/releases).
+2. Double-click the ZIP to unzip it, then drag Jetlink.app to Applications.
 3. Open Jetlink from Applications.
 
 On first launch the server starts by itself and the Status screen says

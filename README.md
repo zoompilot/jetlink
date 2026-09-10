@@ -11,50 +11,151 @@ The small model you picked in sunnypilot keeps driving whenever the link is down
 drops while engaged, the comma soft-disables and tells you to take over. See
 [status and known limitations](docs/status.md).
 
-## What you need
-
-- A comma 3X or comma 4.
-- A computer to run the model. A **Jetson Orin Nano Super (8 GB)** is the
-  tested in-car setup. A **Mac with Apple silicon** works for bench testing.
-  Linux and Windows PCs with an NVIDIA GPU are [supported but untested](docs/platforms.md).
-- A USB 3 **A-to-C data cable**. Charge-only cables do not work.
-- Separate power for both devices. Neither one powers the other.
+<p align="center">
+  <img src="docs/images/mac-status.webp" width="49%" alt="Jetlink for Mac: server status and model loading progress">
+  <img src="docs/images/mac-models.webp" width="49%" alt="Jetlink for Mac: available models and download status">
+</p>
 
 ## Quick start
 
-### 1. Set up the comma
+Choose your computer: **[Mac](#mac)** · **[Jetson](#jetson)** · **[CUDA laptop](#cuda-laptop)**.
+Then follow the shared [comma setup](#comma-setup-all-platforms).
 
-Everything happens on the comma's screen.
+You need a **comma 3X or comma 4**, a **USB 3 A-to-C data cable**, and
+**separate power for both devices**. Charge-only cables will not work.
+Keep the comma online and stay parked for the first setup.
 
-1. **Settings > Software > Target Branch > Non-Prebuilt Branches**, select
-   **jetson-trt**. Let it update, reboot, and finish building.
-2. **Settings > Models**, turn on **Accelerator Link**. The **Big Model** row
-   is the model Jetlink runs, the same list a comma with a chestnut board
-   picks from. Leave it on the default for your first run.
+### Mac
 
-### 2. Start the server
+For **Apple silicon, macOS 15 or later**. 16 GB of memory is recommended.
+Mac is bench-tested; Jetson is the tested in-car setup.
 
-**Mac (Apple silicon)**: download Jetlink for Mac from the Releases page, open
-it, and leave it running. It starts the server itself and says **Waiting for
-comma** until you plug one in. See the [Mac guide](docs/macos-app.md).
-Developers can still use `scripts/run-mac.sh`.
+1. Download the **Mac ZIP** from [Releases](https://github.com/zoompilot/jetlink/releases).
+2. Double-click the ZIP to unzip it, then drag **Jetlink.app** to **Applications**.
+3. Open **Jetlink**. The server starts automatically; **Waiting for comma**
+   means it is ready to connect. Keep your Mac powered and awake.
+4. Follow [comma setup](#comma-setup-all-platforms) below.
 
-**Jetson Orin Nano**: follow the [Jetson guide](docs/jetson.md). It is the
-same idea in Docker, plus a service that starts the server at boot.
+If macOS blocks an unsigned build, follow the release notes or the
+[Mac install guide](docs/macos-app.md#if-the-build-is-not-signed).
+No Python or Homebrew is needed for the app.
 
-**Other computers**: see [platform setup](docs/platforms.md).
+<details>
+<summary>Developers: run from source</summary>
 
-### 3. Plug in and wait
+With Homebrew installed, run in Terminal:
 
-Connect the computer's **USB-A port to the comma's USB-C port**. On a Mac, use
-a USB-A port on a hub or dock, or a USB-C-to-A adapter. Going through USB-A
-makes the computer take the host role reliably; a plain C-to-C cable may not.
-On the Jetson, use a USB-A port, not its USB-C.
+```bash
+brew install python libusb
+git clone https://github.com/zoompilot/jetlink.git
+cd jetlink
+scripts/run-mac.sh
+```
 
-Stay parked with the comma online. The home-button icon pulses while the comma
-downloads the model, sends it over, and the server prepares it. A Jetson takes
-about 3 minutes for the default model. A Mac takes about 10 seconds the first
-time, then about 2 seconds every time the server restarts.
+The script installs its dependencies on first run. To build or work on the
+GUI, see [macOS development](macos/README.md).
+
+</details>
+
+See the [Mac guide](docs/macos-app.md) for model downloads, settings, and logs.
+
+### Jetson
+
+For **Jetson Orin Nano Super (8 GB) with JetPack 6.1**. Use a power supply
+sized for 25 W mode and allow several GB of free space on `/mnt/data`.
+
+Run these commands in a terminal on the Jetson:
+
+```bash
+sudo apt update
+sudo apt install -y git docker.io nvidia-container
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+git clone https://github.com/zoompilot/jetlink.git
+cd jetlink
+```
+
+For a **release install**, copy the Jetson image reference from the
+[release notes](https://github.com/zoompilot/jetlink/releases). Set `IMAGE` to
+that reference, replacing `VERSION` below with its version:
+
+```bash
+IMAGE=ghcr.io/zoompilot/jetlink:VERSION
+sudo docker pull "$IMAGE"
+sudo env IMAGE="$IMAGE" docker/run.sh --transport usb
+```
+
+If the release has no Jetson image, or you want to **build from source**, run
+these commands instead from the `jetlink` folder:
+
+```bash
+sudo docker/build.sh
+sudo docker/run.sh --transport usb
+```
+
+Leave the terminal open and follow [comma setup](#comma-setup-all-platforms).
+Once it works, use the [Jetson guide](docs/jetson.md#start-at-boot) to start
+Jetlink automatically at boot. For a release image, use your image reference
+in place of `jetlink:latest` in that guide's image-inspection command.
+
+### CUDA laptop
+
+For a **Linux laptop with an NVIDIA GPU**, a working NVIDIA driver, and
+**Python 3.10 or later**. This path is implemented but not yet hardware-tested.
+
+On Ubuntu or Debian, run in a terminal:
+
+```bash
+sudo apt update
+sudo apt install -y git python3-venv libusb-1.0-0
+git clone https://github.com/zoompilot/jetlink.git
+cd jetlink
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -e ".[trt,usb,nvml]"
+sudo install -m 644 scripts/99-jetlink-host.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+jetlink-server --backend trt --transport usb
+```
+
+Leave the terminal open, keep the laptop powered and awake, then follow
+[comma setup](#comma-setup-all-platforms). If the comma was already plugged
+in, unplug and reconnect it so the USB permissions take effect.
+
+Next time, open a terminal in `jetlink` and run:
+
+```bash
+source .venv/bin/activate
+jetlink-server --backend trt --transport usb
+```
+
+For **Docker** or **Windows with WSL2**, see the
+[platform guide](docs/platforms.md#docker-nvidia-laptops-and-desktops).
+Windows USB setup is not validated; start with the guide's TCP bench test.
+
+## Comma setup (all platforms)
+
+Do this once, whichever computer you chose.
+
+1. **Install the Jetlink branch.** On a comma already running zoompilot, open
+   **Settings > Software > Target Branch > Non-Prebuilt Branches** and select
+   **jetson-trt**. Let it update, reboot, and finish building. Coming from
+   another fork? Start with [zoompilot's installation instructions](https://github.com/zoompilot/zoompilot/tree/jetson-trt).
+2. **Enable Jetlink.** Open **Settings > Models** and turn on
+   **Accelerator Link**. Leave **Big Model** on the default for your first run.
+3. **Connect USB.** With Jetlink running on your computer, connect its
+   **USB-A port to the comma's USB-C port** using a USB 3 data cable.
+   On a Mac, use a USB-A port on a hub, dock, or USB-C-to-A adapter.
+   On Jetson, use a USB-A port, not its USB-C port. A plain C-to-C cable may
+   not connect reliably.
+4. **Wait for green.** Stay parked with the comma online. Its home-button
+   icon pulses while the model downloads, transfers, and prepares, then
+   turns green when ready. No manual model download or SSH setup is needed.
+
+The default model takes about **3 minutes to prepare on Jetson**. On Mac,
+preparation takes about **10 seconds**, with later loads around **2 seconds**;
+download time is extra. The screenshots above show an earlier app build.
 
 | Icon | Meaning |
 | --- | --- |
@@ -92,6 +193,16 @@ To stop using Jetlink, turn off **Settings > Models > Accelerator Link**.
 | Server keeps waiting, icon never pulses | Check the server is running, use a USB-A port, try another USB 3 data cable. |
 | Orange icon | Read the alert, check the comma's internet, then toggle Accelerator Link off and on. |
 | Model drops out repeatedly | Check the cable, separate power supplies, and cooling. |
+
+<details>
+<summary>Mac: an example of a server error</summary>
+
+The Status screen shows the failure and recent output. Open **Logs** for more
+detail, then check the [Mac troubleshooting guide](docs/macos-app.md#troubleshooting).
+
+![Jetlink for Mac showing a server failure and diagnostic output](docs/images/mac-error.webp)
+
+</details>
 
 The [Jetson guide](docs/jetson.md#troubleshooting) has more, including how to
 collect logs when reporting a problem.
