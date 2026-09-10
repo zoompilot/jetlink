@@ -334,3 +334,34 @@ sentence case, no em dashes.
     values (size, built, status) stay as `LabeledContent`.
 12. **Sizes.** `ByteCount` uses at most one decimal and drops it when the value is
     a whole number of units ("766 MB", "1.8 GB", "23.2 GB").
+
+## Text audit (decided 2026-09-09, after the polish pass)
+
+The status indicator already shows the state, so text never repeats it and
+every sentence is as short as it can be. These replace the earlier strings.
+
+Summary (`StatusBadge.summary`, toolbar and menu bar first line): "Stopped",
+"Starting…", "Stopping…", "Failed", "Waiting for comma", "Comma connected",
+"Comma disconnected"; while a job runs, "Preparing model" (building) or
+"Loading model" (loading) whether or not the comma is connected; a failed job
+"Model failed". Menu bar model line: "Loaded: BMRLNAP Model v4",
+"Preparing model, 43%", "Loading model, 43%", "No model", "Model failed".
+
+| Where | Text |
+| --- | --- |
+| Status, Comma footer | "Plug the comma into a USB-A port with an A-to-C data cable. Until it connects, the comma drives on its small model." |
+| Status, empty engine block | "Download and prepare the model your comma uses in Models. Leave Jetlink running afterwards so it stays loaded." |
+| Status, unload confirmation | title "Unload the model?", message "The comma drives on its small model until one is loaded again." |
+| Models, delete download | title "Delete the download?", message "Deletes the 766 MB model file for <name>. The prepared engine stays, so the comma can still use this model." (size omitted when unknown) |
+| Models, delete engines | title "Delete the prepared engines?", message "Deletes every prepared engine for <name>, 10.3 GB in all. Preparing it again takes as long as the first time." plus, when loaded, " The model is unloaded first." |
+| Models, prepare while the comma drives | title "Prepare <name>?", message "The comma is using <current>. Switching drops it to its small model until <name> is loaded and the comma reconnects." |
+| Models, server stopped | "Server not running" with "Start the server to load the model list." |
+| Logs, Clear help | "Clear the view. The log file keeps everything." |
+| Logs, Copy all help | "Copy the shown lines" |
+| Settings, cache caption | "Models and prepared engines. A CoreML engine is about 10 GB. Takes effect when the server restarts." |
+| Settings, backend auto | "Recommended. About 43 ms a frame on an M1 Pro. Preparing takes about 18 minutes the first time and 9 minutes for each later load, so keep Jetlink running." |
+| Settings, backend coreml | same as auto without "Recommended. " |
+| Settings, backend ane | "Faster back to back, slower at the comma's 20 Hz on an M1 Pro. Measure before using it in the car." |
+| Settings, backend tinygrad | "Loads in a second. About 66 ms a frame on an M1 Pro, over the 50 ms budget; a newer Mac may be under it." |
+| Settings, override caption | "For development. Empty means the bundled runtime." |
+| Inspector, no engines | "No prepared engine yet." |
