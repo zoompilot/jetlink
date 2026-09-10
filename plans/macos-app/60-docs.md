@@ -89,7 +89,7 @@ and that the image published to GHCR carries the same command.
   `--control-socket` if someone wants to script the server.
 - `docs/backends.md`: under "Two things the runtimes made the server do
   differently", add the third: "tinygrad must come from git at or after
-  `e837e367aac9`; the PyPI 0.14.0 wheel has no `org.tinygrad` ONNX domain and
+  `e837e367aac9e1a66e689f4f32ce20ca9367df13` of `https://github.com/sunnypilot/tinygrad`; the PyPI 0.14.0 wheel has no `org.tinygrad` ONNX domain and
   cannot load the exported models." (Agent A or the integrator fixes
   `scripts/run-mac.sh`'s install line accordingly: replace the `tinygrad`
   extra with the git pin; note it in your report if it is still unfixed.)

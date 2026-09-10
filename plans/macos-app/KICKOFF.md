@@ -59,7 +59,7 @@ Your role and the rules:
   at the end of `70-integration-and-qa.md`.
 
 Two facts to keep in mind from the survey: tinygrad must be installed from git
-at commit `e837e367aac9` (the PyPI 0.14.0 wheel cannot parse the models, which
+from `https://github.com/sunnypilot/tinygrad` at commit `e837e367aac9e1a66e689f4f32ce20ca9367df13` (the PyPI 0.14.0 wheel cannot parse the models, which
 is why four tinygrad tests currently error in `.venv`), and there are no
 code-signing identities on this Mac, so releases are unsigned until the user
 creates the secrets listed in `50-ci-and-releases.md`.

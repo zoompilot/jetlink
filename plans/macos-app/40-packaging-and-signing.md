@@ -135,7 +135,7 @@ flatbuffers-25.12.19-py2.py3-none-any.whl
 packaging-26.3-py3-none-any.whl
 ```
 `requirements-git.txt`: one line,
-`tinygrad @ git+https://github.com/tinygrad/tinygrad@e837e367aac9`. Installed
+`tinygrad @ git+https://github.com/sunnypilot/tinygrad@e837e367aac9e1a66e689f4f32ce20ca9367df13`. Installed
 in a second `pip install --no-deps` step (hashes cannot cover a git source).
 
 ## `macos/Python/embed-python.sh`

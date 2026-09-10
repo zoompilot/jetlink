@@ -78,7 +78,7 @@ Python runtime facts for packaging:
   `OnnxPBParser` has no `org.tinygrad` domain, and the exported models carry
   `org.tinygrad` nodes. This is why four tests in `tests/test_tinygrad_backend.py`
   error in the current venv with `'org.tinygrad' is not a valid Domain`. The
-  measured backend used a git checkout at commit `e837e367aac9`, which has the
+  measured backend used a git checkout at commit `e837e367aac9` (sunnypilot/tinygrad master, full sha `e837e367aac9e1a66e689f4f32ce20ca9367df13`), which has the
   domain. The app pins tinygrad to that commit from git, never to the PyPI wheel.
 - python-libusb1 loads the native library by trying, first,
   `<site-packages>/usb1/libusb-1.0.dylib`, then the Homebrew path. Dropping

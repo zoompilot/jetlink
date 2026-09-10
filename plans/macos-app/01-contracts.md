@@ -21,7 +21,7 @@ here first and tell the other side.
 | typing_extensions | 4.16.0 | onnx dependency |
 | flatbuffers | 25.12.19 | onnxruntime dependency |
 | packaging | 26.3 | onnxruntime dependency |
-| tinygrad | git `https://github.com/tinygrad/tinygrad` at commit `e837e367aac9` | PyPI 0.14.0 lacks the `org.tinygrad` ONNX domain |
+| tinygrad | git `https://github.com/sunnypilot/tinygrad` at commit `e837e367aac9e1a66e689f4f32ce20ca9367df13` (the sunnypilot fork; the commit is not on any upstream branch, so pip cannot fetch it from tinygrad/tinygrad) | PyPI 0.14.0 lacks the `org.tinygrad` ONNX domain |
 | libusb (native) | Homebrew `libusb` 1.0.30, file `libusb-1.0.0.dylib` | copied into the bundle |
 | xcodegen | latest Homebrew | generates the Xcode project |
 

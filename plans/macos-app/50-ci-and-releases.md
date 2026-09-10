@@ -48,7 +48,7 @@ jobs:
       # no runtimes: the backend tests importorskip; the registry and control tests run
   python-test-macos:
     runs-on: macos-26
-    steps: checkout; setup-python 3.14; pip install -e ".[dev,ort,usb]"; pip install "tinygrad @ git+https://github.com/tinygrad/tinygrad@e837e367aac9"; brew install libusb; pytest -q
+    steps: checkout; setup-python 3.14; pip install -e ".[dev,ort,usb]"; pip install "tinygrad @ git+https://github.com/sunnypilot/tinygrad@e837e367aac9e1a66e689f4f32ce20ca9367df13"; brew install libusb; pytest -q
       # runs test_ort_backend (CPU provider) and test_tinygrad_backend (CPU device) on a real runtime
   swift:
     runs-on: macos-26

@@ -9,7 +9,7 @@ run at each step, and the acceptance list. Nothing here is optional.
 1. **A (registry) and B (control channel).** Merge A first, then B (B's tests
    need `Registry`). Run `ruff check .` and `pytest -q`; every test in the
    repo passes, including the four tinygrad tests once tinygrad is installed
-   from git in the venv: `.venv/bin/pip install --no-deps "tinygrad @ git+https://github.com/tinygrad/tinygrad@e837e367aac9"`.
+   from git in the venv: `.venv/bin/pip install --no-deps "tinygrad @ git+https://github.com/sunnypilot/tinygrad@e837e367aac9e1a66e689f4f32ce20ca9367df13"`.
    Then the manual check at the end of `11-python-control-channel.md` with
    the real venv.
 2. **E (packaging) with the placeholder app.** `make -C macos python app smoke`.
