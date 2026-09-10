@@ -23,20 +23,33 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
   }
 }
 
+/// Which of the three places the window is showing. The View menu sets it too,
+/// so it lives outside the window's own state.
+@MainActor
+@Observable
+final class Navigation {
+  var selection: SidebarItem? = .status
+
+  init(selection: SidebarItem? = .status) {
+    self.selection = selection
+  }
+}
+
 struct MainWindow: View {
   @Environment(ServerStore.self) private var server
-  @State private var selection: SidebarItem? = .status
+  @Environment(Navigation.self) private var navigation
 
   var body: some View {
+    @Bindable var navigation = navigation
     NavigationSplitView {
-      List(SidebarItem.allCases, selection: $selection) { item in
+      List(SidebarItem.allCases, selection: $navigation.selection) { item in
         Label(item.title, systemImage: item.symbol)
           .tag(item)
       }
       .navigationSplitViewColumnWidth(min: 160, ideal: 180)
     } detail: {
       detail
-        .navigationTitle(selection?.title ?? "Jetlink")
+        .navigationTitle(navigation.selection?.title ?? "Jetlink")
         .toolbar {
           ToolbarItem(placement: .principal) {
             StatusBadge(text: summary.0, tone: summary.1)
@@ -53,8 +66,9 @@ struct MainWindow: View {
 
   @ViewBuilder
   private var detail: some View {
-    switch selection ?? .status {
-    case .status: StatusView(selection: $selection)
+    @Bindable var navigation = navigation
+    switch navigation.selection ?? .status {
+    case .status: StatusView(selection: $navigation.selection)
     case .models: ModelsView()
     case .logs: LogsView()
     }
@@ -91,5 +105,6 @@ struct MainWindow: View {
     .environment(ModelStore.preview(catalog: PreviewData.catalog, inventory: PreviewData.inventory, engine: PreviewData.engineReady))
     .environment(LogBuffer.preview(lines: PreviewData.logLines))
     .environment(AppSettings.preview())
-    .frame(width: 860, height: 560)
+    .environment(Navigation())
+    .frame(width: 1000, height: 640)
 }
