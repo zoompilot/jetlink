@@ -64,6 +64,14 @@ struct PythonRuntime: Sendable, Equatable {
   }
 }
 
+/// The name the views use for the bundled runtime: `EmbeddedPython.manifest()`.
+/// `PythonRuntime` is the located interpreter; this is the bundle's contents.
+enum EmbeddedPython {
+  static func manifest() -> [String: String]? {
+    PythonRuntime.manifest()
+  }
+}
+
 enum PythonRuntimeError: Error, LocalizedError, Equatable {
   case notBundled
   case overrideMissing(String)

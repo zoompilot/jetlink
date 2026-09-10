@@ -242,7 +242,8 @@ struct StatusView: View {
   /// What went wrong, in the server's own words, unless the app can see the
   /// reason itself: a build with no interpreter in it cannot start anything.
   private func failureDetail(_ reason: String) -> String {
-    if EmbeddedPython.manifest() == nil, settings.pythonOverride == nil {
+    let overridden = settings.pythonOverride != nil || ProcessInfo.processInfo.environment["JETLINK_PYTHON"] != nil
+    if EmbeddedPython.manifest() == nil, !overridden {
       return StatusView.missingPythonMessage
     }
     let failure = server.lastFailure ?? reason
