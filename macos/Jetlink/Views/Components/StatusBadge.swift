@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// A capsule with a coloured dot and a short piece of text, used wherever a
-/// state has to be readable at a glance.
+/// A coloured dot and a short piece of text, used wherever a state has to be
+/// readable at a glance. The pill carries its own shape in a form row; the
+/// plain style draws no background, which is what a toolbar wants.
 struct StatusBadge: View {
   enum Tone: Equatable, Sendable {
     case neutral, info, good, warning, bad
@@ -17,32 +18,81 @@ struct StatusBadge: View {
     }
   }
 
+  enum Style: Equatable, Sendable {
+    case pill, plain
+  }
+
   let text: String
   let tone: Tone
+  var style: Style = .pill
   var showsProgress: Bool = false
 
-  init(text: String, tone: Tone, showsProgress: Bool = false) {
+  init(text: String, tone: Tone, style: Style = .pill, showsProgress: Bool = false) {
     self.text = text
     self.tone = tone
+    self.style = style
     self.showsProgress = showsProgress
   }
 
   var body: some View {
+    switch style {
+    case .pill:
+      pill
+    case .plain:
+      plain
+    }
+  }
+
+  private var pill: some View {
     HStack(spacing: 6) {
       Circle()
         .fill(tone.color)
         .frame(width: 6, height: 6)
       Text(text)
-      if showsProgress {
-        ProgressView()
-          .controlSize(.small)
-          .progressViewStyle(.circular)
-      }
+      progress
     }
     .padding(.horizontal, 8)
     .padding(.vertical, 3)
-    .background(Capsule().fill(tone.color.opacity(0.12)))
+    .modifier(PillBackground(tone: tone))
     .accessibilityElement(children: .combine)
+  }
+
+  private var plain: some View {
+    HStack(spacing: 6) {
+      Label {
+        Text(text)
+          .foregroundStyle(.secondary)
+      } icon: {
+        Image(systemName: "circle.fill")
+          .imageScale(.small)
+          .foregroundStyle(tone.color)
+      }
+      progress
+    }
+    .accessibilityElement(children: .combine)
+  }
+
+  @ViewBuilder
+  private var progress: some View {
+    if showsProgress {
+      ProgressView()
+        .controlSize(.small)
+        .progressViewStyle(.circular)
+    }
+  }
+
+  /// Liquid Glass takes the tint where the system has it, a plain fill before that.
+  private struct PillBackground: ViewModifier {
+    let tone: Tone
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+      if #available(macOS 26, *) {
+        content.glassEffect(.regular.tint(tone.color.opacity(0.35)), in: .capsule)
+      } else {
+        content.background(Capsule().fill(tone.color.opacity(0.12)))
+      }
+    }
   }
 
   /// The one line that describes the whole app: what the server is doing, and
@@ -90,6 +140,9 @@ struct StatusBadge: View {
     StatusBadge(text: "Serving", tone: .good)
     StatusBadge(text: "Disconnected", tone: .warning)
     StatusBadge(text: "Failed", tone: .bad)
+    Divider()
+    StatusBadge(text: "Comma connected", tone: .good, style: .plain)
+    StatusBadge(text: "Model failed", tone: .bad, style: .plain)
   }
   .padding()
 }

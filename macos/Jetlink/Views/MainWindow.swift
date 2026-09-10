@@ -52,7 +52,7 @@ struct MainWindow: View {
         .navigationTitle(navigation.selection?.title ?? "Jetlink")
         .toolbar {
           ToolbarItem(placement: .principal) {
-            StatusBadge(text: summary.0, tone: summary.1)
+            StatusBadge(text: summary.0, tone: summary.1, style: .plain)
               .lineLimit(1)
               .fixedSize()
           }
