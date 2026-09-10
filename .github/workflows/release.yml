@@ -1,0 +1,306 @@
+# Everything a v* tag produces: the macOS app, the Python distributions, the
+# Jetson image, and the GitHub release that carries them.
+#
+# Signing and notarizing need six secrets (docs/releasing.md lists them). With
+# none of them the build still runs and produces an ad hoc signed zip labelled
+# unsigned, so a fork can cut its own release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  check:
+    name: Check the tag
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Check the tag matches the package version
+        run: macos/scripts/check-version.sh "${GITHUB_REF_NAME}"
+
+  python-dist:
+    name: Python sdist and wheel
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build
+        run: pip install build
+
+      - name: Build the distributions
+        run: python -m build
+
+      - name: Upload the distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/*
+
+  macos-app:
+    name: macOS app
+    needs: check
+    runs-on: macos-26
+    env:
+      HAVE_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' && secrets.NOTARY_KEY_ID != '' }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: |
+          echo "Xcode versions on this runner:"
+          for app in /Applications/Xcode*.app; do
+            [ -e "$app" ] && echo "  $(basename "$app")"
+          done
+          if [ ! -d /Applications/Xcode_26.6.app ]; then
+            echo "error: /Applications/Xcode_26.6.app is missing on this runner image" >&2
+            exit 1
+          fi
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version
+
+      - name: Install xcodegen and libusb
+        run: brew install xcodegen libusb
+
+      - name: Restore the interpreter and wheel downloads
+        uses: actions/cache@v4
+        with:
+          path: macos/build/downloads
+          key: pbs-${{ hashFiles('macos/Python/embed-python.sh', 'macos/Python/requirements.txt') }}
+
+      - name: Restore the pip cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/pip
+          key: pip-${{ hashFiles('macos/Python/requirements*.txt') }}
+
+      - name: Report the signing mode
+        run: |
+          if [ "$HAVE_SIGNING" = "true" ]; then
+            echo "signing with a Developer ID certificate and notarizing"
+          else
+            echo "no signing secrets: this build will be ad hoc signed and labelled unsigned"
+          fi
+
+      - name: Import the signing certificate
+        if: env.HAVE_SIGNING == 'true'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          NOTARY_PRIVATE_KEY_P8_BASE64: ${{ secrets.NOTARY_PRIVATE_KEY_P8_BASE64 }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          echo "KEYCHAIN_PATH=$KEYCHAIN" >> "$GITHUB_ENV"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | grep 'Developer ID Application' | head -1 | sed -E 's/.*"(.*)"/\1/')"
+          if [ -z "$IDENTITY" ]; then
+            echo "error: the keychain has no Developer ID Application identity" >&2
+            exit 1
+          fi
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "$NOTARY_PRIVATE_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          echo "NOTARY_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+
+      - name: Build and sign the app
+        env:
+          DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # SIGN_IDENTITY is in the environment only when the step above ran;
+          # the scripts default it to "-" (ad hoc) otherwise.
+          make -C macos app
+
+      - name: Check the embedded runtime
+        run: make -C macos smoke
+
+      - name: Run the control channel smoke test
+        run: python3 macos/scripts/smoke-control.py
+
+      - name: Notarize the app
+        if: env.HAVE_SIGNING == 'true'
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: make -C macos notarize
+
+      - name: Build the DMG and the zip
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          # notarize.sh leaves its submission archive behind; it is not a
+          # release artifact and it matches the upload pattern.
+          rm -f macos/build/Jetlink-notarize.zip
+          make -C macos dmg
+
+      - name: Label an unsigned build
+        if: env.HAVE_SIGNING != 'true'
+        run: |
+          # An ad hoc signature cannot be notarized, so a DMG of it would only
+          # invite people to install something Gatekeeper refuses. Ship the zip
+          # alone, named for what it is.
+          cd macos/build
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Jetlink.app/Contents/Info.plist)"
+          rm -f "Jetlink-$VERSION.dmg"
+          mv "Jetlink-$VERSION.zip" "Jetlink-$VERSION-unsigned.zip"
+          shasum -a 256 "Jetlink-$VERSION-unsigned.zip" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Delete the temporary keychain
+        if: always()
+        run: |
+          # KEYCHAIN_PATH is set by the import step, so it is empty when that
+          # step did not run and this is a no-op.
+          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+      - name: Upload the app artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: |
+            macos/build/Jetlink-*.dmg
+            macos/build/Jetlink-*.zip
+            macos/build/SHA256SUMS
+
+  docker-jetson:
+    name: Jetson image
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    continue-on-error: true
+    outputs:
+      # A job with continue-on-error reports success whatever happened, so the
+      # release job cannot read needs.docker-jetson.result. This output is set
+      # by a step that only runs when the push succeeded.
+      pushed: ${{ steps.pushed.outputs.pushed }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Work out the tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/zoompilot/jetlink
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+        # The l4t-jetpack base image is several GB and this runs under QEMU,
+        # but pip only installs aarch64 wheels and pure Python, so nothing
+        # compiles. A failure here does not block the macOS release; the notes
+        # say the image is missing.
+
+      - name: Record that the image was pushed
+        id: pushed
+        run: echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: GitHub release
+    needs: [python-dist, macos-app, docker-jetson]
+    if: always() && needs.python-dist.result == 'success' && needs.macos-app.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Download the artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List what is being released
+        run: find artifacts -type f -exec ls -lh {} +
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_PUSHED: ${{ needs.docker-jetson.outputs.pushed }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mapfile -t FILES < <(find artifacts -type f | sort)
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "error: nothing to release" >&2
+            exit 1
+          fi
+          ARGS=(--generate-notes --title "Jetlink $GITHUB_REF_NAME")
+          case "$GITHUB_REF_NAME" in
+            *-*) ARGS+=(--prerelease) ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" "${ARGS[@]}" "${FILES[@]}"
+
+          # Append the footer to the notes GitHub generated, rather than
+          # replacing them.
+          NOTES="$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)"
+          # The backticks below are Markdown, not command substitutions.
+          # shellcheck disable=SC2016
+          {
+            printf '%s\n\n' "$NOTES"
+            printf '## Jetson image\n\n'
+            if [ "${IMAGE_PUSHED:-}" = "true" ]; then
+              printf '```\ndocker pull ghcr.io/zoompilot/jetlink:%s\n```\n\n' "$VERSION"
+            else
+              printf 'The Jetson image build failed for this tag; no `ghcr.io/zoompilot/jetlink:%s` was pushed. Build it on the Jetson with `sudo docker/build.sh`.\n\n' "$VERSION"
+            fi
+            if ls artifacts/macos-app/*-unsigned.zip >/dev/null 2>&1; then
+              printf '## The macOS app is not signed\n\n'
+              printf 'This build was made without signing secrets, so macOS refuses to open it the first time. Right-click Jetlink in Applications, choose **Open**, and confirm, or open **System Settings > Privacy & Security** and click **Open Anyway**. Removing the quarantine flag works too:\n\n'
+              printf '```bash\nxattr -d com.apple.quarantine /Applications/Jetlink.app\n```\n\n'
+              printf 'It is Apple silicon only.\n'
+            else
+              printf 'The macOS app is Apple silicon only.\n'
+            fi
+          } > notes.md
+          gh release edit "$GITHUB_REF_NAME" --notes-file notes.md

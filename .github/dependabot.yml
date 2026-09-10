@@ -1,0 +1,15 @@
+# Actions only.
+#
+# The Python and Swift pins are measured versions, not "latest": the tinygrad
+# commit is the one that can parse the models, the wheel hashes are what the
+# bundle is built from, and Xcode is what the app is tested against. Adding
+# those ecosystems here would open a pull request every week that nobody can
+# merge without re-running the bench.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci:"

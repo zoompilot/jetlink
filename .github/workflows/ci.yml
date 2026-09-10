@@ -1,0 +1,213 @@
+# Lint and test on every push and pull request.
+#
+# The cheap jobs (ruff, pytest on Linux) report in about a minute. The app job
+# is the slow one: it downloads the interpreter tarball and the pinned wheels,
+# builds the embedded runtime, builds and ad hoc signs the bundle, and then
+# runs a real server out of it. Its downloads are cached, keyed on the scripts
+# that choose them.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The sunnypilot fork. The PyPI wheel has no org.tinygrad ONNX domain and
+  # cannot parse the driving models, and this commit is on no upstream branch,
+  # so it has to be named by its full sha here.
+  TINYGRAD_PIN: tinygrad @ git+https://github.com/sunnypilot/tinygrad@e837e367aac9e1a66e689f4f32ce20ca9367df13
+
+jobs:
+  python-lint:
+    name: Python lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff==0.16.6
+
+      - name: Run ruff
+        run: ruff check .
+        # No `ruff format --check`: the tree is not formatted by ruff and
+        # reformatting it would rewrite every file for no gain.
+
+  python-test-linux:
+    name: Python tests on Linux
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install the package
+        run: pip install -e ".[dev]"
+
+      - name: Run the tests
+        run: python -m pytest -q
+        # No inference runtime here: the backend tests skip themselves, and the
+        # registry, control channel, protocol and cache tests all run.
+
+  python-test-macos:
+    name: Python tests on macOS
+    runs-on: macos-26
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install libusb
+        run: brew install libusb
+
+      - name: Install the package
+        run: pip install -e ".[dev,ort,usb]"
+
+      - name: Install tinygrad from git
+        run: pip install --no-deps "$TINYGRAD_PIN"
+
+      - name: Run the tests
+        run: python -m pytest -q
+        # onnxruntime on the CPU provider and tinygrad on the CPU device are
+        # both real here, so the backend suites run instead of skipping.
+
+  swift:
+    name: Swift build and tests
+    runs-on: macos-26
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          echo "Xcode versions on this runner:"
+          for app in /Applications/Xcode*.app; do
+            [ -e "$app" ] && echo "  $(basename "$app")"
+          done
+          if [ ! -d /Applications/Xcode_26.6.app ]; then
+            echo "error: /Applications/Xcode_26.6.app is missing on this runner image" >&2
+            exit 1
+          fi
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Regenerate the Xcode project
+        run: make -C macos project
+
+      - name: Check the committed project is fresh
+        run: git diff --exit-code macos/Jetlink.xcodeproj
+        # project.yml is the source of truth; the generated project is
+        # committed so `open` works without xcodegen. Run `make -C macos
+        # project` and commit the result when this fails.
+
+      - name: Run the Swift tests
+        run: make -C macos test
+
+  app:
+    name: App bundle and control channel smoke test
+    runs-on: macos-26
+    needs: [python-lint]
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          echo "Xcode versions on this runner:"
+          for app in /Applications/Xcode*.app; do
+            [ -e "$app" ] && echo "  $(basename "$app")"
+          done
+          if [ ! -d /Applications/Xcode_26.6.app ]; then
+            echo "error: /Applications/Xcode_26.6.app is missing on this runner image" >&2
+            exit 1
+          fi
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version
+
+      - name: Install xcodegen and libusb
+        run: brew install xcodegen libusb
+
+      - name: Restore the interpreter and wheel downloads
+        uses: actions/cache@v4
+        with:
+          path: macos/build/downloads
+          key: pbs-${{ hashFiles('macos/Python/embed-python.sh', 'macos/Python/requirements.txt') }}
+
+      - name: Restore the pip cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/pip
+          key: pip-${{ hashFiles('macos/Python/requirements*.txt') }}
+
+      - name: Build the app with its embedded runtime
+        run: make -C macos app
+        # `app` depends on `project` and `python`, so this is the whole thing,
+        # ad hoc signed. Running `make python` first would only build the
+        # runtime twice.
+
+      - name: Check the embedded runtime
+        run: make -C macos smoke
+
+      - name: Run the control channel smoke test
+        run: python3 macos/scripts/smoke-control.py
+
+      - name: Pack the app
+        run: ditto -c -k --keepParent macos/build/Jetlink.app macos/build/Jetlink-unsigned.zip
+
+      - name: Upload the app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jetlink-unsigned
+          path: macos/build/Jetlink-unsigned.zip
+          retention-days: 7
+
+  swift-format:
+    name: Swift formatting
+    runs-on: macos-26
+    continue-on-error: true
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          echo "Xcode versions on this runner:"
+          for app in /Applications/Xcode*.app; do
+            [ -e "$app" ] && echo "  $(basename "$app")"
+          done
+          if [ ! -d /Applications/Xcode_26.6.app ]; then
+            echo "error: /Applications/Xcode_26.6.app is missing on this runner image" >&2
+            exit 1
+          fi
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+
+      - name: Lint the Swift sources
+        run: xcrun swift-format lint --strict --recursive macos/Jetlink macos/JetlinkTests
