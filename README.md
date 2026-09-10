@@ -34,17 +34,10 @@ Everything happens on the comma's screen.
 
 ### 2. Start the server
 
-**Mac (Apple silicon)**, in Terminal:
-
-```bash
-brew install python libusb
-git clone https://github.com/zoompilot/jetlink.git
-cd jetlink
-scripts/run-mac.sh
-```
-
-The first run installs dependencies. The server then prints that it is waiting
-for a gadget, which means it is waiting for the comma. Leave the terminal open.
+**Mac (Apple silicon)**: download Jetlink for Mac from the Releases page, open
+it, and leave it running. It starts the server itself and says **Waiting for
+comma** until you plug one in. See the [Mac guide](docs/macos-app.md).
+Developers can still use `scripts/run-mac.sh`.
 
 **Jetson Orin Nano**: follow the [Jetson guide](docs/jetson.md). It is the
 same idea in Docker, plus a service that starts the server at boot.
@@ -97,8 +90,10 @@ collect logs when reporting a problem.
 
 ## More
 
+- [Jetlink for Mac, the app](docs/macos-app.md)
 - [Jetson setup, boot service, troubleshooting, logs](docs/jetson.md)
 - [Mac, Linux, Windows, Docker, and testing without a comma](docs/platforms.md)
+- [Models, the model CLI, and the control channel](docs/models.md)
 - [Status, known limitations, and measured performance](docs/status.md)
 - [Updates and rollback](docs/releasing.md)
 - [Cables, networking, and power](docs/transport.md)

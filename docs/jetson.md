@@ -96,6 +96,27 @@ echo '/mnt/data/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 the finished engine is cached and running it does not touch swap. The 766 MB
 models build without it.
 
+### Prefetching a model
+
+The Jetson can download a model itself instead of waiting for the comma to
+send it over the link, which is faster when the comma is on LTE. The image
+carries the command, so nothing extra has to be installed:
+
+```bash
+sudo docker run --rm -it -v /mnt/data/jetlink:/mnt/data/jetlink \
+  --entrypoint python3 jetlink:latest -m jetlink.registry fetch <ref>
+```
+
+`<ref>` is the 40-character commit hash of the model in the catalog;
+`... -m jetlink.registry list` prints them. Stop the service with
+`sudo systemctl stop jetlink-server` before building a model with `prepare`:
+two processes building into one cache is unsupported.
+
+The server also has a local control channel, started with
+`--control-socket /run/jetlink-control.sock`, for scripting downloads and
+builds while it keeps serving. See
+[models and the model CLI](models.md#the-control-channel).
+
 ## Troubleshooting
 
 | Problem | What to do |
