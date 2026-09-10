@@ -99,7 +99,7 @@ struct ServerSettingsView: View {
       Section {
         VStack(alignment: .leading, spacing: 4) {
           Picker("Backend", selection: $settings.backend) {
-            Text("Automatic (recommended)").tag(BackendChoice.auto)
+            Text("Automatic (CoreML on the GPU)").tag(BackendChoice.auto)
             Text("CoreML on the GPU").tag(BackendChoice.coreml)
             Text("CoreML with the Neural Engine").tag(BackendChoice.ane)
             Text("tinygrad on Metal").tag(BackendChoice.tinygrad)
@@ -155,7 +155,9 @@ struct ServerSettingsView: View {
 
   static func backendCaption(_ backend: BackendChoice) -> String {
     switch backend {
-    case .auto, .coreml:
+    case .auto:
+      "Recommended. About 43 ms a frame on an M1 Pro. Preparing a model takes about 9 minutes, and loading one again takes as long, so keep Jetlink running."
+    case .coreml:
       "About 43 ms a frame on an M1 Pro. Preparing a model takes about 9 minutes, and loading one again takes as long, so keep Jetlink running."
     case .ane:
       "Faster back to back, slower at the comma's 20 Hz on an M1 Pro. Measure on your Mac before using it in the car."

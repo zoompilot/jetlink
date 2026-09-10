@@ -11,6 +11,44 @@ struct LogsView: View {
   private static let bottomAnchor = "logs.bottom"
 
   var body: some View {
+    VStack(spacing: 0) {
+      lines
+      Divider()
+      bottomBar
+    }
+    .searchable(text: $filter, placement: .toolbar, prompt: "Filter")
+    .toolbar {
+      ToolbarItem {
+        Button("Copy all", systemImage: "doc.on.doc") { copyAll() }
+          .help("Copy every shown line")
+      }
+      ToolbarItem {
+        Button("Clear", systemImage: "trash") { logs.clear() }
+          .help("Clear the lines shown here. The log file keeps them")
+      }
+      ToolbarItem {
+        Button("Reveal log file", systemImage: "folder") {
+          NSWorkspace.shared.activateFileViewerSelecting([LogsView.logFileURL])
+        }
+        .help("Show server.log in the Finder")
+      }
+    }
+  }
+
+  private var bottomBar: some View {
+    HStack {
+      Toggle("Follow new lines", isOn: $autoScroll)
+        .toggleStyle(.checkbox)
+      Spacer()
+      Text("\(logs.lines.count.formatted()) lines")
+        .foregroundStyle(.secondary)
+    }
+    .font(.callout)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 6)
+  }
+
+  private var lines: some View {
     ScrollViewReader { proxy in
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 1) {
@@ -40,28 +78,6 @@ struct LogsView: View {
       }
       .onAppear {
         proxy.scrollTo(LogsView.bottomAnchor, anchor: .bottom)
-      }
-    }
-    .searchable(text: $filter, placement: .toolbar, prompt: "Filter")
-    .toolbar {
-      ToolbarItem {
-        Toggle("Auto-scroll", isOn: $autoScroll)
-          .toggleStyle(.checkbox)
-          .help("Follow the end of the log")
-      }
-      ToolbarItem {
-        Button("Copy all", systemImage: "doc.on.doc") { copyAll() }
-          .help("Copy every shown line")
-      }
-      ToolbarItem {
-        Button("Clear", systemImage: "trash") { logs.clear() }
-          .help("Clear the lines shown here. The log file keeps them")
-      }
-      ToolbarItem {
-        Button("Reveal log file", systemImage: "folder") {
-          NSWorkspace.shared.activateFileViewerSelecting([LogsView.logFileURL])
-        }
-        .help("Show server.log in the Finder")
       }
     }
   }

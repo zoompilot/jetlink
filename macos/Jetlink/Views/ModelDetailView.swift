@@ -11,29 +11,17 @@ struct ModelDetailView: View {
       Section {
         LabeledContent("Name", value: row.name)
         if let ref = row.ref {
-          LabeledContent("Ref") {
-            Text(ref)
-              .font(.system(.callout, design: .monospaced))
-              .textSelection(.enabled)
-          }
+          longValue("Ref", ref)
         }
         if let sha = row.sha256 {
-          LabeledContent("SHA-256") {
-            Text(sha)
-              .font(.system(.callout, design: .monospaced))
-              .textSelection(.enabled)
-          }
+          longValue("SHA-256", sha)
         }
         LabeledContent("Size") { ByteCount(row.bytes) }
         if !BuildTime.text(row.buildTime).isEmpty {
           LabeledContent("Built", value: BuildTime.text(row.buildTime))
         }
         if let checkpoint = currentArtifact?.checkpoint {
-          LabeledContent("Checkpoint") {
-            Text(checkpoint)
-              .font(.system(.callout, design: .monospaced))
-              .textSelection(.enabled)
-          }
+          longValue("Checkpoint", checkpoint)
         }
         LabeledContent("Status") {
           ModelStatusLabel(row.status)
@@ -54,6 +42,12 @@ struct ModelDetailView: View {
               Text(detailLine(artifact))
                 .font(.callout)
                 .foregroundStyle(.secondary)
+              Text(artifact.path)
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
               Button("Delete…", role: .destructive) { confirmingDelete = true }
                 .padding(.top, 2)
             }
@@ -67,9 +61,22 @@ struct ModelDetailView: View {
       Button("Delete", role: .destructive) { models.forget(row, artifacts: true, model: false) }
       Button("Cancel", role: .cancel) { }
     } message: {
-      Text("Every prepared engine for \(row.name) is deleted. Preparing the model again takes as long as the first time.")
+      Text("Every prepared engine for \(row.displayName) is deleted. Preparing the model again takes as long as the first time.")
     }
     .frame(minWidth: 280)
+  }
+
+  /// A value too long for a label and a value on one line: hex, paths, ids.
+  private func longValue(_ label: String, _ value: String) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(label)
+        .foregroundStyle(.secondary)
+      Text(value)
+        .font(.system(.callout, design: .monospaced))
+        .textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
   }
 
   private var currentArtifact: InventoryArtifact? {

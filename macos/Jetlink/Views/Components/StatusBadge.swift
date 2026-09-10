@@ -61,18 +61,17 @@ struct StatusBadge: View {
       break
     }
 
+    if link.state == .disconnected {
+      return ("Comma disconnected", .warning)
+    }
     let connected = link.state == .connected
     switch engine.state {
     case .building, .loading:
-      return (connected ? "Comma connected, preparing a model" : "Serving, preparing a model", .info)
+      return (connected ? "Comma connected, preparing" : "Preparing a model", .info)
     case .failed:
-      return (connected ? "Comma connected, the model failed" : "Serving, the model failed", .bad)
+      return (connected ? "Comma connected, model failed" : "Model failed", .bad)
     case .none, .ready:
-      switch link.state {
-      case .connected: return ("Comma connected", .good)
-      case .waiting: return ("Serving, waiting for comma", .neutral)
-      case .disconnected: return ("Serving, the comma disconnected", .warning)
-      }
+      return connected ? ("Comma connected", .good) : ("Waiting for comma", .neutral)
     }
   }
 }

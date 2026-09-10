@@ -25,24 +25,25 @@ struct FormattingTests {
   @Test("Serving reads as the link state when the engine is idle or ready")
   func summaryWhileServing() {
     for engine in [PreviewData.engineNone, PreviewData.engineReady] {
-      #expect(summary(.serving, PreviewData.linkWaiting, engine) == ("Serving, waiting for comma", .neutral))
+      #expect(summary(.serving, PreviewData.linkWaiting, engine) == ("Waiting for comma", .neutral))
       #expect(summary(.serving, PreviewData.linkConnected, engine) == ("Comma connected", .good))
-      #expect(summary(.serving, PreviewData.linkDisconnected, engine) == ("Serving, the comma disconnected", .warning))
+      #expect(summary(.serving, PreviewData.linkDisconnected, engine) == ("Comma disconnected", .warning))
     }
   }
 
   @Test("A build or a load is worth saying, connected or not")
   func summaryWhilePreparing() {
     for engine in [PreviewData.engineBuilding, PreviewData.engineLoading] {
-      #expect(summary(.serving, PreviewData.linkWaiting, engine) == ("Serving, preparing a model", .info))
-      #expect(summary(.serving, PreviewData.linkConnected, engine) == ("Comma connected, preparing a model", .info))
+      #expect(summary(.serving, PreviewData.linkWaiting, engine) == ("Preparing a model", .info))
+      #expect(summary(.serving, PreviewData.linkConnected, engine) == ("Comma connected, preparing", .info))
+      #expect(summary(.serving, PreviewData.linkDisconnected, engine) == ("Comma disconnected", .warning))
     }
   }
 
   @Test("A failed engine reads as failed while the server keeps serving")
   func summaryWhenTheEngineFailed() {
-    #expect(summary(.serving, PreviewData.linkWaiting, PreviewData.engineFailed) == ("Serving, the model failed", .bad))
-    #expect(summary(.serving, PreviewData.linkConnected, PreviewData.engineFailed) == ("Comma connected, the model failed", .bad))
+    #expect(summary(.serving, PreviewData.linkWaiting, PreviewData.engineFailed) == ("Model failed", .bad))
+    #expect(summary(.serving, PreviewData.linkConnected, PreviewData.engineFailed) == ("Comma connected, model failed", .bad))
   }
 
   // MARK: ByteCount
@@ -58,10 +59,35 @@ struct FormattingTests {
     #expect(ByteCount.rate(.nan) == ByteCount.rate(0))
   }
 
-  @Test("Sizes are the Finder's decimal units")
+  @Test("Sizes are decimal units with one decimal at most")
   func sizes() {
-    #expect(ByteCount.string(765_953_504).contains("MB"))
-    #expect(ByteCount.string(5_900_000_000).contains("GB"))
+    #expect(ByteCount.string(765_953_504) == "766 MB")
+    #expect(ByteCount.string(777_200_000) == "777.2 MB")
+    #expect(ByteCount.string(23_200_000_000) == "23.2 GB")
+    #expect(ByteCount.string(1_800_000_000) == "1.8 GB")
+    #expect(ByteCount.string(5_900_000_000) == "5.9 GB")
+    #expect(ByteCount.string(512) == "512 bytes")
+    #expect(ByteCount.string(0) == "0 bytes")
+    #expect(ByteCount.string(999_999) == "1 MB")
+  }
+
+  @Test("A model name loses its trailing build date, and nothing else")
+  func displayName() {
+    #expect(PreviewData.loadedRow.displayName == "BMRLNAP Model v4")
+    #expect(PreviewData.notDownloadedRow.displayName == "Cinque Terre Model V2")
+    #expect(PreviewData.localRow.displayName == "big_driving_supercombo.onnx")
+    var parenthesised = PreviewData.localRow
+    parenthesised.name = "Some Model (experimental)"
+    #expect(parenthesised.displayName == "Some Model (experimental)")
+    var midName = PreviewData.localRow
+    midName.name = "Model (August 30, 2026) rev 2"
+    #expect(midName.displayName == "Model (August 30, 2026) rev 2")
+  }
+
+  @Test("The runtime line names the runtime, its version and the hardware")
+  func runtimeLine() {
+    #expect(StatusView.runtimeLine(backend: "tinygrad", version: "0.14.0+1241484386bc", device: "METAL-Apple_M1_Pro") == "tinygrad 0.14.0, Apple M1 Pro")
+    #expect(StatusView.runtimeLine(backend: "ort", version: "1.29.0", device: "coreml-Apple_M1_Pro") == "onnxruntime 1.29.0, Apple M1 Pro")
   }
 
   // MARK: Build times

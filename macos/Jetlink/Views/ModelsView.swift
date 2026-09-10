@@ -77,13 +77,16 @@ struct ModelsView: View {
         }
       }
       .inspector(isPresented: $inspectorPresented) {
-        if let row = selectedRow {
-          ModelDetailView(row: row)
-        } else {
-          Text("Select a model to see its details.")
-            .foregroundStyle(.secondary)
-            .padding()
+        Group {
+          if let row = selectedRow {
+            ModelDetailView(row: row)
+          } else {
+            Text("Select a model to see its details.")
+              .foregroundStyle(.secondary)
+              .padding()
+          }
         }
+        .inspectorColumnWidth(min: 280, ideal: 320, max: 440)
       }
       .fileImporter(isPresented: $importing, allowedContentTypes: [ModelsView.onnxType]) { result in
         switch result {
@@ -133,19 +136,23 @@ struct ModelsView: View {
       TableColumn("Model") { row in
         modelCell(row)
       }
-      .width(min: 260)
+      .width(min: 220, ideal: 320)
       TableColumn("Built") { row in
         Text(BuildTime.text(row.buildTime))
       }
+      .width(min: 90, ideal: 100)
       TableColumn("Size") { row in
         ByteCount(row.bytes)
       }
+      .width(min: 70, ideal: 80)
       TableColumn("Status") { row in
         ModelStatusLabel(row.status, isCheckingCatalog: models.catalog == nil)
       }
+      .width(min: 150, ideal: 170)
       TableColumn("Prepared for") { row in
         Text(ModelsView.preparedForText(row))
       }
+      .width(min: 110, ideal: 130)
     }
     .contextMenu(forSelectionType: ModelRow.ID.self) { ids in
       if let row = models.rows.first(where: { ids.contains($0.id) }) {
@@ -157,7 +164,7 @@ struct ModelsView: View {
   private func modelCell(_ row: ModelRow) -> some View {
     VStack(alignment: .leading, spacing: 2) {
       HStack(spacing: 6) {
-        Text(row.name)
+        Text(row.displayName)
         if row.isDefault { tag("Default", tone: .accentColor) }
         if row.isRequestedByComma { tag("Comma", tone: .green) }
         if row.isLocal { tag("Local", tone: .secondary) }
@@ -195,7 +202,7 @@ struct ModelsView: View {
 
   private var diskSummary: String {
     guard let disk = models.inventory?.disk else { return "" }
-    return "Models \(ByteCount.string(disk.modelsBytes)), prepared engines \(ByteCount.string(disk.enginesBytes)), \(ByteCount.string(disk.freeBytes)) free on this disk"
+    return "Models \(ByteCount.string(disk.modelsBytes)), engines \(ByteCount.string(disk.enginesBytes)), \(ByteCount.string(disk.freeBytes)) free"
   }
 
   // MARK: Actions
@@ -281,7 +288,7 @@ struct ModelsView: View {
     switch item {
     case let .deleteDownload(row): models.forget(row, artifacts: false, model: true)
     case let .deleteEngines(row): models.forget(row, artifacts: true, model: false)
-    case let .prepareSwitch(row): models.prepare(row)
+    case let .prepareSwitch(row): models.prepare(row, confirmedInterruption: true)
     }
   }
 
@@ -299,7 +306,7 @@ struct ModelsView: View {
     switch confirmation {
     case .deleteDownload: "Delete the download?"
     case .deleteEngines: "Delete the prepared engines?"
-    case let .prepareSwitch(row): "Prepare \(row.name)?"
+    case let .prepareSwitch(row): "Prepare \(row.displayName)?"
     case nil: ""
     }
   }
@@ -322,19 +329,19 @@ struct ModelsView: View {
     switch item {
     case let .deleteDownload(row):
       let size = row.bytes.map { " (\(ByteCount.string($0)))" } ?? ""
-      return "The model file for \(row.name)\(size) is deleted. The prepared engine stays, so the comma can use this model without downloading it again."
+      return "The model file for \(row.displayName)\(size) is deleted. The prepared engine stays, so the comma can use this model without downloading it again."
     case let .deleteEngines(row):
       let bytes = row.preparedFor.reduce(Int64(0)) { $0 + $1.bytes }
       let count = row.preparedFor.count
       let engines = count == 1 ? "engine" : "engines"
-      var text = "\(count) prepared \(engines) for \(row.name), \(ByteCount.string(bytes)) in all, are deleted. Preparing the model again takes as long as the first time."
+      var text = "\(count) prepared \(engines) for \(row.displayName), \(ByteCount.string(bytes)) in all, are deleted. Preparing the model again takes as long as the first time."
       if row.isLoaded {
         text += " The model is loaded now, so it is unloaded first."
       }
       return text
     case let .prepareSwitch(row):
-      let current = models.rows.first { $0.isLoaded }?.name ?? "another model"
-      return "The comma is connected and using \(current). Preparing \(row.name) switches the server to it; the comma falls back to its small model until it reconnects and that model is loaded."
+      let current = models.rows.first { $0.isLoaded }?.displayName ?? "another model"
+      return "The comma is connected and using \(current). Preparing \(row.displayName) switches the server to it; the comma falls back to its small model until it reconnects and that model is loaded."
     }
   }
 

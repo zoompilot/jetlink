@@ -15,7 +15,7 @@ struct JetlinkApp: App {
           appState.launch()
         }
     }
-    .defaultSize(width: 860, height: 560)
+    .defaultSize(width: 1000, height: 640)
     .commands { AppCommands(appState: appState) }
 
     MenuBarExtra("Jetlink", systemImage: menuBarSymbol) {
