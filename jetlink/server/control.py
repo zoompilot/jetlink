@@ -38,6 +38,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from jetlink.registry import CATALOG_URL, DEFAULT_BIG_MODEL_REF
 from jetlink.server.cache import LAST_LOADED, _SHA256, EngineCache
 from jetlink.server.session import EngineHost, Request
 from jetlink.spec import DEFAULT_FRAME_SKIP
@@ -105,8 +106,8 @@ class ControlServer:
   def __init__(self, address: str, host: EngineHost, cache: EngineCache,
                registry=None, info: dict | None = None):
     if registry is None:
-      # Imported here and nowhere else: the server has no use for the catalog
-      # or the LFS code unless somebody opened a control channel.
+      # Built here rather than by main(): this module is the only caller, and
+      # it is only imported at all when somebody opened a control channel.
       from jetlink.registry import Registry
       registry = Registry(cache.root)
     self.address = address
@@ -122,6 +123,7 @@ class ControlServer:
     self._closing = threading.Event()
     self._link = {'state': 'waiting', 'detail': '', 'peer': None}
     self._active: dict[str, _Download] = {}
+    self._catalog_kicked = False
     self._inventory_at = 0.0
     self._inventory_payload: dict | None = None
     self._net = None
@@ -279,11 +281,17 @@ class ControlServer:
     self._to(client, 'link', dict(self._link))
     self._to(client, 'engine', self.host.snapshot())
     self._to(client, 'inventory', self._inventory())
-    self._to(client, 'catalog', self._catalog_payload())
+    catalog = self._catalog_payload()
+    self._to(client, 'catalog', catalog)
     with self._lock:
       pending = [dict(d.last) for d in self._active.values() if d.last]
     for payload in pending:
       self._to(client, 'download', payload)
+    if catalog.get('fetched_at') is None and not self._catalog_kicked:
+      # Nothing cached to show. Go and get it off the burst, once for the
+      # process however many clients connect, and publish it when it lands.
+      self._catalog_kicked = True
+      self._net.submit(self._refresh_catalog, False)
 
   # -- publishing -----------------------------------------------------------
 
@@ -318,8 +326,18 @@ class ControlServer:
             'runtime_version': info.get('runtime_version'), 'device': info.get('device')}
 
   def _catalog_payload(self, error: str | None = None) -> dict:
-    """What is on disk, with no network. A refresh is the `catalog` command."""
+    """What is on disk, with no network at all. Fetching is the `catalog` command.
+
+    registry.catalog() fetches whenever it has nothing cached, whatever max_age
+    says, so on a first run with no network a connecting client would wait out
+    the http timeout for its sixth event, and again on every reconnect. An
+    empty list now and a `catalog` event when the fetch lands is what a client
+    can actually render.
+    """
     try:
+      if not self.registry.catalog_path.exists():
+        return {'fetched_at': None, 'url': CATALOG_URL, 'default_ref': DEFAULT_BIG_MODEL_REF,
+                'error': error, 'models': []}
       payload = self.registry.catalog(refresh=False, max_age=math.inf)
     except Exception as e:
       log.warning("no catalog to serve: %s", e)

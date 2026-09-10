@@ -75,6 +75,9 @@ class FakeRegistry:
     self.root = Path(root)
     self.models = self.root / 'models'
     self.models.mkdir(parents=True, exist_ok=True)
+    self.catalog_path = self.root / 'registry' / 'catalog.json'
+    self.catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    self.catalog_path.write_text('{}')   # the tests that want one on disk are the default
     self.pointers: dict[str, Pointer] = {}
     self.resolvable: dict[str, Pointer] = {}
     self.names: dict[str, str] = {SHA: 'Test Model v1'}
@@ -446,6 +449,27 @@ def test_a_failing_catalog_refresh_is_reported_not_lost(bench):
   c.send(id=1, cmd='catalog', refresh=True)
   catalog = c.wait_for('catalog')
   assert 'the network is down' in catalog['error']
+
+
+def test_a_missing_catalog_does_not_block_the_first_client(bench):
+  """The registry fetches when it has nothing cached, whatever max_age says."""
+  bench.registry.catalog_path.unlink()
+
+  def slow_and_broken(refresh=False, max_age=3600.0, opener=None):
+    time.sleep(1.5)
+    raise OSError('the network is down')
+
+  bench.registry.catalog = slow_and_broken
+  started = time.monotonic()
+  c = bench.connect(drain=False)
+  events = [c.read() for _ in range(6)]
+  assert time.monotonic() - started < 1.0, 'the on-connect burst waited on the network'
+  catalog = events[5]
+  assert catalog['event'] == 'catalog' and catalog['models'] == [] and catalog['fetched_at'] is None
+  assert catalog['url'].startswith('https://') and len(catalog['default_ref']) == 40
+  assert catalog['error'] is None
+  # And the fetch it started off the burst reports what happened.
+  assert 'the network is down' in c.wait_for('catalog', timeout=6.0)['error']
 
 
 def test_import_hashes_copies_and_lists(bench, tmp_path):
