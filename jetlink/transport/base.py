@@ -57,6 +57,12 @@ class Transport(ABC):
     import json
     self.send(msg_type, seq, (json.dumps(obj).encode(),), flags)
 
+  @property
+  def lendable(self) -> bool:
+    """Could another process take over the IO on this link right now? Only a
+    gadget can be handed over; see FfsTransport.lendable."""
+    return False
+
   def rebind(self) -> bool:
     """Bounce the link so the peer sees it arrive again, if that means
     anything here. Only the gadget transport can; see FfsTransport.rebind."""

@@ -305,6 +305,18 @@ class FfsTransport(StreamTransport):
       f.write(udc + '\n')
     self.bound_udc = udc
 
+  @property
+  def lendable(self) -> bool:
+    """Bound to a controller, with no endpoint file open on this end.
+
+    The state another process can take the endpoints over from. FunctionFS
+    keeps a queued read queued until something completes it, so a reader here
+    would sit in front of the borrower and take its reply; and without a bound
+    controller there is nothing to take over.
+    """
+    return bool(self.gadget is not None and self.bound_udc and self.ep_out < 0
+                and not self._closing)
+
   def rebind(self) -> bool:
     """One unplug and replug, as the host sees it.
 
@@ -316,7 +328,11 @@ class FfsTransport(StreamTransport):
     completes the reader's request with ESHUTDOWN and the transport is done;
     the caller wants a working link, not a freshly bound dead one.
     """
-    if self.gadget is None or self._closing or self.ep_out >= 0:
+    if self._closing or self.ep_out >= 0:
+      return False
+    if self._bounce is not None:
+      return bool(self._bounce())   # a borrowed gadget: the bind is the owner's
+    if self.gadget is None:
       return False
     udc = self.bound_udc
     if udc is None:

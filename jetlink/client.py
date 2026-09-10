@@ -363,6 +363,12 @@ class JetlinkClient:
     """
     return self.infer_end(self.infer_begin(warped, packed, frame_id, reset, want_state, deadline), deadline)
 
+  @property
+  def lendable(self) -> bool:
+    """Could another process take the IO over from this link? See
+    FfsTransport.lendable."""
+    return self.t.lendable
+
   def rebind(self) -> bool:
     """Make the peer see the link arrive again, where that is a thing this
     transport can do. See FfsTransport.rebind; False everywhere else."""

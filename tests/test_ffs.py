@@ -640,3 +640,36 @@ def test_a_stuck_borrowed_write_asks_the_owner_to_free_it(mount, tmp_path, monke
   finally:
     monkeypatch.undo()
     t.close()
+
+
+def test_a_gadget_is_lendable_only_with_nothing_open_on_it(mount, tmp_path, monkeypatch):
+  """FunctionFS keeps a queued read queued until something completes it, so a
+  reader here would sit in front of the borrower and take its reply."""
+  _udc(tmp_path / 'sys', monkeypatch)
+  t = FfsTransport(str(mount))
+  try:
+    assert not t.lendable, 'a gadget bound to nothing has nothing to hand over'
+    t.gadget, t.bound_udc = '/sys/kernel/config/usb_gadget/jetlink', 'udc0'
+    assert t.lendable
+    t._ensure_epfiles()
+    assert not t.lendable
+  finally:
+    t.gadget = None
+    t.close()
+  assert not t.lendable
+
+
+def test_a_borrower_asks_the_owner_to_bounce_a_stalled_bus(mount, tmp_path, monkeypatch):
+  # the same signature as an owned gadget's, and the same one edge; only the
+  # process that can make it is a different one
+  _udc(tmp_path / 'sys', monkeypatch)
+  asked = []
+  t = FfsTransport.borrowed(str(mount), 'udc0', bounce=lambda: asked.append(True) or True)
+  try:
+    assert t.rebind() is True
+    assert asked == [True]
+    t.ep_out = 999
+    assert t.rebind() is False, 'bounced a link this end is reading'
+  finally:
+    t.ep_out = -1
+    t.close()
