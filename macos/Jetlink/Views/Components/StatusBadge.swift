@@ -67,6 +67,8 @@ struct StatusBadge: View {
           .imageScale(.small)
           .foregroundStyle(tone.color)
       }
+      // A toolbar shows icons only unless the label is told otherwise.
+      .labelStyle(.titleAndIcon)
       progress
     }
     .accessibilityElement(children: .combine)
