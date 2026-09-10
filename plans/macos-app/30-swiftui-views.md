@@ -1,0 +1,285 @@
+# 30. SwiftUI: windows, menu bar extra, settings
+
+**Owner: agent D.** Files you create, all under `macos/Jetlink/`:
+`App/JetlinkApp.swift`, `App/AppDelegate.swift`, `Views/MainWindow.swift`,
+`Views/StatusView.swift`, `Views/ModelsView.swift`, `Views/ModelDetailView.swift`,
+`Views/LogsView.swift`, `Views/SettingsView.swift`, `Views/MenuBarView.swift`,
+`Views/Components/StatusBadge.swift`, `Views/Components/ProgressRow.swift`,
+`Views/Components/ByteCount.swift`, `Views/Components/ModelStatusLabel.swift`,
+`Views/Previews/PreviewData.swift`, and `macos/JetlinkTests/FormattingTests.swift`.
+Read first: `01-contracts.md` section 7 (the store types you consume) and
+this file. Build against the stores' declared API; until agent C lands, use
+`PreviewData` stand-ins with the same shape (a `protocol`-free approach:
+construct real store instances in previews and set state through an
+`@testable` internal `preview(...)` factory that C is asked to provide; if it
+is not there yet, write the previews with static data and leave a `// TODO(C)`).
+
+## Design principles
+
+Native, plain, quiet. This is a utility that sits in the background for hours.
+Use system controls with their default styling, `Form` with `.formStyle(.grouped)`
+for read-only information panels, `Table` for the model list, standard toolbar
+placement, SF Symbols, `Text` with `.secondary` for detail. No custom colours
+except the semantic ones on `StatusBadge`. No animation beyond what the system
+does. Every control has an accessibility label where its icon is the only
+content. Every long-running state shows progress and a way to cancel. Errors
+are shown where they happen (inline under the row or in an alert), in one
+sentence, with the server's own wording when it came from the server.
+
+Sentence case for everything ("Start server", not "Start Server"), the macOS
+convention for buttons and menu items in this style guide; window and sidebar
+titles are title case ("Models"). No trailing periods on labels; full
+sentences in explanatory text end with a period.
+
+## `App/JetlinkApp.swift`
+
+```swift
+@main struct JetlinkApp: App {
+  @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+  @State private var appState = AppState()
+  var body: some Scene {
+    Window("Jetlink", id: "main") { MainWindow().environment(appState) }
+      .defaultSize(width: 860, height: 560)
+      .commands { AppCommands(appState: appState) }
+    MenuBarExtra("Jetlink", systemImage: menuBarSymbol) { MenuBarView().environment(appState) }
+      .menuBarExtraStyle(.menu)
+    Settings { SettingsView().environment(appState) }
+  }
+}
+```
+
+`menuBarSymbol` reflects `serverStore.runState` and `link`: stopped
+`cable.connector.slash`, starting/stopping `cable.connector` (dimmed not
+possible in a menu bar symbol; just the plain symbol), serving and waiting
+`cable.connector`, connected `cable.connector.horizontal`... keep it to three:
+`cable.connector.slash` (stopped or failed), `cable.connector` (serving, no
+comma), `car.fill` (comma connected). Pass `appState` into the environment
+with `.environment(appState)` and read stores through it (`@Environment(AppState.self)`).
+
+`AppCommands`: replace `.newItem` with nothing (no new windows); add a
+"Server" menu with "Start server" (⌘R when stopped), "Stop server" (⌘.),
+"Restart server"; add "Refresh model list" (⇧⌘R) under "Models"? Put both in
+one "Server" menu to keep the menu bar small. "Reveal cache in Finder" too.
+
+## `App/AppDelegate.swift`
+
+`NSApplicationDelegate`. `applicationShouldTerminate`: if the server is
+running, call `appState.applicationWillTerminate()` in a `Task` and return
+`.terminateLater`, then `NSApp.reply(toApplicationShouldTerminate: true)` when
+it finishes (cap at 20 s). `applicationShouldHandleReopen` returns true and
+opens the main window (use `@Environment(\.openWindow)` through a stored
+closure set by the app, or `NSApp.windows.first?.makeKeyAndOrderFront`).
+`applicationDidFinishLaunching`: nothing beyond logging; `AppState.init`
+starts the server when the setting says so.
+
+## `Views/MainWindow.swift`
+
+`NavigationSplitView` with a `List(selection:)` sidebar of three items:
+Status (`gauge.with.dots.needle.33percent`), Models (`shippingbox`), Logs
+(`doc.text`). Column widths: sidebar `min: 160, ideal: 180`. Detail shows the
+selected view. Toolbar (on the detail): a `Button` that is "Start server"
+(`play.fill`) when stopped/failed, "Stop server" (`stop.fill`) when serving,
+disabled with a `ProgressView().controlSize(.small)` when starting/stopping;
+next to it a `Text` with the one-line status from `StatusBadge.summary`.
+Toolbar items use `.help()` tooltips. Default selection: Status; if the
+inventory has no artifacts and the catalog is loaded, still Status (its empty
+state points to Models).
+
+## `Views/StatusView.swift`
+
+A `Form` (`.formStyle(.grouped)`) with three sections.
+
+**Server**
+- `LabeledContent("State") { StatusBadge(serverState) }`: Stopped (gray),
+  Starting… (blue, with a small `ProgressView`), Serving (green), Stopping…
+  (gray), Failed (red).
+- "Backend": `"CoreML on the GPU"` for `ort`/`coreml-*`, `"CoreML with the
+  Neural Engine"` for `ane`, `"tinygrad on Metal"` for `tinygrad`, else the
+  raw backend name; secondary text: runtime version and device
+  (`info.device` verbatim, e.g. `coreml-Apple_M1_Pro`).
+- "Uptime": relative from `startedAt` (`Date.RelativeFormatStyle` is wrong for
+  durations; use `Duration.UnitsFormatStyle` `hours, minutes`).
+- When `.failed`, a red `Text(lastFailure)` in a monospaced 12 pt block with
+  a "Show logs" button that selects the Logs item.
+
+**Comma**
+- "Link": Waiting for comma (gray) / Connected over USB (green) /
+  Connected over TCP from host:port / Disconnected (orange) with `detail`
+  as secondary text when non-empty.
+- When connected and `stats` is non-nil: "Frames" (`frames` formatted with
+  grouping), "Rate" (`fps` one decimal + " per second"), "Frame time" (mean /
+  p99 / max in ms, one decimal, as `"31.2 ms mean, 38.0 ms p99, 41.5 ms max"`),
+  "GPU time" (mean ms), "Slow frames" (count, red when > 0, with help text
+  "Frames over 60 ms in the last second").
+- Explanatory footer (section footer text): "The comma connects when it is
+  plugged into a USB-A port with an A-to-C data cable. The small model keeps
+  driving whenever the link is down."
+
+**Engine**
+- "Model": the name (via `modelStore.rows.first { $0.sha256 == engine.sha256 }`)
+  or `"None"`; secondary: `sha256.prefix(16)`.
+- "State": None (gray) / Preparing (blue) / Loading (blue) / Ready (green) / Failed (red).
+- When building or loading: `ProgressRow(stage:frac:msg:)`, a `ProgressView(value:)`
+  with the `msg` beneath in secondary text. For CoreML the server's message
+  already says "compiling for CoreML, 3 min elapsed; the big model takes 11 min
+  on an M1 Pro", show it verbatim.
+- When failed: `detail` in red.
+- Empty state when `engine.state == .none` and no artifacts exist: a
+  `ContentUnavailableView("No model prepared", systemImage: "shippingbox",
+  description: Text("Download and prepare the model your comma uses in Models. Keep Jetlink running afterwards; the model stays loaded and the comma connects to it immediately."))`
+  with a "Open Models" button.
+
+Buttons row at the bottom (section with no header): "Reveal cache in Finder"
+(`NSWorkspace.shared.activateFileViewerSelecting([cacheURL])`), and when a
+model is loaded, "Unload model" (confirmation: "Unload the model? The comma
+will fall back to its small model until a model is loaded again.").
+
+## `Views/ModelsView.swift`
+
+Top: a `Table(rows, selection: $selection)` with columns:
+- "Model": `Text(row.name)` with trailing small tags: "Default" (`.tint`),
+  "Comma" (when `isRequestedByComma`, green), "Local" (when `isLocal`).
+  Secondary line: `ref.prefix(10)` or `sha256.prefix(16)`. Column `width(min: 260)`.
+- "Built": `buildTime` shown as a date (`Date.FormatStyle(date: .abbreviated, time: .omitted)`);
+  parse ISO-8601 with `ISO8601DateFormatter`; empty when unknown.
+- "Size": `ByteCount(bytes)`, or an empty cell when unknown (no dash placeholder).
+- "Status": `ModelStatusLabel(row.status)`: Not downloaded (secondary),
+  Downloading 42% (with a thin `ProgressView(value:)` and rate `41 MB/s`),
+  Downloaded, Preparing (progress + msg), Prepared, Loaded (green bold),
+  Failed (red, `detail` on hover via `.help`). "Unresolved" shows as "Checking…"
+  while a catalog refresh runs, else "Unknown size".
+- "Prepared for": a compact list of `preparedFor` as `backend` names joined
+  by ", " (e.g. "CoreML, tinygrad"); empty when none.
+
+Row context menu (`.contextMenu(forSelectionType: ModelRow.ID.self)`) and the
+same actions in the toolbar's "Actions" `Menu` (ellipsis.circle) for the
+selection: "Download", "Cancel download", "Prepare", "Load", "Unload",
+"Reveal in Finder", "Delete download…", "Delete prepared engines…". Enablement:
+
+| Action | Enabled when |
+| --- | --- |
+| Download | status is notDownloaded or failed, and sha known |
+| Cancel download | status is downloading |
+| Prepare | status is downloaded (no current artifact) |
+| Load | status is prepared (artifact exists, not loaded) |
+| Unload | status is loaded |
+| Reveal in Finder | a model file or artifact exists |
+| Delete download… | a model file exists; confirmation says the prepared engine stays |
+| Delete prepared engines… | any artifact exists; confirmation lists sizes; if loaded, says it will be unloaded first |
+
+Prepare/Load when `modelStore.prepareNeedsConfirmation(row)`: alert "The comma
+is connected and using <current model name>. Preparing <row.name> switches the
+server to it; the comma falls back to its small model until it reconnects and
+that model is loaded." Buttons "Prepare" / "Cancel".
+
+Toolbar: "Refresh" (`arrow.clockwise`, ⇧⌘R) → `refreshCatalog()`; "Add ONNX…"
+(`plus`) → `.fileImporter` for `UTType(filenameExtension: "onnx")`, calls
+`importModel(at:)`; the "Actions" menu. Bottom bar (a thin `HStack` under the
+table): disk summary "Models 1.5 GB, prepared engines 5.5 GB, 120 GB free on
+this disk" from `inventory.disk`; on the right, when a catalog `error` is set,
+an orange `exclamationmark.triangle` with the error as text.
+
+When `catalog == nil` and the server is stopped: `ContentUnavailableView("Server not running", systemImage: "cable.connector.slash", description: Text("Start the server to load the model list."))`
+with a "Start server" button. While the first catalog fetch runs: a
+`ProgressView("Loading model list…")`.
+
+Selection shows `ModelDetailView` in an `.inspector(isPresented:)` toggled by
+a toolbar `sidebar.trailing` button, default hidden. Detail: name, ref (full,
+selectable, monospaced), SHA-256 (full, selectable, monospaced), size, build
+time, checkpoint (from the current artifact), status, and a list of
+`preparedFor` entries with backend, device, runtime version, built date, build
+duration, size, each with a "Delete…" button.
+
+## `Views/LogsView.swift`
+
+A `ScrollViewReader` + `ScrollView` + `LazyVStack(alignment: .leading)` of
+`Text(line).font(.system(.caption, design: .monospaced)).textSelection(.enabled)`.
+Filter field in the toolbar (`.searchable` scoped to this view), "Auto-scroll"
+`Toggle` (default on; turns off when the user scrolls up; use
+`onScrollGeometryChange` to detect), "Copy all", "Clear", "Reveal log file".
+Colour lines containing ` ERROR ` red and ` WARNING` orange (the server's
+format is `%(asctime)s %(levelname)-7s %(name)s: %(message)s`). Cap rendering
+to the buffer's 5000 lines; the file has the rest.
+
+## `Views/SettingsView.swift`
+
+`TabView` with two tabs.
+
+**General** (`gear`)
+- "Start server when Jetlink opens" `Toggle`.
+- "Open Jetlink at login" `Toggle` bound to `LoginItem`; if
+  `requiresApproval`, a caption "Approve Jetlink in System Settings > General >
+  Login Items." with a button that opens
+  `x-apple.systempreferences:com.apple.LoginItems-Settings.extension`.
+- "Keep the Mac awake while serving" `Toggle`; caption "Only when connected to
+  power. On battery, keep the lid open."
+- "Cache folder": path in a `TextField` (read-only look: `.disabled(true)` is
+  wrong for selection; use `Text` with `.textSelection`) plus "Choose…"
+  (`NSOpenPanel`, directories only) and "Reveal". Caption: "Models and prepared
+  engines. A CoreML engine is about 5.5 GB. Changing the folder takes effect
+  when the server restarts." Changing it while serving offers "Restart now".
+
+**Server** (`cpu`)
+- "Backend" `Picker`: Automatic (recommended) / CoreML on the GPU / CoreML with
+  the Neural Engine / tinygrad on Metal. Caption changes with the choice:
+  auto and coreml: "About 43 ms a frame on an M1 Pro. Preparing a model takes
+  about 9 minutes, and loading one again takes as long, so keep Jetlink
+  running."; ane: "Faster back to back, slower at the comma's 20 Hz on an M1 Pro.
+  Measure on your Mac before using it in the car."; tinygrad: "Loads in a
+  second. About 66 ms a frame on an M1 Pro, which is over the 50 ms budget;
+  a newer Mac may be under it."
+- "Connection" `Picker`: USB (the comma) / TCP (bench client); "Port" field
+  shown for TCP, default 5599.
+- "Log level" `Picker`: Normal (INFO) / Verbose (DEBUG).
+- Footer: "Changes apply when the server restarts." with a "Restart server"
+  button enabled while serving.
+- Advanced disclosure: "Python interpreter override" text field bound to
+  `pythonOverride` with caption "For development. Leave empty to use the
+  bundled runtime." and a line showing `EmbeddedPython.manifest()` versions
+  ("Bundled: Python 3.14.7, onnxruntime 1.29.0, tinygrad e837e367").
+
+## `Views/MenuBarView.swift`
+
+Menu content (`.menuBarExtraStyle(.menu)` renders `Button`s as items):
+- A disabled item with the status summary ("Serving, waiting for comma";
+  "Comma connected, 19.9 frames per second"; "Stopped"; "Failed").
+- A disabled item with the model line ("Loaded: BMRLNAP Model v4";
+  "Preparing: 43%"; "No model").
+- Divider. "Start server" / "Stop server". "Open Jetlink" (opens the main
+  window via `openWindow(id: "main")` and `NSApp.activate`). Divider.
+  "Quit Jetlink" (⌘Q) → `NSApp.terminate(nil)`.
+
+## Components
+
+- `StatusBadge(text:tone:)`: a capsule with a 6 pt dot and text; tones
+  `.neutral (secondary)`, `.info (blue)`, `.good (green)`, `.warning (orange)`,
+  `.bad (red)`. `static func summary(runState:link:engine:) -> (String, Tone)`
+  used by the toolbar and the menu bar.
+- `ProgressRow(stage:frac:msg:)`: determinate when `frac > 0`, indeterminate
+  otherwise; stage names mapped: upload "Receiving model", patch "Preparing
+  the model", parse "Reading the model", build "Building", save "Saving",
+  load "Loading", failed "Failed".
+- `ByteCount`: `ByteCountFormatStyle(style: .file)`; `static func rate(_ bps: Double) -> String` ("41.2 MB/s").
+- `ModelStatusLabel(status:)` as described.
+
+## Errors (exact strings)
+
+- No embedded Python: "This build has no bundled Python runtime. Run `make
+  python` in macos/, or set JETLINK_PYTHON to a Python 3.14 interpreter with
+  the jetlink package installed." (shown in the Status view's failed block).
+- Server startup failure: "The server could not start." followed by the last
+  20 log lines.
+- Action failed: the reply's `error` verbatim, in a `.alert` titled
+  "Couldn't complete the action" (Apple's own contraction style in alerts is
+  acceptable; use it consistently).
+
+## Tests (`FormattingTests.swift`)
+
+`StatusBadge.summary` for each combination; `ByteCount.rate`; the
+build-time date parsing; `ProgressRow` stage mapping.
+
+## Report back
+
+Screenshots are not required (no display in CI). Report which views have
+previews that compile, and any store API you needed that `01-contracts.md`
+did not declare.
