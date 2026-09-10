@@ -243,12 +243,23 @@ class Registry:
             opener=None) -> Path                                 # resolves, tries LFS_ENDPOINTS in order, downloads to .part, verifies, renames
   def import_model(self, path: Path, name: str | None = None, progress: ProgressFn | None = None,
                    should_stop: StopFn | None = None) -> LocalModel
+      # progress covers the whole import: 0.0..0.5 is the hashing pass, 0.5..1.0 the copy.
+      # The control server derives the `import` event's state from it: frac < 0.5 is "hashing",
+      # frac >= 0.5 is "copying"; the sha256 is known only after the hashing pass (the
+      # control server may hash the file itself first, or read it from the returned LocalModel).
   def local_models(self) -> list[LocalModel]
   # inventory and removal
   def inventory(self, cache: "EngineCache | None" = None) -> dict   # the `inventory` event payload
       # `current` is computed only when a cache with a backend is passed
   def remove(self, sha256: str, artifacts: bool, model: bool) -> None
 ```
+
+Implemented notes (agent A, merged): `RegistryError`, `NetworkError`, `VerifyError`, `is_ref`
+and `is_sha256` are defined in `jetlink/registry/catalog.py` and re-exported from
+`jetlink.registry`. `fetch()` by a bare sha256 works only when a pointer with that oid is
+already cached (the size is needed); the control server resolves the catalog first.
+`inventory()['loaded']` is always `None` from the registry; the control server fills it.
+A model file whose full identity is unknown is listed with its 16 character prefix as `sha256`.
 
 `Registry` never imports a backend and never imports `jetlink.server.session`.
 It may import `jetlink.server.cache` for `EngineCache`, `CacheEntry` and the
