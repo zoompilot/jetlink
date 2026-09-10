@@ -262,10 +262,22 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v4
 
-      - name: Download the artifacts
+      # Named one by one, not the whole run. docker/build-push-action uploads a
+      # .dockerbuild build record beside them, and the step below releases every
+      # file it finds, so downloading everything would attach buildx's internal
+      # trace to the release and fail the job when that one artifact will not
+      # come down.
+      - name: Download the macOS app
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: macos-app
+          path: artifacts/macos-app
+
+      - name: Download the Python distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: artifacts/python-dist
 
       - name: List what is being released
         run: find artifacts -type f -exec ls -lh {} +
