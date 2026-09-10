@@ -150,6 +150,27 @@ def _package_version() -> str:
     return '0.0.0'
 
 
+class _WaitLog:
+  """Say why there is no client once, then keep quiet about it.
+
+  The USB and functionfs openers poll every 2 s, so a box parked offroad
+  overnight wrote thousands of identical lines: the log file rolls over and the
+  app's Logs view has nothing else in it. The first line is the one that means
+  something; the rest go to debug. A different reason gets its own first line,
+  and connecting resets the whole thing, so the next disconnect says so again.
+  """
+
+  def __init__(self):
+    self.last: str | None = None
+
+  def __call__(self, msg: str, *args) -> None:
+    log.log(logging.DEBUG if msg == self.last else logging.WARNING, msg, *args)
+    self.last = msg
+
+  def reset(self) -> None:
+    self.last = None
+
+
 def _tcp_opener(args):
   from jetlink.transport.tcp import TcpTransport
   srv = TcpTransport.listen(args.host, args.port)
@@ -168,10 +189,11 @@ def _tcp_opener(args):
 def _usb_opener(args, sleeper: Sleeper | None = None):
   """This end is the USB host. Needs no kernel driver: libusb uses usbfs."""
   from jetlink.transport.usbbulk import UsbBulkTransport
+  waiting = _WaitLog()
 
   def open_transport():
     if not UsbBulkTransport.present(args.vid, args.pid):
-      log.warning("waiting for a jetlink gadget at %04x:%04x", args.vid, args.pid)
+      waiting("waiting for a jetlink gadget at %04x:%04x", args.vid, args.pid)
       return None
     if sleeper is not None:
       # Present but not yet openable still means the comma is there; sleeping
@@ -180,12 +202,13 @@ def _usb_opener(args, sleeper: Sleeper | None = None):
     try:
       transport = UsbBulkTransport.open(args.vid, args.pid, timeout_ms=args.usb_timeout_ms)
       log.info("client connected over usb")
+      waiting.reset()
       transport.peer = 'usb'
       return transport
     except Exception as e:
       # Broad on purpose: this loop is the only supervisor, and anything that
       # escapes it turns a retry into a container crash loop.
-      log.warning("could not open the gadget: %s", e)
+      waiting("could not open the gadget: %s", e)
       return None
   open_transport.waiting_detail = f"waiting for a jetlink gadget at {args.vid:04x}:{args.pid:04x}"
   return open_transport
@@ -195,19 +218,21 @@ def _ffs_opener(args):
   """This end is the USB gadget."""
   from jetlink.transport.ffs import FfsTransport
   mount = Path(args.ffs_mount)
+  waiting = _WaitLog()
 
   def open_transport():
     if not (mount / 'ep0').exists():
-      log.warning("waiting for functionfs at %s (run scripts/setup_gadget.sh)", mount)
+      waiting("waiting for functionfs at %s (run scripts/setup_gadget.sh)", mount)
       return None
     try:
       # This writes the descriptors and binds the UDC; either can fail
       # transiently, and returning None just retries.
       transport = FfsTransport(str(mount), gadget=args.gadget, udc=args.udc)
+      waiting.reset()
       transport.peer = 'usb'
       return transport
     except Exception as e:
-      log.warning("could not open the gadget: %s", e)
+      waiting("could not open the gadget: %s", e)
       return None
   open_transport.waiting_detail = f"waiting for functionfs at {mount}"
   return open_transport

@@ -575,6 +575,37 @@ def test_the_parent_watcher_interrupts_the_main_thread(monkeypatch):
   assert interrupts == [True]
 
 
+def test_a_missing_gadget_is_logged_once_not_every_poll(caplog, monkeypatch):
+  """A box parked offroad polls every 2 s all night; one line is enough."""
+  import logging
+
+  pytest.importorskip('usb1')   # the usb opener imports its transport when it is built
+  from jetlink.server import main as M
+  from jetlink.transport.usbbulk import UsbBulkTransport
+
+  args = SimpleNamespace(vid=0x1209, pid=0x0001, usb_timeout_ms=2000)
+  present = [False]
+  monkeypatch.setattr(UsbBulkTransport, 'present', lambda vid, pid: present[0])
+  monkeypatch.setattr(UsbBulkTransport, 'open', lambda vid, pid, timeout_ms=0: SimpleNamespace())
+  opener = M._usb_opener(args)
+  with caplog.at_level(logging.DEBUG, logger='jetlink.server'):
+    for _ in range(4):
+      assert opener() is None
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == ['waiting for a jetlink gadget at 1209:0001']
+    assert len([r for r in caplog.records if r.levelno == logging.DEBUG]) == 3
+
+    # A gadget, and then its next absence is worth a line again.
+    present[0] = True
+    assert opener() is not None
+    present[0] = False
+    caplog.clear()
+    for _ in range(3):
+      assert opener() is None
+  warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+  assert warnings == ['waiting for a jetlink gadget at 1209:0001']
+
+
 def test_link_transitions_are_emitted_once_each(tmp_path, monkeypatch):
   from jetlink.server import main as M
 
