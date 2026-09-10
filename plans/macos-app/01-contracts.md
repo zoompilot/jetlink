@@ -184,7 +184,19 @@ A client needs no command to render its first screen.
 | `shutdown` | | | reply, emit `server` with `stopping`, then exit cleanly as SIGINT would |
 
 Errors are plain English sentences in `error`. Unknown `cmd` replies
-`ok:false`. A malformed line (not JSON, or no `id`) gets
+`ok:false`.
+
+Implemented notes (agent B, merged): `reply` always carries `error` (null on
+success). `stats.window_s` is the measured time since the previous tick,
+rounded to one decimal, not a flat 1.0. `download.source` is null (the registry
+does not report which LFS endpoint served the bytes). `import` events carry
+`sha256` only from `done` on. On connect, `catalog` is served from disk with no
+network; when no catalog has ever been fetched an empty list with
+`fetched_at: null` is sent and a fetch is queued, so a `catalog` event follows.
+`shutdown` and parent death deliver a process-directed SIGINT to the server
+itself (with `_thread.interrupt_main()` as the Windows fallback), and `main()`
+installs the default SIGINT handler so a `&`-launched server can still be
+stopped. A malformed line (not JSON, or no `id`) gets
 `{"event":"reply","id":null,"ok":false,"error":"…"}`.
 
 ## 5. Registry Python API (agent A implements, agent B calls)
