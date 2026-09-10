@@ -21,6 +21,7 @@ import json
 import logging
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -67,6 +68,47 @@ class Job:
   detail: str = ''
 
 
+class FrameStats:
+  """A rolling window of served frames, for the control channel's stats event.
+
+  Appended to by the request loop once the reply is on the wire, read by the
+  control server's ticker. Neither side takes a lock: a deque append and a
+  deque copy are each one uninterrupted C call, and the hot path may not wait
+  on anything. perf_counter rather than monotonic because _infer already reads
+  it, and the session tests replace the module's clock with one that has it.
+  """
+  __slots__ = ('samples',)
+
+  def __init__(self, maxlen: int = 2000):
+    self.samples = deque(maxlen=maxlen)
+
+  def record(self, total_us: int, gpu_us: int) -> None:
+    self.samples.append((time.perf_counter(), total_us, gpu_us))
+
+  def window(self, seconds: float) -> list:
+    """The samples newer than `seconds` ago, oldest first."""
+    cutoff = time.perf_counter() - seconds
+    return [s for s in self.samples.copy() if s[0] >= cutoff]
+
+  def summary(self, seconds: float = 1.0, frames_total: int = 0) -> dict | None:
+    """The `stats` event payload, or None when no frame landed in the window."""
+    rows = self.window(seconds)
+    if not rows:
+      return None
+    n = len(rows)
+    totals = sorted(r[1] for r in rows)
+    return {
+      'frames': frames_total,
+      'fps': round(n / seconds, 2),
+      'total_ms': {'mean': round(sum(totals) / n / 1e3, 2),
+                   'p99': round(totals[int(0.99 * (n - 1))] / 1e3, 2),
+                   'max': round(totals[-1] / 1e3, 2)},
+      'gpu_ms': {'mean': round(sum(r[2] for r in rows) / n / 1e3, 2)},
+      'slow': sum(1 for t in totals if t > SLOW_FRAME_US),
+      'window_s': round(seconds, 1),
+    }
+
+
 @dataclass(frozen=True)
 class Request:
   """What a client asked for: enough to identify the model without the file."""
@@ -96,6 +138,54 @@ class EngineHost:
     self.job: Job | None = None
     self.session: Session | None = None   # who hears about progress and completion
     self._last_progress = 0.0
+    self._listeners: list = []            # the control channel, when there is one
+    self._last_stage: tuple[str | None, float, str] = (None, 0.0, '')
+    self.frame_stats = FrameStats()
+
+  # -- listeners ------------------------------------------------------------
+
+  def subscribe(self, fn) -> None:
+    """Hear about progress, engine changes and the link. See control.py.
+
+    Nothing on the frame path calls this, and nothing here may block: the job
+    thread is what emits.
+    """
+    self._listeners.append(fn)
+
+  def emit(self, kind: str, payload: dict) -> None:
+    """Fan an event out, never raising into the caller.
+
+    Called from the job thread, the request loop and the main thread, so a
+    listener has to be thread-safe. One that throws is logged and dropped
+    rather than allowed to take a build down with it.
+    """
+    for fn in tuple(self._listeners):
+      try:
+        fn(kind, payload)
+      except Exception:
+        log.exception("a host listener failed; dropping it")
+        try:
+          self._listeners.remove(fn)
+        except ValueError:
+          pass
+
+  def snapshot(self) -> dict:
+    """The `engine` control event: what is loaded, or what is being prepared."""
+    with self.lock:
+      loaded, job = self.loaded, self.job
+      stage, frac, msg = self._last_stage
+      if loaded is not None:
+        return {'state': 'ready', 'sha256': loaded.sha256, 'detail': '', 'stage': None,
+                'frac': 1.0, 'msg': msg, 'load_only': bool(job.load_only) if job is not None else False}
+      if job is not None and job.state == 'building':
+        return {'state': 'loading' if job.load_only else 'building', 'sha256': job.sha256,
+                'detail': job.detail, 'stage': stage, 'frac': frac, 'msg': msg,
+                'load_only': job.load_only}
+      if job is not None and job.state == 'failed':
+        return {'state': 'failed', 'sha256': job.sha256, 'detail': job.detail, 'stage': 'failed',
+                'frac': frac, 'msg': msg, 'load_only': job.load_only}
+      return {'state': 'none', 'sha256': None, 'detail': '', 'stage': None, 'frac': 0.0,
+              'msg': '', 'load_only': False}
 
   # -- what a client sees ---------------------------------------------------
 
@@ -140,7 +230,10 @@ class EngineHost:
   def request(self, req: Request, session: Session) -> dict:
     """Make `req` the model being served, starting whatever that takes."""
     with self.lock:
-      self.session = session
+      if session is not None:
+        # A control-channel prepare passes none, and must not detach the
+        # comma's session from the progress it is waiting on.
+        self.session = session
       if (self.loaded is not None and self.loaded.sha256 == req.sha256
           and self.loaded.spec.frame_skip == req.frame_skip):
         return self._ready(self.loaded)
@@ -239,6 +332,7 @@ class EngineHost:
       self.job = job
     threading.Thread(target=self._run, args=(job, req, entry, model_path, spec),
                      daemon=True, name='jetlink-build').start()
+    self.emit('engine', self.snapshot())
 
   def _run(self, job: Job, req: Request, entry: CacheEntry, model_path: Path,
            spec: ModelSpec | None) -> None:
@@ -289,6 +383,7 @@ class EngineHost:
       session = self.session
       if session is not None:
         session.engine_update()
+      self.emit('engine', self.snapshot())
 
   def _build_job(self, req: Request, entry: CacheEntry, model_path: Path,
                  spec: ModelSpec | None) -> ModelSpec:
@@ -327,12 +422,17 @@ class EngineHost:
     queues.reset()
     return Loaded(spec.sha256, spec, engine, queues, host_inputs)
 
+  def unload(self) -> None:
+    """Release the engine on a client's say-so. The job thread uses _unload."""
+    self._unload()
+
   def _unload(self) -> None:
     with self.lock:
       loaded, self.loaded = self.loaded, None
     if loaded is not None:
       loaded.engine.close()
       log.info("engine %s unloaded", loaded.sha256[:16])
+      self.emit('engine', self.snapshot())
 
   def close(self) -> None:
     self.telemetry.close()
@@ -356,6 +456,8 @@ class EngineHost:
     if not force and frac < 1.0 and now - self._last_progress < PROGRESS_MIN_INTERVAL:
       return
     self._last_progress = now
+    self._last_stage = (stage, frac, msg)
+    self.emit('progress', {'stage': stage, 'frac': round(frac, 4), 'msg': msg})
     session = self.session
     if session is not None:
       session.progress(stage, frac, msg)
@@ -597,6 +699,7 @@ class Session:
       # frame by its own stages; together they place a slow frame.
       log.warning("slow frame %d: gpu %.1f queue %.1f total %.1f send %.1f ms", frame_id,
                   loaded.engine.last_gpu_us / 1e3, queue_us / 1e3, total_us / 1e3, send_us / 1e3)
+    self.host.frame_stats.record(total_us, loaded.engine.last_gpu_us)
 
   def on_shutdown(self, msg: Message) -> None:
     from jetlink.server.power import request_poweroff
