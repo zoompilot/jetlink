@@ -154,6 +154,48 @@ class FfsTransport(StreamTransport):
 
   def __init__(self, mount: str = '/dev/ffs-jetlink', gadget: str | None = None,
                udc: str | None = None):
+    self._prepare(mount, gadget)
+    try:
+      self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
+      os.write(self.ep0, build_descriptors())
+      os.write(self.ep0, build_strings())
+      if gadget is not None:
+        # Bind last: a FunctionFS gadget cannot attach until its descriptors
+        # are written, which is why setup_gadget.sh leaves UDC empty.
+        self.bind(udc)
+      # ep1/ep2 exist now, but opening one before a host enables it costs the
+      # gadget until the next reboot; see _ensure_epfiles.
+    except BaseException:
+      self.close()   # otherwise a failed bring-up leaks the descriptors it did open
+      raise
+
+  @classmethod
+  def borrowed(cls, mount: str, udc: str, bounce=None) -> FfsTransport:
+    """A transport over a gadget another process owns.
+
+    That process holds ep0 and the UDC bind for its whole life, so the gadget
+    does not leave the bus when the link changes hands: this end only opens the
+    endpoint files and moves bytes, and nothing here writes descriptors, binds
+    or unbinds. The endpoint files take a second open happily; ep0 does not,
+    which is why the owner keeps it.
+
+    The ep0 rule is unchanged and `udc` is what keeps it: the endpoints are
+    still opened only once that controller reads configured. `bounce` is how a
+    write with no reader is freed, since the unbind that frees it belongs to
+    the owner; without one the abort has nothing to do.
+    """
+    if not udc:
+      # _configured() would answer "no controller of ours to ask, assume
+      # ready" and _ensure_epfiles would open an endpoint no host has enabled,
+      # which costs the gadget until the comma is rebooted.
+      raise LinkError('a borrowed gadget must name its controller')
+    t = cls.__new__(cls)
+    t._prepare(mount, gadget=None)
+    t.bound_udc = udc
+    t._bounce = bounce
+    return t
+
+  def _prepare(self, mount: str, gadget: str | None) -> None:
     # This end only receives replies: an INFER_RESP is ~74 KB with telemetry and
     # padding, and the upload goes the other way. 256 KB is a 3x margin the
     # memory-tight comma can spare, and RxBuffer grows past it on demand.
@@ -161,6 +203,7 @@ class FfsTransport(StreamTransport):
     self.mount = mount
     self.gadget = gadget
     self.bound_udc: str | None = None
+    self._bounce = None
     self.ep0 = self.ep_out = self.ep_in = -1
     self._state_fd = -1   # held-open UDC 'state' fd; see _udc_state
     self._ready_deadline: float | None = None
@@ -177,19 +220,6 @@ class FfsTransport(StreamTransport):
     self._write_aborted = False
     self._reader: threading.Thread | None = None
     self._write_guard = WriteWatchdog(self._abort_write)
-    try:
-      self.ep0 = os.open(os.path.join(mount, 'ep0'), os.O_RDWR)
-      os.write(self.ep0, build_descriptors())
-      os.write(self.ep0, build_strings())
-      if gadget is not None:
-        # Bind last: a FunctionFS gadget cannot attach until its descriptors
-        # are written, which is why setup_gadget.sh leaves UDC empty.
-        self.bind(udc)
-      # ep1/ep2 exist now, but opening one before a host enables it costs the
-      # gadget until the next reboot; see _ensure_epfiles.
-    except BaseException:
-      self.close()   # otherwise a failed bring-up leaks the descriptors it did open
-      raise
 
   def _udc_state(self) -> str | None:
     """The controller's gadget state, off a held-open fd.
@@ -282,11 +312,11 @@ class FfsTransport(StreamTransport):
     UDC sits in `default` or `addressed` and only another edge moves it. A
     Jetson whose hubs are not armed for remote wakeup does exactly that.
 
-    Refused once a host has enabled the endpoints. Unbinding then completes
-    the reader's request with ESHUTDOWN and the transport is done; the caller
-    wants a working link, not a freshly bound dead one.
+    Refused while this end has the endpoint files open. Unbinding then
+    completes the reader's request with ESHUTDOWN and the transport is done;
+    the caller wants a working link, not a freshly bound dead one.
     """
-    if self.gadget is None or self._closing or self._had_host or self.ep_out >= 0:
+    if self.gadget is None or self._closing or self.ep_out >= 0:
       return False
     udc = self.bound_udc
     if udc is None:
@@ -338,7 +368,12 @@ class FfsTransport(StreamTransport):
     self._write_aborted = True
     log.warning("jetlink: no reader for %.3f s, dropping the gadget to free the write",
                 getattr(self, '_write_budget', WRITE_TIMEOUT))
-    self.unbind()
+    if self._bounce is not None:
+      # A borrowed gadget: the unbind that dequeues this belongs to whoever
+      # owns ep0, so ask. Nothing else here can end a FunctionFS write.
+      self._bounce()
+    else:
+      self.unbind()
 
   def send(self, *args, **kwargs) -> None:
     # Reset the quantum at each message: a latched shrink would split every

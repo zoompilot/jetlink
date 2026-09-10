@@ -548,14 +548,13 @@ def test_rebind_bounces_a_gadget_no_host_ever_configured(mount, monkeypatch):
     t.close()
 
 
-@pytest.mark.parametrize('state', ['no gadget', 'host has been here', 'endpoints open', 'not bound'])
+@pytest.mark.parametrize('state', ['no gadget', 'endpoints open', 'not bound'])
 def test_rebind_is_refused_once_it_would_cost_a_working_link(mount, monkeypatch, state):
   monkeypatch.setattr(ffs, 'REBIND_SETTLE', 0.0)
   t = FfsTransport(str(mount))
   try:
     t.gadget = None if state == 'no gadget' else '/sys/kernel/config/usb_gadget/jetlink'
     t.bound_udc = None if state == 'not bound' else 'udc0'
-    t._had_host = state == 'host has been here'
     if state == 'endpoints open':
       t.ep_out = 999   # unbinding here completes the reader's read with ESHUTDOWN
     unbound = []
@@ -578,3 +577,66 @@ def test_only_the_gadget_can_bounce_itself():
     t.close()
   finally:
     srv.close()
+
+
+def _udc(tmp_path, monkeypatch, state='configured', name='udc0'):
+  monkeypatch.setattr(ffs, 'UDC_SYSFS', str(tmp_path))
+  path = tmp_path / name / 'state'
+  path.parent.mkdir(parents=True, exist_ok=True)
+  path.write_text(state + '\n')
+  return path
+
+
+def test_a_borrowed_gadget_opens_no_ep0_and_binds_nothing(mount, tmp_path, monkeypatch):
+  """The owner holds ep0 and the bind for its whole life, so the link changing
+  hands is no longer an unplug the host has to recover from."""
+  _udc(tmp_path / 'sys', monkeypatch)
+  owner = FfsTransport(str(mount))          # stands in for jetlinkd
+  t = FfsTransport.borrowed(str(mount), 'udc0')
+  try:
+    assert t.ep0 == -1 and t.gadget is None
+    assert t.bound_udc == 'udc0'
+    t.unbind()                              # a borrower must never take the gadget down
+    assert owner.ep0 >= 0
+  finally:
+    t.close()
+    owner.close()
+
+
+def test_a_borrowed_gadget_still_waits_for_a_host(mount, tmp_path, monkeypatch):
+  """The ep0 trap does not care who opened the endpoint: a read on one no host
+  has enabled sleeps in the kernel and costs the gadget until a reboot."""
+  monkeypatch.setattr(ffs, 'EP_OPEN_TIMEOUT', 0.05)
+  state = _udc(tmp_path / 'sys', monkeypatch, state='powered')
+  t = FfsTransport.borrowed(str(mount), 'udc0')
+  try:
+    with pytest.raises(LinkTimeout):
+      t._ensure_epfiles()
+    assert t.ep_out == -1 and t.ep_in == -1
+    state.write_text('configured\n')
+    t._ensure_epfiles()
+    assert t.ep_out >= 0 and t.ep_in >= 0
+  finally:
+    t.close()
+
+
+def test_a_borrowed_gadget_with_no_controller_named_is_refused(mount):
+  # without one _configured() answers "assume ready" and the endpoints open
+  # before any host has enabled them
+  with pytest.raises(LinkError, match='controller'):
+    FfsTransport.borrowed(str(mount), '')
+
+
+def test_a_stuck_borrowed_write_asks_the_owner_to_free_it(mount, tmp_path, monkeypatch):
+  """Unbinding is what dequeues a FunctionFS write nobody is reading, and on a
+  borrowed gadget only the owner can do it."""
+  _udc(tmp_path / 'sys', monkeypatch)
+  asked = []
+  t = FfsTransport.borrowed(str(mount), 'udc0', bounce=lambda: asked.append(True))
+  try:
+    monkeypatch.setattr(t, 'unbind', lambda: pytest.fail('a borrower took the gadget down'))
+    t._abort_write()
+    assert t._write_aborted and asked == [True]
+  finally:
+    monkeypatch.undo()
+    t.close()

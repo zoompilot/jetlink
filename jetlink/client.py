@@ -107,6 +107,17 @@ class JetlinkClient:
     return cls(FfsTransport(mount, gadget=gadget, udc=udc), **kw)
 
   @classmethod
+  def open_borrowed_ffs(cls, mount: str, udc: str, bounce=None, **kw) -> JetlinkClient:
+    """This end is the USB gadget, over a gadget another process owns.
+
+    The owner holds ep0 and the UDC bind for as long as the link is enabled,
+    so a drive starting or ending is no longer an unplug the host has to
+    recover from. See FfsTransport.borrowed.
+    """
+    from jetlink.transport.ffs import FfsTransport
+    return cls(FfsTransport.borrowed(mount, udc, bounce=bounce), **kw)
+
+  @classmethod
   def open_tcp(cls, host: str, port: int = 5599, **kw) -> JetlinkClient:
     from jetlink.transport.tcp import TcpTransport
     return cls(TcpTransport.connect(host, port), **kw)
