@@ -225,6 +225,13 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=match,pattern=v(.*),group=1
+          # The semver patterns parse a semver tag, and a PEP 440 prerelease is
+          # not one: v0.3.0a1 has no hyphen before its suffix, so both were
+          # skipped, the tag list came out empty and buildx stopped with "tag is
+          # needed when pushing to registry". The match pattern is a plain
+          # regex over the ref, so it names every tag this repo cuts. A semver
+          # tag matches all three and the duplicates collapse.
 
       - name: Build and push
         uses: docker/build-push-action@v6
