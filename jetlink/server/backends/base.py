@@ -90,9 +90,13 @@ class Backend(Protocol):
     write the artifact atomically: a build the OOM killer ends must not leave
     something the next load mistakes for an engine."""
 
-  def load(self, artifact: Path) -> Engine:
+  def load(self, artifact: Path, report: ProgressFn | None = None) -> Engine:
     """Load an artifact this backend built. Raises ArtifactInvalid for a file
-    that is wrong, anything else for a machine that is."""
+    that is wrong, anything else for a machine that is.
+
+    `report` is the same callback `build` takes, for a load slow enough to
+    need one: CoreML compiles for nine minutes whether or not there is a
+    cache, and a progress bar that never moves looks like a hang."""
 
 
 def sanitize(s: str) -> str:

@@ -12,6 +12,8 @@ comma or a Jetson image without it.
 """
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
@@ -47,6 +49,48 @@ def test_the_tag_names_tinygrad_and_the_device(backend):
   assert tag.startswith('tg') and '.CPU-' in tag
   assert backend.describe()['backend'] == 'tinygrad'
   assert backend.runtime_version == B.tinygrad_identity()
+
+
+class TestIdentity:
+  """The identity keys every pickle, so it has to name tinygrad and nothing else.
+
+  `git rev-parse` in the source directory walks up until it finds a repository:
+  an installed tinygrad under a checkout (a venv, an app bundle in macos/build)
+  reported *that* checkout's HEAD, so the cache key moved with every commit to
+  this repo and every prepared engine came back stale.
+  """
+
+  def _version(self) -> str:
+    from importlib.metadata import version
+    return version('tinygrad')
+
+  def test_the_commit_comes_from_the_install_record(self, monkeypatch):
+    """pip writes the commit it installed from into direct_url.json (PEP 610)."""
+    import importlib.metadata
+
+    version = self._version()
+
+    class Dist:
+      version = None   # set below, so the identity keeps naming the release
+
+      @staticmethod
+      def read_text(name):
+        assert name == 'direct_url.json'
+        return json.dumps({'url': 'https://github.com/sunnypilot/tinygrad',
+                           'vcs_info': {'vcs': 'git', 'commit_id': 'e837e367aac9e1a66e689f4f32ce20ca9367df13'}})
+
+    Dist.version = version
+    monkeypatch.setattr(importlib.metadata, 'distribution', lambda name: Dist())
+    assert B.tinygrad_identity() == f'{version}+e837e367aac9'
+
+  def test_without_a_record_or_a_checkout_it_is_the_bare_version(self, monkeypatch, tmp_path):
+    def never(*args, **kwargs):
+      raise AssertionError('a subprocess was run against a directory that is not a repository')
+
+    monkeypatch.setattr(B, '_direct_url_commit', lambda: None)
+    monkeypatch.setattr(B.subprocess, 'run', never)
+    monkeypatch.setattr(tinygrad, '__file__', str(tmp_path / 'tinygrad' / '__init__.py'))
+    assert B.tinygrad_identity() == self._version()
 
 
 def test_build_writes_the_artifact_and_a_sidecar(built):

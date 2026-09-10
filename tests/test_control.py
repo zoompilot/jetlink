@@ -28,7 +28,8 @@ from jetlink import protocol as P
 from jetlink.queues import PolicyQueues
 from jetlink.server.cache import EngineCache
 from jetlink.server.control import ControlServer
-from jetlink.server.session import EngineHost, Loaded, Request, Session
+from jetlink.server import session as session_module
+from jetlink.server.session import EngineHost, Job, Loaded, Request, Session
 from jetlink.spec import ModelSpec
 from jetlink.transport.base import LinkError, Message
 from tests.fake_backend import FakeBackend, FakeEngine
@@ -348,12 +349,41 @@ def test_unload_and_forget(bench):
 
 
 def test_forget_is_refused_while_a_build_is_running(bench):
-  from jetlink.server.session import Job
   bench.host.job = Job(SHA, load_only=False)
   c = bench.connect()
   c.send(id=1, cmd='forget', sha256=SHA, artifacts=True, model=False)
   reply = c.wait_for('reply', id=1)
   assert reply['ok'] is False and 'build for this model is running' in reply['error']
+
+
+def test_a_new_job_does_not_inherit_the_last_one_s_stage(tmp_path, monkeypatch):
+  """The first event of a build carried ("load", 1.0, "ready") from the job
+  before it, so a client drew a full bar over a build that had not started."""
+  host = EngineHost(EngineCache(tmp_path, FakeBackend()))
+  host._last_stage = ('load', 1.0, 'ready')
+  seen = []
+  host.subscribe(lambda kind, payload: seen.append(payload) if kind == 'engine' else None)
+  monkeypatch.setattr(session_module.threading, 'Thread',
+                      lambda **kw: SimpleNamespace(start=lambda: None))
+
+  host._start(Job(SHA, load_only=False), Request(SHA, 16, 4),
+              host.cache.entry(SHA), host.cache.model_path(SHA), None)
+  assert seen[-1]['state'] == 'building'
+  assert seen[-1]['stage'] is None and seen[-1]['frac'] == 0.0 and seen[-1]['msg'] == ''
+  host.close()
+
+
+def test_the_same_engine_event_is_not_sent_twice(tmp_path):
+  """A job finishing emits from the progress call and again from the finally."""
+  host = EngineHost(EngineCache(tmp_path, FakeBackend()))
+  seen = []
+  host.subscribe(lambda kind, payload: seen.append(payload) if kind == 'engine' else None)
+  host.emit('engine', host.snapshot())
+  host.emit('engine', host.snapshot())
+  assert len(seen) == 1
+  host.emit('engine', {**host.snapshot(), 'state': 'failed', 'detail': 'boom'})
+  assert len(seen) == 2
+  host.close()
 
 
 # -- downloads ---------------------------------------------------------------

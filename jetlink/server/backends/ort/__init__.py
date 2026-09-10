@@ -314,6 +314,23 @@ class OrtBackend:
     report('build', 1.0, f"done in {meta['build_seconds']}s")
     return out_path
 
+  def _loading(self, report, elapsed: float) -> None:
+    """One tick of a load: the log line, and the same thing on the wire.
+
+    Without this the comma and the app both sat on stage load, frac 0, msg
+    "deserializing engine" for the nine minutes CoreML takes, which is
+    indistinguishable from a hung server.
+    """
+    log.info("still creating the onnxruntime sessions, %.0f s", elapsed)
+    if report is not None:
+      report('load', 0.0, self._load_message(elapsed))
+
+  def _load_message(self, elapsed: float) -> str:
+    if self._on_coreml:
+      return (f'creating the CoreML session, {elapsed / 60:.0f} min elapsed; the big model takes '
+              f'about {EXPECTED_COREML_SECONDS / 60:.0f} min on an M1 Pro')
+    return f'creating the onnxruntime session ({self.device})'
+
   def _build_message(self, elapsed: float) -> str:
     if self._on_coreml:
       return (f'compiling for CoreML, {elapsed / 60:.0f} min elapsed; the big model takes '
@@ -325,7 +342,7 @@ class OrtBackend:
 
   # -- load -------------------------------------------------------------------
 
-  def load(self, artifact: Path):
+  def load(self, artifact: Path, report: ProgressFn | None = None):
     artifact = Path(artifact)
     try:
       manifest = json.loads((artifact / MANIFEST).read_text())
@@ -346,8 +363,7 @@ class OrtBackend:
     if self._on_coreml:
       log.info("creating the CoreML session; measured at %.0f min on an M1 Pro, cache or no cache",
                EXPECTED_COREML_SECONDS / 60)
-    engine = self._engine(artifact, manifest, on_tick=lambda elapsed: log.info(
-      "still creating the onnxruntime sessions, %.0f s", elapsed))
+    engine = self._engine(artifact, manifest, on_tick=lambda elapsed: self._loading(report, elapsed))
     log.info("onnxruntime sessions on %s in %.1f s, providers %s", self.device, time.time() - t0,
              engine.providers)
     return engine
