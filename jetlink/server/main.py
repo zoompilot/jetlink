@@ -27,11 +27,16 @@ measured frame times and start-up costs behind that order.
 """
 from __future__ import annotations
 
+import _thread
 import argparse
 import logging
+import os
+import signal
 import sys
+import threading
 import time
 from pathlib import Path
+from platform import python_version
 
 from jetlink.server import platform
 from jetlink.server.backends import NAMES, available, select
@@ -47,31 +52,48 @@ log = logging.getLogger('jetlink.server')
 DRAIN_TIMEOUT = 5.0
 
 
-def _serve(cache: EngineCache, open_transport, sleeper: Sleeper | None = None) -> None:
+def _serve(cache: EngineCache, open_transport, sleeper: Sleeper | None = None,
+           host: EngineHost | None = None, control=None) -> None:
   """Serve one client at a time forever.
 
   `open_transport()` returns a transport, or None to wait and retry; the three
   transports differ only in how they open. The engine host is shared across
   sessions: the comma reconnects at every handover and the engine must not
   reload. With a `sleeper`, a long run of None suspends the box; see sleep.py.
+
+  `host` comes from main() when there is a control channel, which subscribes to
+  it before this loop starts; on its own this loop makes and closes its own.
+  Link transitions are emitted through the host, once per change rather than
+  once per poll: a control client renders "waiting for a comma" from them.
   """
-  host = EngineHost(cache, pick_source(cache.backend.name))
+  owns_host = host is None
+  if host is None:
+    host = EngineHost(cache, pick_source(cache.backend.name))
   # before accepting anything, so two callers cannot race to start GPU loads
   host.preload()
+  waiting_detail = getattr(open_transport, 'waiting_detail', 'waiting for a client')
+  link = ''
   try:
     while True:
       transport = open_transport()
       if transport is None:
+        if link != 'waiting':
+          link = 'waiting'
+          host.emit('link', {'state': 'waiting', 'detail': waiting_detail, 'peer': None})
         if sleeper is not None and sleeper.idle():
           continue  # just woke up; look for the gadget right away
         time.sleep(2.0)
         continue
       if sleeper is not None:
         sleeper.touch()
+      link = 'connected'
+      host.emit('link', {'state': 'connected', 'detail': '', 'peer': getattr(transport, 'peer', None)})
       session = Session(transport, host)
+      detail = ''
       try:
         session.serve_forever()
       except LinkError as e:
+        detail = str(e)
         log.info("session ended: %s", e)
       finally:
         session.close()
@@ -82,12 +104,50 @@ def _serve(cache: EngineCache, open_transport, sleeper: Sleeper | None = None) -
         transport.close()
         if sleeper is not None:
           sleeper.touch()
+        link = 'disconnected'
+        host.emit('link', {'state': 'disconnected', 'detail': detail, 'peer': None})
         log.info("client disconnected")
   finally:
-    # Ctrl-C or a stop: release the engine on the thread that owns it rather
-    # than leaving it to interpreter teardown, which some runtimes survive
-    # less well than others (backends/tinygrad/owner.py).
-    host.close()
+    if owns_host:
+      # Ctrl-C or a stop: release the engine on the thread that owns it rather
+      # than leaving it to interpreter teardown, which some runtimes survive
+      # less well than others (backends/tinygrad/owner.py). With a host from
+      # main(), main() is what closes it, after the control channel.
+      host.close()
+
+
+def _watch_parent(pid: int, interval: float = 1.0) -> None:
+  """Stop when the process that launched us is gone.
+
+  The Mac app owns this process; orphaned, it would keep the GPU, the engine
+  and the gadget for as long as the machine was up. getppid changing is the
+  portable signal, and a SIGINT puts the shutdown where every other stop
+  already lands, so there is one way down and it is the tested one.
+  """
+  while True:
+    time.sleep(interval)
+    if os.getppid() != pid:
+      log.warning("parent process gone, shutting down")
+      _interrupt_main()
+      return
+
+
+def _interrupt_main() -> None:
+  """Ctrl-C from a thread that is not the main one; see control.interrupt_main."""
+  try:
+    if sys.platform == 'win32':
+      raise OSError('no process-directed SIGINT on Windows')
+    os.kill(os.getpid(), signal.SIGINT)
+  except (AttributeError, OSError, ValueError):
+    _thread.interrupt_main()
+
+
+def _package_version() -> str:
+  try:
+    import importlib.metadata
+    return importlib.metadata.version('jetlink')
+  except Exception:
+    return '0.0.0'
 
 
 def _tcp_opener(args):
@@ -98,7 +158,10 @@ def _tcp_opener(args):
   def open_transport():
     transport, addr = TcpTransport.accept(srv)
     log.info("client connected from %s", addr)
+    # Who is on the other end, for the control channel's link event.
+    transport.peer = f"{addr[0]}:{addr[1]}"
     return transport
+  open_transport.waiting_detail = f"listening on {args.host}:{args.port}"
   return open_transport
 
 
@@ -117,12 +180,14 @@ def _usb_opener(args, sleeper: Sleeper | None = None):
     try:
       transport = UsbBulkTransport.open(args.vid, args.pid, timeout_ms=args.usb_timeout_ms)
       log.info("client connected over usb")
+      transport.peer = 'usb'
       return transport
     except Exception as e:
       # Broad on purpose: this loop is the only supervisor, and anything that
       # escapes it turns a retry into a container crash loop.
       log.warning("could not open the gadget: %s", e)
       return None
+  open_transport.waiting_detail = f"waiting for a jetlink gadget at {args.vid:04x}:{args.pid:04x}"
   return open_transport
 
 
@@ -138,10 +203,13 @@ def _ffs_opener(args):
     try:
       # This writes the descriptors and binds the UDC; either can fail
       # transiently, and returning None just retries.
-      return FfsTransport(str(mount), gadget=args.gadget, udc=args.udc)
+      transport = FfsTransport(str(mount), gadget=args.gadget, udc=args.udc)
+      transport.peer = 'usb'
+      return transport
     except Exception as e:
       log.warning("could not open the gadget: %s", e)
       return None
+  open_transport.waiting_detail = f"waiting for functionfs at {mount}"
   return open_transport
 
 
@@ -177,6 +245,11 @@ def main(argv=None) -> int:
                       'Needs /sys/power writable in the container.')
   p.add_argument('--cache', default=str(platform.default_cache_dir()),
                  help='engines and uploaded models; JETLINK_CACHE sets the default')
+  p.add_argument('--control-socket', default=None, metavar='ADDR',
+                 help='open a local control channel: a filesystem path (a unix socket) or '
+                      'tcp://127.0.0.1:PORT. The Mac app drives the server through it')
+  p.add_argument('--parent-pid', type=int, default=None, metavar='PID',
+                 help='exit cleanly once this process is no longer our parent')
   p.add_argument('--build', metavar='ONNX', help='build an engine and exit')
   p.add_argument('--dump-spec', metavar='ONNX',
                  help='write this model\'s spec as json to stdout and exit')
@@ -186,6 +259,21 @@ def main(argv=None) -> int:
   logging.basicConfig(
     level=getattr(logging, args.log_level.upper(), logging.INFO),
     format='%(asctime)s %(levelname)-7s %(name)s: %(message)s')
+
+  try:
+    # A stop from launchd, docker or the app arrives as SIGTERM; the clean
+    # shutdown already written is the one Ctrl-C takes. SIGINT is set as well
+    # rather than inherited: a shell that starts this in the background with &
+    # hands the child SIG_IGN, and then nothing (the control channel's shutdown
+    # included) can stop it short of SIGTERM.
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
+  except (ValueError, OSError, AttributeError):
+    pass  # not the main thread, or a platform without these signals
+
+  if args.parent_pid:
+    threading.Thread(target=_watch_parent, args=(args.parent_pid,), daemon=True,
+                     name='jetlink-parent-watch').start()
 
   if args.dump_spec:
     import json
@@ -251,10 +339,26 @@ def main(argv=None) -> int:
     sleeper = Sleeper(args.sleep_after)
     log.info("will suspend after %.0f s without a gadget", args.sleep_after)
   opener = _usb_opener(args, sleeper) if args.transport == 'usb' else OPENERS[args.transport](args)
+
+  host = EngineHost(cache, pick_source(backend.name))
+  control = None
+  if args.control_socket:
+    from jetlink.server.control import ControlServer
+    # The registry is control.py's to build: it is the only caller, and this
+    # module must not pull the network code in when nothing asked for it.
+    control = ControlServer(args.control_socket, host, cache, info={
+      'version': _package_version(), 'python': python_version(), 'platform': sys.platform,
+      'cache': str(cache.root), 'transport': args.transport,
+      'port': args.port if args.transport == 'tcp' else None})
+    control.start()
   try:
-    _serve(cache, opener, sleeper)
+    _serve(cache, opener, sleeper, host, control)
   except KeyboardInterrupt:
     log.info("stopped")
+  finally:
+    host.close()
+    if control is not None:
+      control.close()
   return 0
 
 
