@@ -1,0 +1,67 @@
+# Wheels embedded in Jetlink.app, pinned by version and by hash.
+# Versions come from 01-contracts.md section 1; they are the ones measured on
+# the bench. Installed with --no-deps, so every transitive dependency is listed
+# here explicitly.
+#
+# To regenerate after a version bump, with any Python that can reach PyPI:
+#
+#   pip download --no-deps --only-binary=:all: --dest /tmp/wheels \
+#     onnxruntime==<v> numpy==<v> onnx==<v> libusb1==<v> protobuf==<v> \
+#     ml_dtypes==<v> typing_extensions==<v> flatbuffers==<v> packaging==<v>
+#   pip hash /tmp/wheels/*.whl
+#
+# Two rules for the hash lines:
+#   1. Record a hash for every file pip may pick on cp314 macOS arm64, not just
+#      the one it picks today. numpy and protobuf ship more than one candidate
+#      (a platform wheel and a wider one); if only one hash were listed, a pip
+#      that ranked the other higher would fail with --require-hashes.
+#   2. Keep the "wheel:" comment above each requirement pointing at the exact
+#      file embed-python.sh prefetches with curl. The script greps those URLs;
+#      it installs with --no-index --find-links so the build is hermetic and
+#      the download cache is reused between runs.
+
+# wheel: https://files.pythonhosted.org/packages/ff/a3/718e1b83096a1bc7b0fc8014c23d4cf795559fe666961cfac4fc038a4871/onnxruntime-1.29.0-cp314-cp314-macosx_14_0_arm64.whl
+onnxruntime==1.29.0 \
+    --hash=sha256:e74b278af1d949876f5d91d1268fd6c680e79f2bac194967394eaba9fdf69e7e
+
+# wheel: https://files.pythonhosted.org/packages/9e/59/abcc2d8def4fd60eec7d87f92d27c13448ffd9ab14339bcc63a0d7a2fdea/numpy-2.5.3-cp314-cp314-macosx_11_0_arm64.whl
+numpy==2.5.3 \
+    --hash=sha256:012e66aca395d795496446e52aeeb5866312a5d4d3f27da270e5a0b43f70dc5c \
+    --hash=sha256:adc1ada2662f8a5f960b8a10d9986897e7499ef07e06d4cfe7197f8cce923c07
+
+# wheel: https://files.pythonhosted.org/packages/ee/6a/481561f1093834376ed493e4ca42a73e5be0d50031f2969c86593bdc7c96/onnx-1.22.0-cp312-abi3-macosx_12_0_universal2.whl
+onnx==1.22.0 \
+    --hash=sha256:596fbf0490947533c1c1045ba860851dc9fb77471023dac9a71ba5b42ceab103
+
+# wheel: https://files.pythonhosted.org/packages/d4/64/d4b59444e4d3b6979aa5eb58840634465a24b41a9ab03dcf8434c9b89551/libusb1-3.4.0-py3-none-any.whl
+libusb1==3.4.0 \
+    --hash=sha256:e83d034e44c3efe1c4599c6281d34bca50a38c12cab3b7b6217d583161a01ffd
+
+# wheel: https://files.pythonhosted.org/packages/f7/6c/3a54a58f2948b0f485df9ecdd06590f15d0a7abf46a89d50c3de709ff4ff/protobuf-7.36.1-cp310-abi3-macosx_10_9_universal2.whl
+protobuf==7.36.1 \
+    --hash=sha256:3cf2ee25d006cee57294a1196ea43b37feb78e0dcd1e8af5c1aeddb777655aca \
+    --hash=sha256:7d951e46b3f963d6c264c367c437921de9d5aedd9c3f9612b9077736b4e3ad5c
+
+# wheel: https://files.pythonhosted.org/packages/d9/7a/97dc35667b7c9db33c5344c673cd27f87e34771875ea7100138726132ac9/ml_dtypes-0.6.0-cp314-cp314-macosx_10_15_universal2.whl
+ml_dtypes==0.6.0 \
+    --hash=sha256:84fa136b8602c8c39e3b6cb24918960cd6f36cade7a70376f56770729cd56510
+
+# wheel: https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl
+typing_extensions==4.16.0 \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
+
+# wheel: https://files.pythonhosted.org/packages/e8/2d/d2a548598be01649e2d46231d151a6c56d10b964d94043a335ae56ea2d92/flatbuffers-25.12.19-py2.py3-none-any.whl
+flatbuffers==25.12.19 \
+    --hash=sha256:7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4
+
+# wheel: https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl
+packaging==26.3 \
+    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+
+# Build time only. tinygrad and the jetlink package are both setuptools
+# projects and are installed with --no-build-isolation, so setuptools has to be
+# in the prefix while they build. embed-python.sh prunes it again in step 5, so
+# it never ships.
+# wheel: https://files.pythonhosted.org/packages/95/9c/c510029fc6ef33a6275cd2c5d3cecd6613dfd6aa401d57c54f1c18852ccf/setuptools-84.0.0-py3-none-any.whl
+setuptools==84.0.0 \
+    --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670

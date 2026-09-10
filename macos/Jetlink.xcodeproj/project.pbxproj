@@ -1,0 +1,466 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		5C67C5178313A8D11887A5D7 /* PlaceholderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7706BFD279CDFE05C218865D /* PlaceholderTests.swift */; };
+		8B167F9986DACB4E316DC397 /* JetlinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 868D0C6D327E8A2A54106C5C /* JetlinkApp.swift */; };
+		C17ECDB8A4833CBCF16B9746 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6B71A2709AC0F259D4486CB6 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B80F55012AD4E0CDA0E5AC69 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1847D87B12BF920468D8F334 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 457ADB6E292BE4157714448D;
+			remoteInfo = Jetlink;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		6B71A2709AC0F259D4486CB6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		7706BFD279CDFE05C218865D /* PlaceholderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderTests.swift; sourceTree = "<group>"; };
+		868D0C6D327E8A2A54106C5C /* JetlinkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JetlinkApp.swift; sourceTree = "<group>"; };
+		8AF1919F7F691815F3761747 /* JetlinkTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = JetlinkTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C8ECBD9F702381594E2513CB /* Jetlink.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Jetlink.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		0FF054B0E82D7B2E156ED5AF /* JetlinkTests */ = {
+			isa = PBXGroup;
+			children = (
+				7706BFD279CDFE05C218865D /* PlaceholderTests.swift */,
+			);
+			path = JetlinkTests;
+			sourceTree = "<group>";
+		};
+		53612B9A74E54171CC9B3001 = {
+			isa = PBXGroup;
+			children = (
+				C7CA7BCC1C2645081B411100 /* Jetlink */,
+				0FF054B0E82D7B2E156ED5AF /* JetlinkTests */,
+				57A21EDE24D2E95CCB7BF737 /* Resources */,
+				CF0B24949FEEE32049C8E3F6 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		57A21EDE24D2E95CCB7BF737 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				6B71A2709AC0F259D4486CB6 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		7393D26A9B37A0C76E7CDB79 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				868D0C6D327E8A2A54106C5C /* JetlinkApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		C7CA7BCC1C2645081B411100 /* Jetlink */ = {
+			isa = PBXGroup;
+			children = (
+				7393D26A9B37A0C76E7CDB79 /* App */,
+			);
+			path = Jetlink;
+			sourceTree = "<group>";
+		};
+		CF0B24949FEEE32049C8E3F6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C8ECBD9F702381594E2513CB /* Jetlink.app */,
+				8AF1919F7F691815F3761747 /* JetlinkTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		457ADB6E292BE4157714448D /* Jetlink */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E7D8606C136ECAADD9688877 /* Build configuration list for PBXNativeTarget "Jetlink" */;
+			buildPhases = (
+				F1C9204DB6F0105D87743B33 /* Sources */,
+				69DAF83B561FA56875C5504F /* Resources */,
+				EA0E0A6A96C1E5220BAB575B /* Embed Python runtime */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Jetlink;
+			packageProductDependencies = (
+			);
+			productName = Jetlink;
+			productReference = C8ECBD9F702381594E2513CB /* Jetlink.app */;
+			productType = "com.apple.product-type.application";
+		};
+		C32B320DC412FFA06F081A3A /* JetlinkTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A696EB855E37E219816E1964 /* Build configuration list for PBXNativeTarget "JetlinkTests" */;
+			buildPhases = (
+				1F268C3DBAA0EF886C2910C6 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B65A8594A6FE24FCDEDBE28F /* PBXTargetDependency */,
+			);
+			name = JetlinkTests;
+			packageProductDependencies = (
+			);
+			productName = JetlinkTests;
+			productReference = 8AF1919F7F691815F3761747 /* JetlinkTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1847D87B12BF920468D8F334 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					457ADB6E292BE4157714448D = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+					};
+					C32B320DC412FFA06F081A3A = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = 70AA863B3933050DD9D4AC42 /* Build configuration list for PBXProject "Jetlink" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 53612B9A74E54171CC9B3001;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = CF0B24949FEEE32049C8E3F6 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				457ADB6E292BE4157714448D /* Jetlink */,
+				C32B320DC412FFA06F081A3A /* JetlinkTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		69DAF83B561FA56875C5504F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C17ECDB8A4833CBCF16B9746 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		EA0E0A6A96C1E5220BAB575B /* Embed Python runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed Python runtime";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nSRC=\"$SRCROOT/build/python\"\nDST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/python\"\nif [ ! -d \"$SRC\" ]; then echo \"warning: no embedded Python at $SRC; run make python (the app will need JETLINK_PYTHON)\"; exit 0; fi\nrm -rf \"$DST\"; mkdir -p \"$(dirname \"$DST\")\"\nrsync -a --delete \"$SRC/\" \"$DST/\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1F268C3DBAA0EF886C2910C6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5C67C5178313A8D11887A5D7 /* PlaceholderTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F1C9204DB6F0105D87743B33 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8B167F9986DACB4E316DC397 /* JetlinkApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B65A8594A6FE24FCDEDBE28F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 457ADB6E292BE4157714448D /* Jetlink */;
+			targetProxy = B80F55012AD4E0CDA0E5AC69 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0B0C6BC3644B29B3045F8319 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Resources/Jetlink.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				INFOPLIST_FILE = Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.zoompilot.jetlink;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		63B10C4C71A61F0AF266094E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.zoompilot.jetlink.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Jetlink.app/Contents/MacOS/Jetlink";
+			};
+			name = Release;
+		};
+		6FC77E09BEEA08923A45ED81 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Resources/Jetlink.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				INFOPLIST_FILE = Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.zoompilot.jetlink;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		E3F0565D631F628CBF3DF13F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.zoompilot.jetlink.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Jetlink.app/Contents/MacOS/Jetlink";
+			};
+			name = Debug;
+		};
+		EB03C47241D009BF7A61D035 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		EE73595EC75C27233DC43AAB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		70AA863B3933050DD9D4AC42 /* Build configuration list for PBXProject "Jetlink" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EE73595EC75C27233DC43AAB /* Debug */,
+				EB03C47241D009BF7A61D035 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A696EB855E37E219816E1964 /* Build configuration list for PBXNativeTarget "JetlinkTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E3F0565D631F628CBF3DF13F /* Debug */,
+				63B10C4C71A61F0AF266094E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E7D8606C136ECAADD9688877 /* Build configuration list for PBXNativeTarget "Jetlink" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0B0C6BC3644B29B3045F8319 /* Debug */,
+				6FC77E09BEEA08923A45ED81 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1847D87B12BF920468D8F334 /* Project object */;
+}

@@ -1,0 +1,85 @@
+# xcodegen spec for the Jetlink macOS app.
+#
+# Regenerate with `make project`, which exports JETLINK_VERSION and
+# JETLINK_BUILD; xcodegen substitutes them below and warns only when they are
+# unset. The generated Jetlink.xcodeproj is committed so `open
+# Jetlink.xcodeproj` works without installing xcodegen.
+name: Jetlink
+options:
+  bundleIdPrefix: io.zoompilot
+  deploymentTarget: { macOS: "15.0" }
+  xcodeVersion: "26.6"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: ${JETLINK_VERSION}
+    CURRENT_PROJECT_VERSION: ${JETLINK_BUILD}
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+    DEAD_CODE_STRIPPING: YES
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: NO
+targets:
+  Jetlink:
+    type: application
+    platform: macOS
+    sources:
+      - path: Jetlink
+      - path: Resources/Assets.xcassets
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleName: Jetlink
+        CFBundleDisplayName: Jetlink
+        CFBundleIdentifier: io.zoompilot.jetlink
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: "15.0"
+        LSApplicationCategoryType: public.app-category.developer-tools
+        LSArchitecturePriority: [arm64]
+        NSHumanReadableCopyright: "MIT License. Copyright 2026 Zeph Leggett."
+        NSSupportsAutomaticTermination: false
+        NSSupportsSuddenTermination: false
+        NSPrincipalClass: NSApplication
+        CFBundleIconName: AppIcon
+    entitlements:
+      path: Resources/Jetlink.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.zoompilot.jetlink
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      # Copy the prebuilt runtime in on every build so Xcode's own Run has a
+      # working interpreter after `make python`. Not dependency analysed: the
+      # tree is thousands of files and rsync is cheap when nothing changed.
+      - name: Embed Python runtime
+        script: |
+          set -e
+          SRC="$SRCROOT/build/python"
+          DST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/python"
+          if [ ! -d "$SRC" ]; then echo "warning: no embedded Python at $SRC; run make python (the app will need JETLINK_PYTHON)"; exit 0; fi
+          rm -rf "$DST"; mkdir -p "$(dirname "$DST")"
+          rsync -a --delete "$SRC/" "$DST/"
+        basedOnDependencyAnalysis: false
+  JetlinkTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [JetlinkTests]
+    dependencies: [{ target: Jetlink }]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.zoompilot.jetlink.tests
+        # Without this xcodebuild refuses to sign the test bundle: "the target
+        # does not have an Info.plist file and one is not being generated".
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Jetlink:
+    build: { targets: { Jetlink: all, JetlinkTests: [test] } }
+    run: { config: Debug, environmentVariables: { JETLINK_PYTHON: "$(JETLINK_PYTHON)" } }
+    test: { config: Debug, targets: [JetlinkTests] }
