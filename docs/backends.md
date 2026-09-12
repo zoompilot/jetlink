@@ -1,188 +1,103 @@
-# Backends and measurements
+# Backends and performance
 
-Developer reference for the inference backends, the platform matrix, and the
-measurements behind the defaults. For setup, see [platform setup](platforms.md).
-
-The details below preserve the runtime comparison and measurements recorded on
-September 7, 2026. Expectations are not hardware validation.
+Jetlink supports TensorRT, tinygrad, and ONNX Runtime. For installation, see
+[platform setup](platforms.md).
 
 ## Runtime comparison
 
-| | `trt` | `tinygrad` | `ort` |
+| Backend | Devices | Prepared files | Requirements |
 | --- | --- | --- | --- |
-| Runtime | TensorRT 10.3 (JetPack 6) or 11.x (PyPI) | tinygrad 0.11+ | onnxruntime 1.22+ |
-| Devices | CUDA | METAL, CUDA, NV, AMD, CPU | coreml, cuda, cpu |
-| Artifact | `.plan` | `.pkl`, the captured JIT with its weights | `.ortcache/`, the prepared ONNX, a manifest, onnxruntime's cache |
-| ONNX surgery | uint8 images to fp16, `org.tinygrad` op stripped | none: tinygrad runs the export as it is | as TensorRT, plus negative Gather indices normalised; for `ane`, the policy's LayerNormalizations in fp32 |
-| Build, big model | 166 s on an Orin Nano | 13 s on an M1 Pro, *measured* | 9 to 10 min on an M1 Pro (CoreML), *measured* |
-| Load | 6 to 25 s | 1 s, *measured* | the same 9 to 10 min: CoreML compiles per session, in a worker while the server keeps answering |
-| Status | validated on the car (Jetson); 11.x untested | parity passed, over budget on an M1 Pro | parity passed, under budget on the GPU |
+| `trt` | NVIDIA CUDA | `.plan` | TensorRT 10.3 on JetPack 6, or TensorRT 11.x from PyPI |
+| `tinygrad` | METAL, CUDA, NV, AMD, CPU | `.pkl` | The pinned tinygrad source version below |
+| `ort` | CoreML, CUDA, CPU | `.ortcache/` | ONNX Runtime 1.22+ |
 
-`--backend auto` takes TensorRT where it imports, then CoreML on a Mac, then
-tinygrad, then onnxruntime on whatever it has. Every backend keys its
-artifacts by its own runtime version and device, so a machine with two
-installed keeps two per model and each sees only its own. TensorRT's key is
-byte for byte what it was before there were backends: a Jetson's existing
-plans load without a rebuild.
+`--backend auto` selects TensorRT if available, then CoreML on macOS, then
+tinygrad, then ONNX Runtime with an available device. Prepared files are cached
+separately for each runtime version and device.
 
 ## Platform matrix
 
-| | Jetson Orin | Linux, NVIDIA GPU | Windows, NVIDIA GPU | macOS, Apple silicon |
+| Platform | Backend | USB | Telemetry | Sleep support |
 | --- | --- | --- | --- | --- |
-| Backend | `trt`, unchanged | `trt` from `pip install "jetlink[trt]"`; `tinygrad` or `ort` as fallbacks | `trt`: wheels exist for `win_amd64`, but start in WSL2 | `ort` (CoreML on the GPU) by default; `--device ane` or `--backend tinygrad` by name |
-| USB link | libusb host, today | libusb host plus `scripts/99-jetlink-host.rules` | WSL2 with `usbipd-win`; native needs WinUSB, see risks | libusb host, no driver; a USB-A port on a hub and the same A-to-C cable |
-| TCP link | yes | yes | yes | yes |
-| Telemetry | Tegra sysfs | NVML (`pip install "jetlink[nvml]"`) | NVML | none: the sensors need privileges, and the comma is told nothing rather than zeros |
-| Sleep, poweroff | yes | `--sleep-after` works where `/sys/power` does; nothing wakes a laptop on a USB edge | no | no; `scripts/run-mac.sh` holds `caffeinate` |
-| Install | Docker image, unchanged | `pip install -e ".[trt,usb,nvml]"` | pip inside WSL2 | `scripts/run-mac.sh`, which makes the venv |
-| Status | validated on the car | hardware-tested | untested | measured below |
+| Jetson Orin | TensorRT | USB-A host with libusb | Tegra sensors | Suspend and poweroff |
+| Linux with NVIDIA GPU | TensorRT; tinygrad or ONNX Runtime as alternatives | libusb with `scripts/99-jetlink-host.rules` | NVML | `--sleep-after` requires `/sys/power`; USB wake depends on hardware |
+| Windows with NVIDIA GPU | TensorRT in WSL2 | Requires `usbipd-win`; untested | NVML | None |
+| macOS with Apple silicon | ONNX Runtime with CoreML on the GPU | USB-A hub, dock, or adapter with libusb | Not available | `scripts/run-mac.sh` prevents idle sleep on AC power |
+
+See [status and limitations](status.md) for platform testing coverage.
 
 ## Mac, measured
 
-M1 Pro, 16 GB, macOS 25.5, Cinque Terre (766 MB). tinygrad 0.14.0 at
-`e837e367aac9`, onnxruntime 1.29.0. Parity is `scripts/verify_parity.py`'s
-gate: 32 frames through the queues with hidden-state feedback, against the
-onnxruntime CPU provider on the unmodified graph (`org.tinygrad` op stripped),
-every slice and column at or above 0.999. Round trips are `bench_link.py`
-over TCP loopback through the real server at 20 Hz.
+These results use a 16 GB M1 Pro, macOS 25.5, the 766 MB Cinque Terre model,
+tinygrad 0.14.0 at `e837e367aac9`, and ONNX Runtime 1.29.0. Performance on other
+Macs may differ.
 
-| | tinygrad METAL | CoreML, GPU (`--device coreml`, default) | CoreML, every unit (`--device ane`) |
+The frame budget is 50 ms at 20 frames per second (20 Hz). CoreML on the GPU is
+the default because it meets this budget on the M1 Pro. tinygrad exceeds the
+budget. The Neural Engine option (`--device ane`) has more frames over budget at
+20 Hz, even though it is faster with no pause between requests.
+
+| | tinygrad METAL | CoreML, GPU (`--device coreml`, default) | CoreML, all compute units (`--device ane`) |
 | --- | ---: | ---: | ---: |
 | round trip at 20 Hz through the server, mean / p99 / max | 66.2 / 67.6 / 67.9 ms | 43.3 / 44.4 / 44.5 ms | 44.6 / 58.8 / 68.9 ms |
 | frames over the 50 ms budget, of 390 | 390 | 0 | 69 |
-| round trip back to back through the server, mean / p99 | 66.2 / 67.6 ms | 39.9 ms server side | 32.6 / 38.7 ms |
+| round trip with no pause between requests through the server, mean / p99 | 66.2 / 67.6 ms | 39.9 ms server side | 32.6 / 38.7 ms |
 | parity gate, worst column | 0.99954 pass | 0.99957 pass | 0.99957 pass |
 | parity, mean error on `plan` / `lead_prob` | 0.0060 / 0.0156 | 0.0046 / 0.0150 | 0.0057 / 0.0138 |
-| build / load in a fresh process | 13 s / 1.1 s | 8.2 s / 2.0 s | not re-measured |
-| artifact on disk | 777 MB | 2.3 GB | not re-measured |
-| peak RSS while building | 0.6 GB | 3.0 GB | 9.1 GB |
-| peak RSS while loading | not measured | 2.5 GB | not measured |
+| build / load in a fresh process | 13 s / 1.1 s | 8.2 s / 2.0 s | not measured |
+| artifact on disk | 777 MB | 2.3 GB | not measured |
+| peak memory use while building | 0.6 GB | 3.0 GB | not measured |
+| peak memory use while loading | not measured | 2.5 GB | not measured |
 
-Resident sizes are the whole process tree, the spawned `jetlink-ort` worker
-included, sampled once a second; the worker is where the session is created,
-so the server's own resident size says nothing about a build or a load.
+Memory figures include the server and its worker process, sampled once per
+second. Build and load times for the Neural Engine option are not measured with
+the current model preparation code.
 
-The CoreML build and load were 524 s and 527 s until 2026-09-10, when the
-weights stopped travelling through the compiled model as text. onnxruntime's
-MatMulAddFusion emits `Gemm` with `transB=0`, and the CoreML EP's Gemm builder
-transposes that weight on the host and writes it into `model.mil` as hex float
-literals at 6.06 bytes per fp16 value: the trunk's MIL was 4.109 GB against a
-47 MB `weight.bin`, and coremlc wrote all of it on a build and parsed all of
-it on every load. `onnx_patch.gemm_with_transposed_weight` does the same
-fusion first with the weight transposed and `transB=1`, which the builder
-passes through as a TensorProto, so it lands in the weight file. Measured on
-the same machine, back to back, before and after:
+The mean is the average frame time. The p99 is the time at or below which 99% of
+frames complete. The maximum is the slowest frame.
 
-| | before | after |
-| --- | ---: | ---: |
-| build | 526.4 s | 8.2 s |
-| load, warm cache | 464.6 s | 2.0 s |
-| artifact on disk | 5.91 GB | 2.30 GB |
-| peak RSS while building | 9.39 GB | 2.99 GB |
-| peak RSS while loading | 9.59 GB | 2.52 GB |
-| trunk `model.mil` | 4,109,111,037 B | 1,339,974 B |
-| trunk `weights/weight.bin` | 47,246,080 B | 717,700,480 B |
-| trunk BLOBFILE consts / fp16 immediates | 241 / 74 | 315 / 0 |
-| parity gate, worst column | 0.999619 pass | 0.999619 pass |
+### How to measure
 
-The arithmetic is untouched: the MIL op is `linear` either way and the parity
-columns agree digit for digit. Frame time is unchanged too. Measured back to
-back while another build held the machine, both sides ran 45.8 ms mean; on an
-idle machine afterwards the rewritten engine ran 43.3 / 44.6 / 45.1 ms over
-three runs with 1, 0 and 0 frames of 390 over budget, which is the 43.3 row
-above. Read the 45.8 pair against each other, not against the table.
+`scripts/verify_parity.py` compares 32 frames against ONNX Runtime on the CPU,
+using the model's hidden-state feedback. Every output slice and column must have
+a correlation of at least 0.999 to pass.
 
-An engine prepared before this change still loads in minutes. The artifact is
-still valid and the cache key still finds it, so nothing forces a rebuild;
-preparing the model again is what makes it fast.
+`scripts/bench_link.py --rate 20` measures round-trip latency through the server
+over TCP loopback. Use the 20 Hz results when assessing the driving frame
+budget. See [test without a comma](platforms.md#test-without-a-comma).
 
-Read it this way:
+### Model preparation
 
-- **tinygrad is correct and over budget on this machine.** 66 ms against a
-  50 ms frame, every frame. The kernels account for 32 ms of it and the rest
-  is per-kernel launch overhead across 393 launches,
-  which a faster GPU only partly removes. A newer Mac is expected under budget
-  and has to be measured, not assumed.
-- **CoreML on the GPU is correct, under budget, and the Mac default.** 43 ms
-  round trip with a p99 of 44, no frame over budget in 390. It used to cost
-  nine minutes of compile every time a process created the session, which is
-  what the compiled model carrying its weights as text cost; with the weights
-  in the weight file a build is 8 s and a load 2 s. The compile still runs in
-  a worker process while the server keeps answering, so a first prepare never
-  blocks the comma. `--backend tinygrad` trades a 43 ms frame for a 66 ms one.
-- **The Neural Engine is correct now, and faster only back to back.** As
-  exported it was 25 ms and wrong (whole-output correlation 0.91 to 0.97).
-  A sub-model bisect found one node: `Gather(add_53, -1)`, the last-token
-  select after the temporal transformer, comes back as garbage on the
-  Neural Engine and is exact with the index written as 287. With that
-  rewritten (`onnx_patch.normalize_gather_indices`) the frame is 28 ms and
-  the gate fails by one column: the Neural Engine's fp16 LayerNormalization
-  overflows on the residual stream, and the policy half comes out seven
-  times less precise than on the GPU. Running the policy's 41
-  LayerNormalizations in fp32 (`onnx_patch.layernorm_in_fp32`, which CoreML
-  then places off the Neural Engine) restores the GPU's precision exactly
-  and makes the policy faster; doing the same to the trunk's 41 costs a
-  compute-unit switch each and took the frame to 70 ms, so the trunk stays
-  in fp16. Result: gate passed through the server, 32.6 ms round trip back
-  to back. But at 20 Hz, with the units idle between frames, the same
-  session is 44.6 ms with a p99 of 59 and 69 frames of 390 over budget:
-  every CoreML unit pays a cost on the first request after an idle gap (a
-  127 MB sub-model went from 3 ms to 11 on the Neural Engine and 6 to 14 on
-  the GPU with any gap over 5 ms, and a keep-warm model in the gap did not
-  help), and the Neural Engine pays more of it. A trunk-on-the-Neural-Engine,
-  policy-on-the-GPU split of two sessions was measured too and pays it
-  twice, 45 ms at 20 Hz. So `ane` is the opt-in: faster on a server that is
-  never idle, worse at the car's cadence on an M1 Pro, and the thing to
-  measure first on a faster Mac, with `bench_link.py --rate 20`.
+CoreML stores weights in a binary file. A prepared GPU model uses about 2.3 GB,
+takes about 8 seconds to build, and loads in about 2 seconds on the M1 Pro. If a
+cached model takes minutes to load, remove its prepared engine and prepare it
+again.
 
-Two things the runtimes made the server do differently:
-- **tinygrad is one thread.** A JIT unpickled on one thread crashes when run
-  from another, and a thread that has used Metal crashes as it exits, in
-  objc's autorelease-pool drain. The backend routes every tinygrad call
-  through one daemon thread that never exits (`backends/tinygrad/owner.py`);
-  the crash report that found it is quoted there.
-- **onnxruntime is one process.** It holds the GIL while it creates a
-  session, measured with a ticker thread that ran three times across twenty
-  session creations and a CoreML build that logged nothing for ten minutes.
-  In the server that would stop the pings, the progress and the accept for
-  the whole compile, so the sessions live in a spawned worker process with
-  the frame's inputs and outputs in shared memory (`backends/ort/worker.py`).
-  The cost is a message each way per frame.
-- **onnxruntime phones home, and crashes doing it.** The macOS wheel ships
-  Microsoft's telemetry SDK, which uploads over HTTP from its own thread; a
-  response arriving as the process exits is dispatched through a mutex that
-  is already gone, and the process aborts (one test run in three, crash
-  report in `backends/ort/__init__.py`). The backend calls
-  `disable_telemetry_events()` in every process that imports onnxruntime.
-- **tinygrad must come from git**, at or after commit
-  `e837e367aac9e1a66e689f4f32ce20ca9367df13` of
-  <https://github.com/sunnypilot/tinygrad>; the PyPI 0.14.0 wheel has no
-  `org.tinygrad` ONNX domain and cannot load the exported models. Install it
-  with:
+For the Neural Engine option, Jetlink normalizes negative Gather indices and
+runs the policy's LayerNormalization operations in fp32 for accuracy. The trunk
+uses fp16.
+
+## Runtime requirements
+
+- tinygrad calls run on one dedicated thread because its JIT and Metal state
+  require the same thread for loading and inference.
+- ONNX Runtime sessions run in a worker process so model preparation does not
+  block server connections, progress updates, or pings. Frame inputs and
+  outputs use shared memory.
+- Jetlink disables ONNX Runtime telemetry to avoid a macOS shutdown crash.
+- Install tinygrad from the pinned source commit. The PyPI 0.14.0 package lacks
+  the `org.tinygrad` ONNX domain required by exported models:
 
 ```bash
 pip install --no-deps "tinygrad @ git+https://github.com/sunnypilot/tinygrad@e837e367aac9e1a66e689f4f32ce20ca9367df13"
 ```
 
-## Risks and decisions
+## Hardware limitations
 
-- **Windows native USB.** libusb on Windows needs WinUSB bound to the device.
-  Zadig does that by hand for development; for users the gadget has to carry
-  Microsoft OS descriptors so Windows binds WinUSB itself, which is a
-  FunctionFS descriptor change on the comma, hence a fork release and a
-  validation drive. WSL2 with `usbipd-win` avoids all of that and is where
-  Windows starts.
-- **Mac Type-C to comma Type-C.** Both ends are dual-role ports and the
-  comma's is a host normally. An A-to-C cable from a USB-A port on a hub or
-  dock fixes the roles the way the Jetson's USB-A port does. Test C-to-C
-  afterwards, not first.
-- **Host sleep.** A laptop lid or a Mac's idle sleep kills the link. The
-  server refuses `--sleep-after` where there is no `/sys/power`, and
-  `run-mac.sh` holds `caffeinate`. Nothing wakes a Mac on a USB edge the way
-  the Jetson's hub does.
-- **Thermal.** Laptops throttle under a sustained 20 Hz load. NVML telemetry
-  makes that visible on the comma; nothing else changes.
-- **What stays the same.** The protocol, the queues, the client, the fork's
-  patch, the Jetson image and its validated numbers. The hello gains
-  `backend` and `runtime_version`; `trt_version` is still sent by the
-  TensorRT backend, and only by it.
+Native Windows USB requires WinUSB and is not validated. Use WSL2 for initial
+TCP testing. On a Mac, use a USB-A port on a hub, dock, or adapter to ensure
+that the Mac acts as the USB host.
+
+Keep laptops powered and awake. Sustained GPU use can cause thermal throttling;
+check frame times during use. NVIDIA systems can report GPU telemetry through
+NVML with `pip install "jetlink[nvml]"`.

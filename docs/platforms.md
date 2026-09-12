@@ -1,9 +1,10 @@
 # Platform setup
 
-How to run the server on something other than a Jetson. Mac is bench-tested.
-Linux with an NVIDIA GPU is hardware-tested. Windows WSL2 remains unvalidated. Set up the comma with the steps in the [README](../README.md#quick-start).
+Run Jetlink on a Mac, Linux PC, or Windows PC. Mac and Linux NVIDIA systems have
+hardware test results. Windows WSL2 is untested. Set up the comma with the steps
+in the [README](../README.md#quick-start).
 
-All paths start with a checkout:
+For terminal and Docker setup, clone the repository first:
 
 ```bash
 git clone https://github.com/zoompilot/jetlink.git
@@ -12,39 +13,40 @@ cd jetlink
 
 ## Mac (Apple silicon)
 
-Most people should use the app. Download Jetlink for Mac from the Releases
-page, open it, and leave it running; it carries its own Python and needs no
-Homebrew. The [Mac guide](macos-app.md) covers installing it, preparing a model
-ahead of a drive, and its settings.
+Use the Mac app for setup without terminal commands. Download it from
+[Releases](https://github.com/zoompilot/jetlink/releases), open it, and leave it
+running. It includes Python and does not require Homebrew. The [Mac
+guide](macos-app.md) covers installing it, preparing a model ahead of a drive,
+and its settings.
 
 ### From a terminal
 
-Needs Homebrew's Python (macOS ships 3.9, the project needs 3.10+) and libusb:
+Install Python 3.10 or later and libusb with Homebrew:
 
 ```bash
 brew install python libusb
 scripts/run-mac.sh
 ```
 
-The first run creates a Python environment and installs dependencies. The
-server then serves the comma over USB using CoreML on the GPU. Plug the comma
-into a **USB-A port on a hub or dock** with an A-to-C data cable, or use a
-USB-C-to-A adapter. Going through USB-A makes the Mac take the host role
-reliably; a plain C-to-C cable may not.
+The first run creates a Python environment and installs dependencies. The server
+then serves the comma over USB using CoreML on the GPU. Plug the comma into a
+**USB-A port on a hub or dock** with an A-to-C data cable, or use a USB-C-to-A
+adapter. Going through USB-A makes the Mac take the host role reliably; a plain
+C-to-C cable may not.
 
-Things to know:
+Runtime and storage:
 
 - CoreML takes **about 10 seconds** to prepare the model the first time, and
   about 2 seconds to load it again every time the server restarts.
 - The script holds the Mac awake on AC power. On battery, keep the lid open.
-- Models and prepared engines live in `models_cache/` next to the checkout,
+- Models and prepared engines live in `models_cache/` in the checkout,
   about 3 GB per model with CoreML: a 766 MB download plus a 2.3 GB engine.
   Set `JETLINK_CACHE` to move them.
 
 Options:
 
 ```bash
-# Serve a bench client over TCP instead of the comma (see Test without a comma)
+# Serve a test client over TCP instead of the comma (see Test without a comma)
 JETLINK_TRANSPORT=tcp scripts/run-mac.sh
 
 # tinygrad on Metal: 66 ms a frame on an M1 Pro, against CoreML's 43
@@ -73,22 +75,19 @@ sudo udevadm control --reload-rules
 jetlink-server --backend trt --transport usb
 ```
 
-Plug the comma into a USB-A port. The udev rule grants USB access without
-root; unplug and replug the comma after installing it. In a new terminal, run
-`source .venv/bin/activate` before using `jetlink-server` again.
+Plug the comma into a USB-A port. The udev rule grants USB access without root;
+unplug and replug the comma after installing it. In a new terminal, run `source
+.venv/bin/activate` before using `jetlink-server` again.
 
-**Prefetching models.** The same install provides `jetlink-models`, which
-downloads a model from sunnypilot's big-model catalog over this machine's
-network and prepares it before the comma ever asks. That turns the comma's
-first request into an immediate answer. See
-[models and the model CLI](models.md).
+Use `jetlink-models` to download and prepare a model on the server before
+connecting the comma. See [models and the model CLI](models.md).
 
 ## Windows (NVIDIA GPU)
 
 Use **Ubuntu in WSL2** and follow the Linux steps inside it, or use
-[Docker](#docker-nvidia-laptops-and-desktops). Start with a
-[TCP bench test](#test-without-a-comma). USB from WSL2 needs `usbipd-win` to
-attach the comma to Ubuntu and is not a validated path.
+[Docker](#docker-nvidia-laptops-and-desktops). Start with a [TCP
+test](#test-without-a-comma). USB from WSL2 needs `usbipd-win` to attach the
+comma to Ubuntu and is not a validated path.
 
 ## Docker (NVIDIA laptops and desktops)
 
@@ -96,8 +95,8 @@ For an x86-64 machine with an NVIDIA GPU, on Linux or Windows with WSL2. The
 image includes Python, CUDA, TensorRT, and USB support. You still need the
 NVIDIA driver on the host.
 
-**Enable GPU access.** On Linux, install Docker Engine and the
-[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html),
+**Enable GPU access.** On Linux, install Docker Engine and the [NVIDIA Container
+Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html),
 then:
 
 ```bash
@@ -105,24 +104,24 @@ sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 ```
 
-On Windows, install Docker Desktop with the WSL 2 backend and follow
-[Docker's GPU guide](https://docs.docker.com/desktop/features/gpu/). Run the
-rest in your Ubuntu WSL terminal. Check it works:
+On Windows, install Docker Desktop with the WSL 2 backend and follow [Docker's
+GPU guide](https://docs.docker.com/desktop/features/gpu/). Run the remaining
+commands in your Ubuntu WSL terminal. Verify GPU access:
 
 ```bash
 docker run --rm --gpus all nvidia/cuda:12.9.1-runtime-ubuntu24.04 nvidia-smi
 ```
 
-**Pull or build.** Every release publishes an image; pull it and skip the
-build, which downloads 4.4 GB of TensorRT:
+**Pull or build.** Pull a release image. Replace `VERSION` with the release
+version, such as `0.3.0`:
 
 ```bash
 docker pull ghcr.io/zoompilot/jetlink:VERSION-cuda
 docker tag ghcr.io/zoompilot/jetlink:VERSION-cuda jetlink:cuda
 ```
 
-The `-cuda` suffix matters: `-jetson` is the same version for a Jetson, and the
-two are different stacks. To build it yourself instead, from the checkout:
+Use `-cuda` for an NVIDIA PC and `-jetson` for a Jetson. To build it yourself
+instead, from the checkout:
 
 ```bash
 docker build -f docker/Dockerfile.cuda -t jetlink:cuda .
@@ -138,8 +137,8 @@ docker run --rm -it --gpus all --name jetlink-cuda \
   jetlink:cuda
 ```
 
-This serves TCP on port 5599 for a [bench test](#test-without-a-comma). For
-USB on native Linux, run instead:
+This serves TCP on port 5599 for a [test](#test-without-a-comma). For USB on
+native Linux, run instead:
 
 ```bash
 docker run --rm -it --gpus all --name jetlink-cuda \
@@ -150,8 +149,8 @@ docker run --rm -it --gpus all --name jetlink-cuda \
 ```
 
 Logs: `docker logs -f jetlink-cuda`. If the container name is in use, run
-`docker stop jetlink-cuda` first. Laptop sleep kills the link; keep it plugged
-in and awake.
+`docker stop jetlink-cuda` first. Laptop sleep disconnects the link. Keep the
+laptop powered and awake.
 
 ## CPU only
 
@@ -168,7 +167,9 @@ jetlink-server --backend ort --device cpu --transport tcp
 ## Test without a comma
 
 You need a large driving-model ONNX file. With a TCP server running (on a
-Jetson: `sudo docker/run.sh --transport tcp`), in a second terminal:
+Jetson: `sudo docker/run.sh --transport tcp`), run these commands from the
+checkout in a second terminal. Replace `/path/to/big_model.onnx` with your model
+file path:
 
 ```bash
 python3 -m venv .venv
@@ -201,9 +202,9 @@ docker run --rm -it --network container:jetlink-cuda \
 | Backend missing | `jetlink-server --list-backends`; check that platform's dependencies and GPU driver |
 | USB library error | Install native libusb as well as the Python package |
 | USB permission error on Linux | Install the udev rule, then replug the comma |
-| TCP connection refused | Server running with `--transport tcp`? Right address, port 5599 open? |
+| TCP connection refused | Start the server with `--transport tcp`. Check the IP address and allow port 5599 through the firewall. |
 | GPU not found in Docker | Redo the GPU access setup and rerun the `nvidia-smi` check |
-| Mac looks stuck loading | CoreML prepares in about 10 seconds and loads in about 2; minutes means an engine prepared before the weights moved out of the compiled model, so prepare it again. Check the server output |
+| Mac looks stuck loading | CoreML prepares in about 10 seconds and loads in about 2 on an M1 Pro. If loading takes minutes, remove the prepared engine and prepare it again. Check the server output for errors. |
 | Link drops when laptop sleeps | Keep it awake, powered, and open |
 
 Desktop caches use `JETLINK_CACHE` if set, otherwise `~/.cache/jetlink`, or

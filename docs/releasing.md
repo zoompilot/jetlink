@@ -1,28 +1,34 @@
 # Updates and rollback
 
-The comma build and the Jetlink server have to match. Update both while parked.
+The comma build and the Jetlink server must be compatible. Update both while
+parked.
 
 ## Which Jetlink to run
 
 Clone `main`. The zoompilot fork records the exact Jetlink commit it was tested
 with as its `jetlink_repo` submodule, and `main` is kept compatible with the
-current `jetson-trt` branch. A protocol mismatch is refused cleanly: the server
-rejects the connection and the comma keeps driving on the small model.
+current `jetson-trt` branch. If the protocol versions differ, the server rejects
+the connection and the comma keeps driving on the small model.
 
-If the server refuses the comma after an update, check out the commit the fork
-pins and rebuild:
+If the server refuses the comma after an update, check out the commit recorded
+in the fork's `jetlink_repo` submodule and rebuild. From the parent directory of
+your Jetlink checkout, run the commands below. Replace `COMMIT` with that hash:
 
 ```bash
 git -C jetlink fetch
-git -C jetlink checkout <commit from the fork's jetlink_repo entry>
+git -C jetlink checkout COMMIT
 ```
 
 ## Updating
 
 1. Update the comma first from **Settings > Software** and let it reboot.
-2. On the server, `git pull`. On a Mac, restart `scripts/run-mac.sh`; delete
-   `.venv` first if dependencies changed. On a Jetson, rebuild the image and
-   point the service at it:
+2. Update the server using the method you installed:
+
+   - Mac app: quit Jetlink, replace it with the new release, and reopen it.
+   - Source install: run `git pull` from the Jetlink checkout. For the Mac
+     script, restart `scripts/run-mac.sh`; recreate `.venv` if dependencies changed.
+   - Jetson source install: run `git pull`, rebuild the image, and update the service
+     with the commands below from the checkout:
 
 ```bash
 sudo docker/build.sh
@@ -35,15 +41,14 @@ sudo systemctl restart jetlink-server
    need another engine build. Cached engines stay valid across updates that do
    not change the model or runtime.
 
-## Cutting a release
+## Publish a release (maintainers)
 
-A `v*` tag is the whole release. The Release workflow builds the macOS app, the
-Python sdist and wheel, and the Jetson image, and publishes them.
+Pushing a `v*` tag starts the Release workflow. It builds and publishes the
+macOS app, Python source distribution and wheel, and container images.
 
-1. Bump `version` in `pyproject.toml` and commit. The tag has to match it: the
-   workflow's first job is `macos/scripts/check-version.sh`, which fails in a
-   second when they disagree.
-2. Tag and push:
+1. Update `version` in `pyproject.toml` and commit. The tag version must match it.
+   `macos/scripts/check-version.sh` checks this before the build.
+2. Tag and push. Replace `0.3.0` with the version you set:
 
 ```bash
 git tag v0.3.0
@@ -53,21 +58,20 @@ git push origin v0.3.0
 3. Watch **Actions > Release**. The macOS job takes about 20 minutes (the
    embedded runtime, the build, notarization); the Jetson image runs under QEMU
    and takes up to 30.
-4. Check the release page. It should carry `Jetlink-0.3.0.dmg`,
+4. Check the release page. It should include `Jetlink-0.3.0.dmg`,
    `Jetlink-0.3.0.zip`, `SHA256SUMS`, the sdist and the wheel, and notes ending
    with the GHCR image line.
 
-A prerelease tag is published as a prerelease. Both spellings are
-recognised: a hyphen (`v0.3.0-rc1`) and the PEP 440 suffixes
-(`v0.3.0a1`, `v0.3.0b2`, `v0.3.0rc1`). Prefer PEP 440. `pyproject.toml`
-has to hold the version verbatim, and setuptools normalizes a hyphenated
-version anyway, so `v0.3.0-alpha.1` would ship a wheel named
-`jetlink-0.3.0a1` and the tag would not match its own artifacts.
+A prerelease tag is published as a prerelease. Supported formats include a
+hyphen (`v0.3.0-rc1`) and the PEP 440 suffixes (`v0.3.0a1`, `v0.3.0b2`,
+`v0.3.0rc1`). Use the same version string in `pyproject.toml` and the tag,
+excluding the leading `v`. Prefer PEP 440 suffixes to avoid wheel filename
+normalization.
 
 ### Installing the app
 
 Download the DMG from the release, open it, and drag Jetlink to Applications.
-`docs/macos-app.md` covers the first run.
+See the [Mac guide](macos-app.md) for first launch instructions.
 
 Verify the download against `SHA256SUMS`:
 
@@ -86,14 +90,12 @@ for:
 | `0.3.0-jetson` | linux/arm64, JetPack | `l4t-jetpack:r36.4.0` |
 | `0.3.0-cuda` | linux/amd64, NVIDIA GPU | `nvidia/cuda:12.9.1-base-ubuntu24.04` |
 
-The suffix is not decoration. `arm64` on its own does not mean Jetson: the
-Jetson image wants the L4T stack and the nvidia container runtime, and an
-ordinary arm64 server that pulled an unsuffixed tag would get something it
-cannot run. Nothing takes `:latest`, so a `docker pull` with no tag fails
-rather than handing out whichever release was cut last.
+Choose the suffix for your platform. The Jetson image requires L4T and the
+NVIDIA container runtime; it does not support generic ARM64 servers. Always
+specify a version and suffix. The registry does not publish a `latest` tag.
 
-Pull the Jetson one on the Jetson instead of building, and point the service at
-that image:
+To update a Jetson using a release image, run the commands below on the Jetson.
+Replace `0.3.0` with the release version:
 
 ```bash
 sudo docker pull ghcr.io/zoompilot/jetlink:0.3.0-jetson
@@ -107,10 +109,10 @@ notes then say which, and building locally still works.
 
 ### Signing secrets
 
-With none of these set, the release still happens: the app is signed ad hoc and
-published as `Jetlink-X.Y.Z-unsigned.zip` with no DMG, so a fork can cut its own
-build. The workflow log's "Report the signing mode" step says which mode it ran
-in, and the release notes carry the Gatekeeper instructions for an unsigned one.
+Without these secrets, the app is signed ad hoc and published as
+`Jetlink-X.Y.Z-unsigned.zip` with no DMG, so forks can publish unsigned builds.
+The workflow log's "Report the signing mode" step says which mode it ran in, and
+the release notes carry the Gatekeeper instructions for an unsigned one.
 
 | Secret | What |
 | --- | --- |
@@ -124,12 +126,13 @@ in, and the release notes carry the Gatekeeper instructions for an unsigned one.
 
 The notary key is a Team key with the Developer role, made under **Users and
 Access > Integrations** in App Store Connect. `base64 -i cert.p12 | pbcopy`
-produces what the two base64 secrets want.
+produces a base64-encoded value for a certificate secret. Use the `.p8` file
+instead for `NOTARY_PRIVATE_KEY_P8_BASE64`.
 
 ## Rolling back
 
 Turn off **Settings > Models > Accelerator Link** to stop using Jetlink
-immediately. To roll back properly, restore the previous comma build and the
-previous server image together; restoring one side can leave them incompatible.
-Keep the model cache. On the Jetson, `docker image ls` shows earlier images,
-and the previous image ID can be written back into `/etc/jetlink/server.env`.
+immediately. To roll back, restore the previous comma build and the previous
+server image together; restoring one side can leave them incompatible. Keep the
+model cache. On the Jetson, `docker image ls` shows earlier images, and the
+previous image ID can be written back into `/etc/jetlink/server.env`.

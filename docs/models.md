@@ -1,31 +1,31 @@
 # Models and the model CLI
 
-Two ways to get a driving model onto a server:
+You can transfer a driving model to the server in two ways:
 
 - **Let the comma upload it.** This is the default and needs no commands. The
   comma downloads the model over its own connection, sends it over the link,
   and the server prepares it.
 - **Prefetch it.** Download the model on the server's own network with
   `jetlink-models fetch`, then prepare it with `jetlink-models prepare` or
-  `jetlink-server --build`. This is faster on a Jetson with a slow connection,
-  and it means the comma's first request is answered at once.
+  `jetlink-server --build`. Use this when the server has a faster internet connection than the comma
+  or when you want to prepare a model before connecting.
 
 The commands are part of the Python package, so they work on a Jetson, a Linux
 machine, a Windows machine and a Mac terminal. On a Mac the same work is in the
 app; see the [Mac guide](macos-app.md).
 
-## Refs, SHA-256, and where files go
+## Model identifiers and storage
 
 A **ref** is a 40-character commit hash from comma's openpilot repository. It
 identifies a model in sunnypilot's big-model catalog, the same list the comma
 shows under **Settings > Models > Big Model**.
 
-A **SHA-256** is a 64-character hash of the ONNX file itself. This is what the
-comma asks the server for over the link, and what the cache is keyed by. One
-ref resolves to exactly one SHA-256, and that never changes.
+A **SHA-256** is a 64-character hash of the ONNX file. The comma and server use
+it to identify the model and its cached files. One ref resolves to exactly one
+SHA-256, and that never changes.
 
-Anywhere a command takes `REF_OR_SHA256`, a 40-hex string is treated as a ref
-and a 64-hex string as a SHA-256. Anything else is an error.
+Anywhere a command takes `REF_OR_SHA256`, use a 40-character hexadecimal ref or
+a 64-character hexadecimal SHA-256 hash. Anything else is an error.
 
 Files live under the cache directory:
 
@@ -40,7 +40,7 @@ The cache directory is `JETLINK_CACHE` if it is set, otherwise
 and `~/.cache/jetlink` elsewhere. Every command takes `--cache DIR` to override
 it.
 
-## The commands
+## Commands
 
 ```
 jetlink-models list      [--refresh] [--json] [--cache DIR]
@@ -52,34 +52,38 @@ jetlink-models rm        SHA256 [--artifacts] [--model] [--cache DIR]
 jetlink-models prepare   REF_OR_SHA256 [--backend auto] [--device auto] [--cache DIR]
 ```
 
-`python -m jetlink.registry` is the same program, for when the entry point is
-not on `PATH`.
+Run these commands in the Python environment used to install Jetlink. You can
+use `python -m jetlink.registry` instead of `jetlink-models`. In the syntax
+above, square brackets mark optional arguments. Replace uppercase placeholders
+such as `REF` and `PATH` with your values; omit the brackets.
+
+The output examples below are shortened for readability.
 
 ### list
 
-Shows the catalog, newest first, with what is on disk for each entry. The
-cached copy is used when it is less than an hour old; `--refresh` fetches a new
-one.
+Lists available models, newest first, and their download or preparation status.
+The cached copy is used when it is less than an hour old; `--refresh` fetches a
+new one.
 
 ```bash
 jetlink-models list
 ```
 
 ```
-  #  Model                                        Ref         Size    On disk
- 12  Cinque Terre Model V2 (September 08, 2026)   37bfa1413e  766 MB  no
- 11  BMRLNAP Model v4 (August 30, 2026)           f877d7a0cc  766 MB  prepared (default)
+  #  Model                  Ref         Size    On disk
+ 12  Cinque Terre Model V2   37bfa1413e  766 MB  no
+ 11  BMRLNAP Model v4        f877d7a0cc  766 MB  prepared (default)
 ```
 
-`--json` prints the `catalog` payload from the control protocol, so a script
-and the Mac app read the same shape:
+`--json` prints the `catalog` payload described in the [control
+protocol](#the-protocol). Example:
 
 ```json
 {"fetched_at": 1757440000.0,
  "url": "https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_chestnut_v25.json",
  "default_ref": "f877d7a0ccc3cce943c76e285214c020cd65c899", "error": null,
- "models": [{"name": "Cinque Terre Model V2 (September 08, 2026)", "short_name": "CTMV2",
-             "ref": "37bfa1413edcdc2e8844984b83727c33f81d8f46", "build_time": "2026-09-08T00:00:00Z",
+ "models": [{"name": "Cinque Terre Model V2", "short_name": "CTMV2",
+             "ref": "37bfa1413edcdc2e8844984b83727c33f81d8f46", "build_time": "<ISO 8601 timestamp>",
              "index": 12, "sha256": null, "bytes": null}]}
 ```
 
@@ -87,9 +91,8 @@ and the Mac app read the same shape:
 
 ### resolve
 
-Turns a ref into the SHA-256 and size the comma will ask for. Resolved pointers
-are kept forever, so this costs one small request the first time and nothing
-afterwards.
+Looks up the model SHA-256 and file size for a ref. The result is cached, so
+later lookups do not need a network request.
 
 ```bash
 jetlink-models resolve f877d7a0ccc3cce943c76e285214c020cd65c899
@@ -104,8 +107,8 @@ The hash is printed in full; it is shortened here.
 ### fetch
 
 Downloads the ONNX file for a ref or a SHA-256. It resolves the pointer if
-needed, downloads to a `.part` file, checks the size and the hash, and only
-then renames it into place. Progress goes to standard error, one line per whole
+needed, downloads to a `.part` file, checks the size and the hash, and only then
+renames it into place. Progress goes to standard error, one line per whole
 percent, so the output can be piped.
 
 ```bash
@@ -119,8 +122,8 @@ downloading a086d5249fc308bb... 765953504 bytes
 verified, saved to /mnt/data/jetlink/models/a086d5249fc308bb.onnx
 ```
 
-An interrupted download leaves the `.part` file behind and starts again from
-the beginning next time. A file appears without `.part` only once it has been
+An interrupted download leaves the `.part` file behind and starts again from the
+beginning next time. A file appears without `.part` only once it has been
 verified.
 
 ### import
@@ -140,8 +143,8 @@ copied to /mnt/data/jetlink/models/a086d5249fc308bb.onnx
 
 ### inventory
 
-What is on disk: the downloaded models, every prepared engine with the backend
-and device it was built for, and the disk usage.
+Lists downloaded models, prepared engines, their backends and devices, and disk
+usage.
 
 ```bash
 jetlink-models inventory
@@ -152,10 +155,10 @@ loaded       none
 last loaded  a086d5249fc308bb
 
 models
-  a086d5249fc308bb  766 MB  BMRLNAP Model v4 (August 30, 2026)
+  a086d5249fc308bb  766 MB  BMRLNAP Model v4
 
 engines
-  a086d5249fc308bb.trt10.3.0.cuda-orin  4.1 GB  trt 10.3.0  built 2026-09-08  current
+  a086d5249fc308bb.trt10.3.0.cuda-orin  4.1 GB  trt 10.3.0  current
 
 disk  models 766 MB, engines 4.1 GB, 63 GB free
 ```
@@ -165,21 +168,20 @@ shape the app receives.
 
 ### rm
 
-Deletes what you name and nothing else. `--model` removes the downloaded ONNX,
-`--artifacts` removes every prepared engine for that model. Deleting the
-download keeps the prepared engine working, which is the usual way to reclaim a
-few hundred megabytes.
+`--model` deletes the downloaded ONNX file. `--artifacts` deletes all prepared
+engines for the model. You can remove the download and keep using its prepared
+engine. Replace `SHA256` below with the full hash from `resolve` or `inventory
+--json`:
 
 ```bash
-jetlink-models rm a086d5249fc308bb... --model
+jetlink-models rm SHA256 --model
 ```
 
 ### prepare
 
 Fetches the model if it is not there, then builds an engine for the chosen
-backend, exactly as `jetlink-server --build` does. When nothing has been
-recorded as last loaded, this model becomes it, so the next server start
-preloads it.
+backend, exactly as `jetlink-server --build` does. If no model is recorded as
+last loaded, the server records this model and loads it at the next startup.
 
 ```bash
 jetlink-models prepare f877d7a0ccc3cce943c76e285214c020cd65c899
@@ -191,19 +193,17 @@ building a086d5249fc308bb... with trt on cuda
 built in 166.4 s, saved to /mnt/data/jetlink/engines/a086d5249fc308bb.trt10.3.0.cuda-orin.plan
 ```
 
-**Do not run `prepare` while a `jetlink-server` is using the same cache.** Two
-processes building into one cache is unsupported, and on a small machine the
-two builds together run out of memory. The command warns when it thinks a
-server is running, but it cannot always tell. On a Jetson, stop the service
+**Do not run `prepare` while a `jetlink-server` is using the same cache.**
+Concurrent builds in the same cache are unsupported and can exhaust memory. The
+command cannot always detect a running server. On a Jetson, stop the service
 first:
 
 ```bash
 sudo systemctl stop jetlink-server
 ```
 
-Or leave the server running and ask it to prepare the model over the
-[control channel](#the-control-channel), the only safe way to build while it
-serves.
+Or leave the server running and ask it to prepare the model over the [control
+channel](#the-control-channel), the only safe way to build while it serves.
 
 ### Exit codes
 
@@ -216,24 +216,24 @@ serves.
 
 ## On a Jetson
 
-The Docker image carries the same package, so nothing has to be installed. Run
-the module with the cache bind-mounted:
+The Docker image includes the model CLI. Mount the cache directory and run the
+module. Replace `<ref>` with a 40-character ref from `list`:
 
 ```bash
 sudo docker run --rm -it -v /mnt/data/jetlink:/mnt/data/jetlink \
   --entrypoint python3 jetlink:latest -m jetlink.registry fetch <ref>
 ```
 
-The image published to GHCR carries the same command; substitute its name for
+The GHCR image includes the same command; substitute its name for
 `jetlink:latest`.
 
-Every subcommand works this way. Remember the rule above: stop
-`jetlink-server` before `prepare`, or use the control channel.
+Every subcommand works this way. Stop `jetlink-server` before `prepare`, or use
+the control channel.
 
 ## The control channel
 
-For integrators who want to drive a running server from a script. The Mac app
-uses nothing else.
+Use the control channel to manage a running server from a script. The Mac app
+uses the same protocol.
 
 ### Starting a server with a control socket
 
@@ -250,9 +250,9 @@ SIGTERM is handled like SIGINT: clean shutdown, engine released, exit code 0.
 
 ### The protocol
 
-The channel is a stream socket carrying UTF-8 JSON, one object per line,
-newline terminated, with no pretty printing. Absent optional fields are `null`,
-never missing, so a decoder can be strict.
+The channel is a stream socket carrying UTF-8 JSON, one object per line, newline
+terminated, with no pretty printing. Absent optional fields are `null`, never
+missing, so a decoder can be strict.
 
 Client to server: `{"id": <int>, "cmd": "<name>", ...arguments}`. The client
 chooses `id`, positive and increasing.
@@ -270,9 +270,9 @@ disconnected.
 
 The server sends, in this order: `hello`, `server`, `link`, `engine`,
 `inventory`, `catalog`, then one `download` event per download in progress. A
-client needs no command to render its first screen.
+client can display this initial state without sending a command.
 
-### A worked example
+### Example
 
 Start a server with a socket:
 
@@ -293,8 +293,8 @@ printf '{"id":1,"cmd":"download","ref":"f877d7a0ccc3cce943c76e285214c020cd65c899
   | nc -U /tmp/jetlink-control.sock
 ```
 
-`socat - UNIX-CONNECT:/tmp/jetlink-control.sock` works the same way and is
-easier to script. Prepare the downloaded model without stopping the server:
+`socat` also supports this socket. To prepare the downloaded model without
+stopping the server, replace `<sha256>` with its full SHA-256 hash:
 
 ```bash
 printf '{"id":2,"cmd":"prepare","sha256":"<sha256>","frame_skip":4}\n' \
@@ -302,6 +302,9 @@ printf '{"id":2,"cmd":"prepare","sha256":"<sha256>","frame_skip":4}\n' \
 ```
 
 ### Events
+
+Values in angle brackets are placeholders. Timestamps use ISO 8601 strings or
+Unix seconds, as shown by each field.
 
 ```jsonc
 {"event":"hello","t":0,"protocol":1,"pid":4242,"version":"0.2.0","python":"3.14.7",
@@ -329,11 +332,11 @@ printf '{"id":2,"cmd":"prepare","sha256":"<sha256>","frame_skip":4}\n' \
 // the window. slow counts frames over 60 ms in the window.
 
 {"event":"inventory","t":0,"loaded":"<sha256>|null","last_loaded":"<sha256>|null",
- "models":[{"sha256":"…","bytes":765953504,"path":"…/models/a086d5249fc308bb.onnx","name":"BMRLNAP Model v4 (August 30, 2026)","ref":"f877d7a0…|null"}],
+ "models":[{"sha256":"…","bytes":765953504,"path":"…/models/a086d5249fc308bb.onnx","name":"BMRLNAP Model v4","ref":"f877d7a0…|null"}],
  "artifacts":[{"sha256":"…","key":"a086d5249fc308bb.ort1.29.0.coreml-Apple_M1_Pro","path":"…/engines/a086….ortcache",
-               "bytes":5900000000,"backend":"ort","runtime_version":"1.29.0","device":"coreml-Apple_M1_Pro",
-               "built_at":"2026-09-08T21:19:15Z","build_seconds":548.9,"checkpoint":"b9facbcc-…","current":true}],
- "disk":{"models_bytes":765953504,"engines_bytes":5900000000,"free_bytes":120000000000}}
+               "bytes":2300000000,"backend":"ort","runtime_version":"1.29.0","device":"coreml-Apple_M1_Pro",
+               "built_at":"<ISO 8601 timestamp>","build_seconds":8.2,"checkpoint":"b9facbcc-…","current":true}],
+ "disk":{"models_bytes":765953504,"engines_bytes":2300000000,"free_bytes":120000000000}}
 // models: every complete <sha16>.onnx in models/ (a .part is not listed).
 // artifacts: every engines/*.json sidecar with a spec.sha256, any backend.
 //   current is true when the key equals this server's cache key for that sha.
@@ -343,8 +346,8 @@ printf '{"id":2,"cmd":"prepare","sha256":"<sha256>","frame_skip":4}\n' \
 
 {"event":"catalog","t":0,"fetched_at":1757440000.0,"url":"https://…/driving_models_chestnut_v25.json",
  "default_ref":"f877d7a0ccc3cce943c76e285214c020cd65c899","error":null,
- "models":[{"name":"Cinque Terre Model V2 (September 08, 2026)","short_name":"CTMV2",
-            "ref":"37bfa1413edcdc2e8844984b83727c33f81d8f46","build_time":"2026-09-08T…Z","index":12,
+ "models":[{"name":"Cinque Terre Model V2","short_name":"CTMV2",
+            "ref":"37bfa1413edcdc2e8844984b83727c33f81d8f46","build_time":"<ISO 8601 timestamp>","index":12,
             "sha256":"…|null","bytes":765950064}]}
 // Newest first (index descending). sha256/bytes are null until the pointer for
 // that ref has been resolved. error is set when a refresh failed and the list
@@ -370,7 +373,7 @@ printf '{"id":2,"cmd":"prepare","sha256":"<sha256>","frame_skip":4}\n' \
 | `download` | `ref` or `sha256` (one of them) | `sha256` | resolve the pointer if needed; enqueue a download (one runs at a time, FIFO); `download` events follow. Error if already downloaded, already queued, or the ref is unknown. |
 | `cancel_download` | `sha256` | | cancels a running or queued download; `.part` removed; a `download` event with `cancelled` |
 | `import` | `path` | `queued: true` | hash the file (streaming), copy it to `models/<sha16>.onnx` via a `.part`, record its name and size; `import` events, then `inventory` |
-| `prepare` | `sha256`, `frame_skip` (default 4) | `state` | the path the comma's request takes, without a comma: build if needed, then load and keep loaded. Error when neither an artifact nor the model file exists. `state` is the engine state afterwards. |
+| `prepare` | `sha256`, `frame_skip` (default 4) | `state` | build if needed, then load the engine and keep it in memory. Error when neither an artifact nor the model file exists. `state` is the engine state afterwards. |
 | `unload` | | | release the loaded engine; `engine` event with `none` |
 | `forget` | `sha256`, `artifacts: bool`, `model: bool` | | unload first if that model is loaded; delete every `engines/<sha16>.*` when artifacts, `models/<sha16>.onnx` (and `.part`) when model; remove `last-loaded.json` if it names this sha and its artifact is gone; then `inventory` |
 | `inventory` | | | emit `inventory` |

@@ -1,21 +1,20 @@
 # Jetson setup
 
-This gets the server running on a Jetson Orin Nano Super (8 GB) and starting at
-boot. Set up the comma first with the three steps in the
-[README](../README.md#quick-start).
+Run the server on a Jetson Orin Nano Super (8 GB) and start it at boot. Set up
+the comma first with the three steps in the [README](../README.md#quick-start).
 
-Allow up to two hours the first time, mostly downloads and builds. Keep the
-Jetson on a supply sized for its 25 W power mode with internet access, and
-several GB free on `/mnt/data`.
+Allow up to two hours the first time, mostly downloads and builds. Connect the
+Jetson to the internet and a power supply sized for its 25 W mode. Keep several
+GB free on `/mnt/data`.
 
 Run the commands below in a terminal on the Jetson. `sudo` asks for your Jetson
-password; typing it shows nothing.
+password; the terminal does not display characters as you type.
 
 ## Install and run
 
 The tested Jetson runs **JetPack 6.2 (L4T r36.4.3)**. Docker runs the server
-with its dependencies; the container uses the `l4t-jetpack:r36.4.0` base
-image with CUDA 12.6 and TensorRT 10.3.
+with its dependencies; the container uses the `l4t-jetpack:r36.4.0` base image
+with CUDA 12.6 and TensorRT 10.3.
 
 ```bash
 sudo apt update
@@ -30,14 +29,14 @@ sudo docker/run.sh --transport usb
 ```
 
 The build downloads several GB. When the server prints that it is waiting for a
-gadget, it is ready for the comma. Plug **Jetson USB-A → comma USB-C** and wait
-for the green icon as described in the README. The default model takes about
-3 minutes to build; the engine is cached for later starts.
+gadget, it is ready for the comma. Connect **Jetson USB-A to comma USB-C** and
+wait for the green icon as described in the README. The default model takes
+about 3 minutes to build; the engine is cached for later starts.
 
 ## Start at boot
 
 Once the connection works, press **Ctrl-C** to stop the foreground server, then
-from the `jetlink` folder:
+run these commands from the `jetlink` folder:
 
 ```bash
 sudo install -d /mnt/data/jetlink /etc/jetlink
@@ -55,46 +54,43 @@ sudo systemctl status jetlink-server
 ```
 
 Look for `active (running)` and press **q**. The service runs the exact image
-you built and pins the Jetson's clocks. Select the 25 W power mode in the
-Jetson's power menu.
+you built and sets the Jetson's clocks to fixed speeds. Select the 25 W power
+mode in the Jetson's power menu.
 
 The `sed` line turns off idle suspend, which is the right default for an
-ignition-switched supply. If the Jetson has always-on power, read
-[always-on supply and suspend](transport.md#always-on-supply-and-suspend) first
-and skip that line.
+ignition-switched supply. If the Jetson has always-on power, read [always-on
+supply and suspend](transport.md#always-on-supply-and-suspend) first and skip
+that line.
 
-`--sleep-after` decides two things, because the comma reads it from the
-server's greeting. With it, the comma lets the link go about a minute after
-the engine is ready, so the Jetson can suspend and the USB edge wakes it again.
-Without it, the comma holds the link for the whole time you are parked and the
-icon stays green.
+`--sleep-after` enables idle suspend and tells the comma to release the USB
+connection while parked. Without it, the link stays connected and the icon stays
+green while the comma remains awake.
 
-On switched power the Jetson boots after the car starts: reckon on 65 to 96
-seconds from Jetson power to a prepared engine. The small model drives through
-all of it, the icon pulses, and then dims until the first stop with cruise off,
+On switched power the Jetson boots after the car starts: allow 65 to 96 seconds
+from Jetson power to a prepared engine. The comma uses the small model during
+startup; the icon pulses, and then dims until the first stop with cruise off,
 which is when the large model takes over.
 
 To stop the service: `sudo systemctl disable --now jetlink-server`.
 
 ## Choosing a model
 
-Pick another model under **Settings > Models > Big Model** while parked and
-online, and wait for it to prepare. Only the download needs the internet and a
-parked car; if you drive off part way through the preparation the small model
-drives, the panel counts the build down, and the large model joins at the
-first stop with cruise off. The list is sunnypilot's big-model catalog, the one a
-chestnut board picks from; the comma stores your choice, fetches the ONNX only
-when the Jetson asks for it, and never downloads the chestnut's files unless a
-board is fitted. New models appear in the list without a comma or Jetlink
-update. Stick with 766 MB models on the Jetson. Lebowski (1.7 GB) runs at 46 ms against a 50 ms frame budget, which
-leaves little margin. See [measured performance](status.md#measured-performance).
+Select a model under **Settings > Models > Big Model** while parked and
+connected to the internet. Wait for the download and preparation to finish. If
+you start driving during preparation, the comma uses the small model and
+switches at the first stop with cruise off after the large model is ready.
+
+The list uses sunnypilot's big-model catalog and updates without a software
+update. Use 766 MB models on the Jetson. Lebowski (1.7 GB) runs at 46 ms against
+a 50 ms frame budget, which leaves little margin. See [measured
+performance](status.md#measured-performance).
 
 ### Swap for large models
 
-Building a 1.7 GB model such as Lebowski needs more memory than the 8 GB
-Jetson has. JetPack ships only compressed zram, which is not enough: the build
-gets killed part way through and the model never becomes ready. Add an 8 GB
-swap file once, before selecting a large model:
+Building a 1.7 GB model such as Lebowski needs more memory than the 8 GB Jetson
+has. JetPack ships only compressed zram, which is not enough: the build gets
+killed part way through and the model never becomes ready. Add an 8 GB swap file
+once, before selecting a large model:
 
 ```bash
 sudo fallocate -l 8G /mnt/data/swapfile
@@ -104,30 +100,29 @@ sudo swapon /mnt/data/swapfile
 echo '/mnt/data/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
-`free -h` should show 8 GB of swap. The swap is only used during the build;
-the finished engine is cached and running it does not touch swap. The 766 MB
-models build without it.
+`free -h` should show at least 8 GB of swap, including the new file. The swap is
+only used during the build; the finished engine is cached and running it does
+not touch swap. The 766 MB models build without it.
 
 ### Prefetching a model
 
-The Jetson can download a model itself instead of waiting for the comma to
-send it over the link, which is faster when the comma is on LTE. The image
-carries the command, so nothing extra has to be installed:
+The Jetson can download a model itself instead of waiting for the comma to send
+it over the link, which is faster when the comma is on LTE. The Docker image
+includes the command. Replace `<ref>` with a model ref:
 
 ```bash
 sudo docker run --rm -it -v /mnt/data/jetlink:/mnt/data/jetlink \
   --entrypoint python3 jetlink:latest -m jetlink.registry fetch <ref>
 ```
 
-`<ref>` is the 40-character commit hash of the model in the catalog;
-`... -m jetlink.registry list` prints them. Stop the service with
-`sudo systemctl stop jetlink-server` before building a model with `prepare`:
-two processes building into one cache is unsupported.
+`<ref>` is the 40-character commit hash of the model in the catalog; replace
+`fetch <ref>` with `list` in the command above to see available refs. Stop the
+service with `sudo systemctl stop jetlink-server` before building a model with
+`prepare`: two processes building into one cache is unsupported.
 
-The server also has a local control channel, started with
-`--control-socket /run/jetlink-control.sock`, for scripting downloads and
-builds while it keeps serving. See
-[models and the model CLI](models.md#the-control-channel).
+The server also has a local control channel, started with `--control-socket
+/run/jetlink-control.sock`, for scripting downloads and builds while it keeps
+serving. See [models and the model CLI](models.md#the-control-channel).
 
 ## Troubleshooting
 
@@ -160,9 +155,10 @@ Save this boot's Jetson log (use `-b -1` for the previous boot):
 sudo journalctl -u jetlink-server -b --no-pager > jetson.log
 ```
 
-For comma logs, enable SSH in **Settings > Device** with your GitHub username
-as the SSH key, find the comma's IP in **Settings > Network**, then from a
-laptop with that key:
+For comma logs, enable SSH in **Settings > Device** with your GitHub username to
+authorize your GitHub SSH keys. Find the comma's IP in **Settings > Network**.
+From a laptop with the matching private key, run the command below. Replace
+`<comma-ip>` with the comma's IP address:
 
 ```bash
 ssh comma@<comma-ip> 'tar czf - /data/log' > comma-log.tgz
