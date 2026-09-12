@@ -9,8 +9,8 @@ The control channel, against a real EngineHost and a stand-in registry.
 The socket, the framing, the event order on connect, the command dispatch and
 the download bookkeeping are the code that will run under the Mac app. Only the
 backend (FakeBackend) and the network side of the registry are faked; the
-registry stand-in implements the API in plans/macos-app/01-contracts.md
-section 5, so this file runs whether or not jetlink.registry is merged yet.
+registry stand-in implements the same API as jetlink.registry, so this file
+runs whether or not that module is merged yet.
 """
 from __future__ import annotations
 

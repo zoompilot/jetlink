@@ -10,8 +10,9 @@ dist/
 .venv/
 *.pkl
 
-# Local research, worklogs, and maintainer notes
+# Local research, worklogs, plans, and maintainer notes
 /notes/
+/plans/
 
 # The Mac script's engine cache (scripts/run-mac.sh); 5.5 GB per CoreML model
 /models_cache/
