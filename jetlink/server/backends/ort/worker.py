@@ -34,6 +34,8 @@ from multiprocessing import shared_memory
 
 import numpy as np
 
+from jetlink.server.backends.ort.metal import create_keepalive
+
 # One block, laid out as the child reports it: every input, then every output.
 LAYOUT_ALIGN = 64
 
@@ -69,6 +71,7 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
   would have raised.
   """
   block = None
+  keepalive = None
   try:
     import onnxruntime as ort
 
@@ -111,6 +114,7 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
     feeds = views(block, laid_in)
     sinks = views(block, laid_out)
     plan = [([i.name for i in s.get_inputs()], [o.name for o in s.get_outputs()]) for s in chain]
+    keepalive = create_keepalive(sessions)
     conn.send(('ready', [list(s.get_providers()) for s in chain]))
 
     while True:
@@ -121,6 +125,8 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
         conn.send(('error', f"unknown request {msg[0]!r}"))
         continue
       try:
+        if keepalive is not None:
+          keepalive.pulse()
         t0 = time.perf_counter()
         between: dict[str, np.ndarray] = {}
         results = None
@@ -132,6 +138,8 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
           np.copyto(sinks[name], np.asarray(value).reshape(sinks[name].shape), casting='unsafe')
         conn.send(('ok', int((time.perf_counter() - t0) * 1e6)))
       except Exception as e:
+        if keepalive is not None:
+          keepalive.pause()
         conn.send(('error', f"{type(e).__name__}: {e}"))
   except Exception:
     try:
@@ -139,6 +147,8 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
     except OSError:
       pass
   finally:
+    if keepalive is not None:
+      keepalive.close()
     if block is not None:
       block.close()
     conn.close()

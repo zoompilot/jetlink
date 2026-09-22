@@ -66,6 +66,53 @@ a correlation of at least 0.999 to pass.
 over TCP loopback. Use the 20 Hz results when assessing the driving frame
 budget. See [test without a comma](platforms.md#test-without-a-comma).
 
+### Keeping the Mac GPU responsive between frames
+
+CoreML's GPU path enables a small Metal keep-alive workload while inference
+requests are arriving. On an M2 Pro, the gaps in a 20 Hz stream allowed GPU
+clocks to fall even though continuous inference met the 50 ms deadline. The
+machine reported nominal thermal pressure. A similar intermittent GPU workload
+problem and a small-workload workaround are described in
+[Anukari's development report](https://anukari.com/blog/devlog/apple-performance-progress).
+
+On an M2 Pro with ONNX Runtime 1.29.0 and model `09d080f36965bb2a`, five-minute
+TCP loopback runs at 20 Hz on 2026-09-21 measured:
+
+| | Original run | With keep-alive |
+| --- | ---: | ---: |
+| mean round trip | 44.13 ms | 35.41 ms |
+| p99 round trip | 64.66 ms | 38.62 ms |
+| maximum round trip | 83.57 ms | 70.20 ms |
+| frames exceeding 50 ms | 1,119 / 5,990 (18.68%) | 3 / 5,990 (0.05%) |
+
+Each run excludes ten warm-up frames. With keep-alive, every 30-second
+window had a mean below 35.6 ms and p99 below 39 ms. Three isolated deadline
+misses remained; this is a desktop TCP measurement, not USB end-to-end validation.
+A subsequent 90-second control run with the helper disabled missed 498 of
+1,790 deadlines (27.82%), with a 69.10 ms p99. The first 32 recurrent frames
+produced bit-for-bit identical outputs with the helper enabled and disabled.
+
+The helper uses a separate 128-byte buffer, with one finite command in flight
+at a time on its own thread. It does not change model inputs, hidden state,
+precision, or CoreML compute units. It stops submitting work after one second
+without an inference request, on inference errors, or when the worker exits.
+CPU and Neural Engine sessions do not start it. If Metal initialization or a
+helper command fails, inference continues without the helper and logs a warning.
+
+This trades additional GPU activity and power consumption for lower latency;
+it does not change thermal limits or force a GPU clock setting. To disable it
+for comparison, launch the server with `JETLINK_METAL_KEEPALIVE=0`:
+
+```bash
+JETLINK_METAL_KEEPALIVE=0 JETLINK_TRANSPORT=tcp \
+  scripts/run-mac.sh --backend ort --device coreml --host 127.0.0.1
+```
+
+Use the same model and a sustained paced benchmark (`--rate 20 --n 6000`).
+A continuous benchmark (`--rate 0`) alone does not establish that the server
+can meet deadlines with pauses between frames. Measure on the target machine;
+results depend on hardware and competing workloads.
+
 ### Model preparation
 
 CoreML stores weights in a binary file. A prepared GPU model uses about 2.3 GB,
