@@ -7,7 +7,9 @@ temperature, or failure condition.
 ## Platform testing
 
 - **Jetson Orin Nano Super, 8 GB:** tested in a vehicle and in recorded-drive
-  replay with TensorRT 10.3.
+  replay on JetPack 6.2 with TensorRT 10.3. JetPack 7.2 (TensorRT 10.16, the
+  CUDA 13 image) is not yet tested on hardware: the image builds and its
+  TensorRT loads, and the installer is tested against stand-ins.
 - **Apple silicon:** tested on a 16 GB M1 Pro. CoreML on the GPU meets
   the 50 ms frame budget and loads a prepared model in about 2 seconds.
   tinygrad loads in a second but misses the budget on that machine. See

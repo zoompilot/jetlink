@@ -7,7 +7,7 @@ Jetlink supports TensorRT, tinygrad, and ONNX Runtime. For installation, see
 
 | Backend | Devices | Prepared files | Requirements |
 | --- | --- | --- | --- |
-| `trt` | NVIDIA CUDA | `.plan` | TensorRT 10.3 on JetPack 6, or TensorRT 11.x from PyPI |
+| `trt` | NVIDIA CUDA | `.plan` | TensorRT 10.3 on JetPack 6, 10.16 on JetPack 7.2, or 11.x from PyPI on a PC |
 | `tinygrad` | METAL, CUDA, NV, AMD, CPU | `.pkl` | The pinned tinygrad source version below |
 | `ort` | CoreML, CUDA, CPU | `.ortcache/` | ONNX Runtime 1.22+ |
 

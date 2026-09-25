@@ -5,18 +5,17 @@ parked.
 
 ## Which Jetlink to run
 
-Clone `main`. The zoompilot fork records the exact Jetlink commit it was tested
-with as its `jetlink_repo` submodule, and `main` is kept compatible with the
-current `jetson-trt` branch. If the protocol versions differ, the server rejects
-the connection and the comma keeps driving on the small model.
+`main`. The installer installs it by default, and the Mac app's releases are cut
+from it. The zoompilot fork records the exact Jetlink commit it was tested with
+as its `jetlink_repo` submodule, and `main` is kept compatible with the current
+`jetson-trt` branch. If the protocol versions differ, the server rejects the
+connection and the comma keeps driving on the small model.
 
-If the server refuses the comma after an update, check out the commit recorded
-in the fork's `jetlink_repo` submodule and rebuild. From the parent directory of
-your Jetlink checkout, run the commands below. Replace `COMMIT` with that hash:
+To install a release, or the commit the fork records, instead of `main`, pass
+it to the installer. Replace `v0.4.0` with a release tag:
 
 ```bash
-git -C jetlink fetch
-git -C jetlink checkout COMMIT
+curl -fsSL https://raw.githubusercontent.com/zoompilot/jetlink/v0.4.0/install.sh | bash -s -- --ref v0.4.0
 ```
 
 ## Updating
@@ -24,18 +23,13 @@ git -C jetlink checkout COMMIT
 1. Update the comma first from **Settings > Software** and let it reboot.
 2. Update the server using the method you installed:
 
+   - Jetson or Linux PC with the installer: `jetlink update`. It keeps your
+     answers, fetches the newest `main` (or your `--ref`), and restarts the
+     server.
    - Mac app: quit Jetlink, replace it with the new release, and reopen it.
    - Source install: run `git pull` from the Jetlink checkout. For the Mac
-     script, restart `scripts/run-mac.sh`; recreate `.venv` if dependencies changed.
-   - Jetson source install: run `git pull`, rebuild the image, and update the service
-     with the commands below from the checkout:
-
-```bash
-sudo docker/build.sh
-sudo docker image inspect --format 'JETLINK_IMAGE={{.Id}}' jetlink:latest \
-  | sudo tee /etc/jetlink/server.env >/dev/null
-sudo systemctl restart jetlink-server
-```
+     script, restart `scripts/run-mac.sh`; recreate `.venv` if dependencies
+     changed.
 
 3. Plug in while parked and wait for the green icon. A new Jetlink or model may
    need another engine build. Cached engines stay valid across updates that do
@@ -56,11 +50,11 @@ git push origin v0.3.0
 ```
 
 3. Watch **Actions > Release**. The macOS job takes about 20 minutes (the
-   embedded runtime, the build, notarization); the Jetson image runs under QEMU
-   and takes up to 30.
+   embedded runtime, the build, notarization); each image builds on a native
+   runner for its architecture.
 4. Check the release page. It should include `Jetlink-0.3.0.dmg`,
    `Jetlink-0.3.0.zip`, `SHA256SUMS`, the sdist and the wheel, and notes ending
-   with the GHCR image line.
+   with the installer command and the GHCR image lines.
 
 A prerelease tag is published as a prerelease. Supported formats include a
 hyphen (`v0.3.0-rc1`) and the PEP 440 suffixes (`v0.3.0a1`, `v0.3.0b2`,
@@ -87,25 +81,20 @@ for:
 
 | Tag | Platform | Base |
 | --- | --- | --- |
-| `0.3.0-jetson` | linux/arm64, JetPack | `l4t-jetpack:r36.4.0` |
-| `0.3.0-cuda` | linux/amd64, NVIDIA GPU | `nvidia/cuda:12.9.1-base-ubuntu24.04` |
+| `0.4.0-cuda` | linux/amd64 (NVIDIA PCs, driver 580+) and linux/arm64 (JetPack 7.2+) | `nvidia/cuda:13.2.1-base-ubuntu24.04` |
+| `0.4.0-jetpack6`, also `0.4.0-jetson` | linux/arm64, JetPack 6 | `l4t-jetpack:r36.4.0` |
 
-Choose the suffix for your platform. The Jetson image requires L4T and the
-NVIDIA container runtime; it does not support generic ARM64 servers. Always
-specify a version and suffix. The registry does not publish a `latest` tag.
+`-cuda` is one tag for two architectures, and Docker pulls the one for the
+machine. The JetPack 6 image requires L4T r36 and the NVIDIA container runtime;
+it does not run on JetPack 7 or generic Arm servers. The registry does not
+publish a `latest` tag.
 
-To update a Jetson using a release image, run the commands below on the Jetson.
-Replace `0.3.0` with the release version:
-
-```bash
-sudo docker pull ghcr.io/zoompilot/jetlink:0.3.0-jetson
-sudo docker image inspect --format 'JETLINK_IMAGE={{.Id}}' ghcr.io/zoompilot/jetlink:0.3.0-jetson \
-  | sudo tee /etc/jetlink/server.env >/dev/null
-sudo systemctl restart jetlink-server
-```
+Each push to `main` also publishes `edge-cuda` and `edge-jetpack6` (the Docker
+Images workflow), which is what the installer pulls. When neither exists for a
+machine, the installer builds the image there instead.
 
 Either image job may fail without blocking the rest of the release; the release
-notes then say which, and building locally still works.
+notes then say which, and `install.sh --build` still works.
 
 ### Signing secrets
 
@@ -133,6 +122,16 @@ instead for `NOTARY_PRIVATE_KEY_P8_BASE64`.
 
 Turn off **Settings > Models > Accelerator Link** to stop using Jetlink
 immediately. To roll back, restore the previous comma build and the previous
-server image together; restoring one side can leave them incompatible. Keep the
-model cache. On the Jetson, `docker image ls` shows earlier images, and the
-previous image ID can be written back into `/etc/jetlink/server.env`.
+server together; restoring one side can leave them incompatible. Keep the model
+cache.
+
+With the installer, run it with the release or commit to go back to:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zoompilot/jetlink/v0.4.0/install.sh | bash -s -- --ref v0.4.0
+```
+
+Or put an earlier image back by hand: `sudo docker image ls` shows the images on
+the machine, and the one to run is `JETLINK_IMAGE` in `/etc/jetlink/server.env`
+(an image ID from `sudo docker image inspect --format '{{.Id}}' IMAGE`). Then
+`jetlink restart`.

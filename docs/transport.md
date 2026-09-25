@@ -39,7 +39,8 @@ The script creates the gadget configuration. `jetlinkd` opens `ep0`, writes
 FunctionFS descriptors, and binds the USB device controller. The setup script
 cannot bind the controller before those descriptors exist.
 
-On the Jetson, run:
+On the Jetson, the installer sets up the server as a service; for a manual run,
+from a checkout:
 
 ```bash
 sudo docker/run.sh --transport usb
@@ -84,10 +85,12 @@ loaded engine in memory. Suspend power consumption is not measured. Measure it
 on your installation before leaving the Jetson connected permanently. The
 measured awake idle power is 6.8 W.
 
-To enable idle suspend, keep `--sleep-after 120` in the server service command
-when following [start at boot](jetson.md#start-at-boot). The service installs
-the USB wake setup and grants the container access to `/sys/power`. Suspend
-requires `deep` support in `/sys/power/mem_sleep`.
+To enable idle suspend, choose **Always on**, the recommended answer, when the
+[installer](jetson.md#2-run-the-installer) asks how the Jetson is powered, or
+run `jetlink setup` to change the answer later. The installer arms USB wake on
+the Jetson's hubs, grants the container access to `/sys/power`, and starts the
+server with `--sleep-after 120`. Suspend requires `deep` support in
+`/sys/power/mem_sleep`; the installer checks, and says so when it is missing.
 
 With idle suspend enabled:
 
@@ -108,10 +111,11 @@ enabled on the root hubs and onboard hub.
 ### Powering off with the comma
 
 When the comma shuts down under its battery policy (11.8 V or 30 hours parked),
-it asks the Jetson to power off. This requires the host-side
-`scripts/jetlink-poweroff.path` unit and its service. The server writes a flag
-in the cache directory; the host service removes the flag and powers off. Flags
-from earlier boots are ignored.
+it asks the Jetson to power off. The installer sets this up when you allow the
+comma to shut down the Jetson; it is the host-side
+`jetlink-poweroff.path` unit and its service. The server writes a flag in the
+models folder; the host service removes the flag and powers off. Flags from
+earlier boots are ignored.
 
 For testing, disable this poweroff action by creating the dry-run file:
 

@@ -18,12 +18,43 @@ drops while engaged, the comma soft-disables and tells you to take over. See
 
 ## Quick start
 
-Choose your computer: **[Mac](#mac)** · **[Jetson](#jetson)** · **[CUDA laptop](#cuda-laptop)**.
-Then follow the shared [comma setup](#comma-setup-all-platforms).
-
 You need a **comma 3X or comma 4**, a **USB 3 A-to-C data cable**, and
 **separate power for both devices**. Charge-only cables will not work.
 Keep the comma online and stay parked for the first setup.
+
+Choose your computer: **[Jetson or Linux PC](#jetson-or-linux-pc)** · **[Mac](#mac)**.
+Then follow the shared [comma setup](#comma-setup-all-platforms).
+
+### Jetson or Linux PC
+
+For a **Jetson Orin** on JetPack 7.2 or 6.2 (the Orin Nano Super 8 GB is the
+tested in-car setup), or a **Linux PC with an NVIDIA GPU** (GeForce RTX 20
+series or newer). Open a terminal on it and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zoompilot/jetlink/main/install.sh | bash
+```
+
+The installer checks the computer, asks a few questions, installs what is
+missing, and starts Jetlink. Press Enter at each question for the recommended
+answer. It takes 10 to 30 minutes, mostly downloading; Jetlink then starts by
+itself every time the computer does.
+
+On a Jetson it asks how the Jetson is powered in the car. **Always on** is
+recommended: the Jetson sleeps when the car is off to save battery and wakes
+when you start the car, so the large model is ready right away.
+
+Afterwards, the `jetlink` command looks after it:
+
+```bash
+jetlink status    # is it running, and is the comma connected
+jetlink logs      # watch what it is doing
+jetlink update    # get the newest version, keeping your answers
+```
+
+A new Jetson needs JetPack first: the [Jetson guide](docs/jetson.md) covers
+that, what the installer changes, and troubleshooting. For a PC, see
+[Linux](docs/platforms.md#linux-nvidia-gpu).
 
 ### Mac
 
@@ -58,81 +89,6 @@ GUI, see [macOS development](macos/README.md).
 </details>
 
 See the [Mac guide](docs/macos-app.md) for model downloads, settings, and logs.
-
-### Jetson
-
-For **Jetson Orin Nano Super (8 GB) with JetPack 6.2**. Use a power supply
-sized for 25 W mode and allow several GB of free space on `/mnt/data`.
-
-Run these commands in a terminal on the Jetson:
-
-```bash
-sudo apt update
-sudo apt install -y git docker.io nvidia-container
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-
-git clone https://github.com/zoompilot/jetlink.git
-cd jetlink
-```
-
-For a **release install**, copy the Jetson image reference from the
-[release notes](https://github.com/zoompilot/jetlink/releases). Set `IMAGE` to
-that reference, replacing `VERSION` below with its version:
-
-```bash
-IMAGE=ghcr.io/zoompilot/jetlink:VERSION-jetson
-sudo docker pull "$IMAGE"
-sudo env IMAGE="$IMAGE" docker/run.sh --transport usb
-```
-
-If the release has no Jetson image, or you want to **build from source**, run
-these commands instead from the `jetlink` folder:
-
-```bash
-sudo docker/build.sh
-sudo docker/run.sh --transport usb
-```
-
-Leave the terminal open and follow [comma setup](#comma-setup-all-platforms).
-Once it works, use the [Jetson guide](docs/jetson.md#start-at-boot) to start
-Jetlink automatically at boot. For a release image, use your image reference
-in place of `jetlink:latest` in that guide's image-inspection command.
-
-### CUDA laptop
-
-For a **Linux laptop with an NVIDIA GPU**, a working NVIDIA driver, and
-**Python 3.10 or later**. This setup is hardware-tested.
-
-On Ubuntu or Debian, run in a terminal:
-
-```bash
-sudo apt update
-sudo apt install -y git python3-venv libusb-1.0-0
-git clone https://github.com/zoompilot/jetlink.git
-cd jetlink
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -e ".[trt,usb,nvml]"
-sudo install -m 644 scripts/99-jetlink-host.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-jetlink-server --backend trt --transport usb
-```
-
-Leave the terminal open, keep the laptop powered and awake, then follow
-[comma setup](#comma-setup-all-platforms). If the comma was already plugged
-in, unplug and reconnect it so the USB permissions take effect.
-
-Next time, open a terminal in `jetlink` and run:
-
-```bash
-source .venv/bin/activate
-jetlink-server --backend trt --transport usb
-```
-
-For **Docker** or **Windows with WSL2**, see the
-[platform guide](docs/platforms.md#docker-nvidia-laptops-and-desktops).
-Windows USB setup is not validated; start with the guide's TCP bench test.
 
 ## Comma setup (all platforms)
 
@@ -190,7 +146,7 @@ To stop using Jetlink, turn off **Settings > Models > Accelerator Link**.
 | No Accelerator Link toggle | Check the branch in Settings > Software. |
 | Toggle is on, nothing happens | Read the setup alert on the home screen. |
 | Big Model list is empty | Connect the comma to the internet and use Refresh Model List. |
-| Server keeps waiting, icon never pulses | Check the server is running, use a USB-A port, try another USB 3 data cable. |
+| Server keeps waiting, icon never pulses | Run `jetlink status` on the computer, use a USB-A port, try another USB 3 data cable. |
 | Orange icon | Read the alert, check the comma's internet, then toggle Accelerator Link off and on. |
 | Model drops out repeatedly | Check the cable, separate power supplies, and cooling. |
 
@@ -210,7 +166,7 @@ collect logs when reporting a problem.
 ## More
 
 - [Jetlink for Mac, the app](docs/macos-app.md)
-- [Jetson setup, boot service, troubleshooting, logs](docs/jetson.md)
+- [Jetson setup: JetPack, the installer, troubleshooting, logs](docs/jetson.md)
 - [Mac, Linux, Windows, Docker, and testing without a comma](docs/platforms.md)
 - [Models, the model CLI, and the control channel](docs/models.md)
 - [Status, known limitations, and measured performance](docs/status.md)

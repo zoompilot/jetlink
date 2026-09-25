@@ -230,21 +230,19 @@ channel](#the-control-channel), the only safe way to build while it serves.
 | 2 | A network request failed |
 | 3 | The download failed verification, by size or by hash |
 
-## On a Jetson
+## On a Jetson or an installed PC
 
-The Docker image includes the model CLI. Mount the cache directory and run the
-module. Replace `<ref>` with a 40-character ref from `list`:
+The installer's `jetlink models` runs this CLI inside the server image, with the
+server's models folder. Replace `<ref>` with a 40-character ref from `list`:
 
 ```bash
-sudo docker run --rm -it -v /mnt/data/jetlink:/mnt/data/jetlink \
-  --entrypoint python3 jetlink:latest -m jetlink.registry fetch <ref>
+jetlink models list
+jetlink models fetch <ref>
 ```
 
-The GHCR image includes the same command; substitute its name for
-`jetlink:latest`.
-
-Every subcommand works this way. Stop `jetlink-server` before `prepare`, or use
-the control channel.
+Every subcommand works this way. Stop the server with `jetlink stop` before
+`prepare`, and start it again afterwards with `jetlink start`, or use the
+control channel.
 
 ## The control channel
 

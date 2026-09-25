@@ -1,153 +1,154 @@
 # Jetson setup
 
-Run the server on a Jetson Orin Nano Super (8 GB) and start it at boot. Set up
-the comma first with the three steps in the [README](../README.md#quick-start).
+Jetlink runs on a Jetson Orin in the car, connected to the comma by a USB cable.
+Three steps: put JetPack on the Jetson, run the installer, and set up the comma.
+Allow about an hour the first time, mostly downloads.
 
-Allow up to two hours the first time, mostly downloads and builds. Connect the
-Jetson to the internet and a power supply sized for its 25 W mode. Keep several
-GB free on `/mnt/data`.
+## What you need
 
-Run the commands below in a terminal on the Jetson. `sudo` asks for your Jetson
-password; the terminal does not display characters as you type.
+- A **Jetson Orin**. The Orin Nano Super Developer Kit (8 GB) is the tested
+  board.
+- **JetPack 7.2.1** (recommended) or JetPack 6.2. The installer supports both.
+- A microSD card of 64 GB or more, or better an NVMe SSD.
+- A power supply that can deliver the Jetson's full power: 25 W or more for an
+  Orin Nano. In the car, that means a proper DC supply, not the comma's USB port.
+  An always-on feed is recommended; see the first question below.
+- Internet during setup, and a **USB 3 A-to-C data cable** for the comma.
 
-## Install and run
+## 1. Put JetPack on the Jetson
 
-The tested Jetson runs **JetPack 6.2 (L4T r36.4.3)**. Docker runs the server
-with its dependencies; the container uses the `l4t-jetpack:r36.4.0` base image
-with CUDA 12.6 and TensorRT 10.3.
+Skip this if the Jetson already runs JetPack 7.2 or 6.2. To check, run
+`cat /etc/nv_tegra_release` on it: `R39` with `REVISION: 2.1` or later is
+JetPack 7.2.1, and `R36` with `REVISION: 4.3` or later is JetPack 6.2.
+
+JetPack 7.2 is installed from a USB stick and **erases the drive you install it
+on**. NVIDIA's [Orin Nano quick start
+guide](https://docs.nvidia.com/jetson/orin-nano-devkit/user-guide/latest/quick_start.html)
+has the details; in short:
+
+1. On another computer, download the **Jetson ISO** from NVIDIA's [JetPack
+   page](https://developer.nvidia.com/embedded/jetpack) and write it to a USB
+   stick of 16 GB or more with [balenaEtcher](https://etcher.balena.io/).
+   Copying the file onto the stick does not work.
+2. Connect a DisplayPort monitor, a keyboard, the target microSD card or SSD,
+   and the USB stick to the Jetson, then power it on.
+3. Press **Esc** at the NVIDIA logo, open **Boot Manager**, and choose the USB
+   stick.
+4. **Press Y within 30 seconds** when it offers a firmware update. Missing this
+   is the most common reason the install fails. The Jetson may restart on its
+   own afterwards; that is expected.
+5. Choose **Install Jetson ISO**, pick the drive, and confirm.
+6. Remove the USB stick when it finishes, then go through the first-boot setup:
+   language, network, and your user account.
+
+A Jetson that came with very old firmware (older than 36.0) needs NVIDIA's
+JetPack 6 update path first; the quick start guide explains how to check.
+
+## 2. Run the installer
+
+On the Jetson, open a terminal (or connect with `ssh`) and run:
 
 ```bash
-sudo apt update
-sudo apt install -y git docker.io nvidia-container
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-
-git clone https://github.com/zoompilot/jetlink.git
-cd jetlink
-sudo docker/build.sh
-sudo docker/run.sh --transport usb
+curl -fsSL https://raw.githubusercontent.com/zoompilot/jetlink/main/install.sh | bash
 ```
 
-The build downloads several GB. When the server prints that it is waiting for a
-gadget, it is ready for the comma. Connect **Jetson USB-A to comma USB-C** and
-wait for the green icon as described in the README. The default model takes
-about 3 minutes to build; the engine is cached for later starts.
+It shows what it found, asks a few questions, shows the plan, and asks before
+changing anything. Press Enter at each question for the recommended answer.
 
-## Start at boot
+| It asks | What it means |
+| --- | --- |
+| How is the Jetson powered in the car? | **Always on** (recommended): the Jetson sleeps when the car is off to save battery and wakes when you start the car, so the large model is ready within seconds. **Switched**: it turns on and off with the car, and the large model is ready about a minute after you start it. |
+| Allow the comma to shut down the Jetson to protect the car battery? | Always on only. When the comma shuts itself down for low battery, it turns the Jetson off too. The Jetson then stays off until its power is reconnected. See [powering off with the comma](transport.md#powering-off-with-the-comma). |
+| Run in the fastest power mode? | Switches to MAXN SUPER, which the large models need to keep up. The power supply has to be able to deliver it. Switching can need one restart; the installer says so at the end. |
+| Add 8 GB of swap? | The 1.7 GB models need more memory than the Jetson has while they are prepared. Uses 8 GB of disk space. |
 
-Once the connection works, press **Ctrl-C** to stop the foreground server, then
-run these commands from the `jetlink` folder:
+The installer then:
+
+- installs Docker and NVIDIA's container toolkit if they are missing
+- downloads the Jetlink server, or builds it on the Jetson when there is no
+  ready-made one for its JetPack (the same 10 to 30 minutes)
+- checks that the server can use the GPU
+- sets up the `jetlink-server` service to start at every boot, and the
+  `jetlink` command
+- stops the Jetson waiting for a network at boot (the car has none, and waiting
+  cost about two minutes), and keeps the system log under 200 MB
+- keeps models and prepared engines in `/mnt/data/jetlink`
+
+When it finishes, it prints the comma steps. Running it again is safe: it
+offers to keep your answers and brings everything up to date.
+
+## 3. Set up the comma
+
+Follow [comma setup](../README.md#comma-setup-all-platforms) in the README:
+install the jetson-trt branch, turn on **Accelerator Link**, and connect the
+comma's USB-C port to one of the Jetson's **USB-A** ports. The first model takes
+about 3 minutes to prepare on the Jetson.
+
+## Everyday use
 
 ```bash
-sudo install -d /mnt/data/jetlink /etc/jetlink
-sudo docker image inspect --format 'JETLINK_IMAGE={{.Id}}' jetlink:latest \
-  | sudo tee /etc/jetlink/server.env >/dev/null
-sudo chmod 644 /etc/jetlink/server.env
-sudo install -m 755 scripts/jetlink-wake-setup.sh /usr/local/bin/
-sudo install -m 644 scripts/99-jetlink-usb-wakeup.rules /etc/udev/rules.d/
-sudo install -m 644 scripts/jetlink-server.service /etc/systemd/system/
-sudo sed -i 's/ --sleep-after 120//' /etc/systemd/system/jetlink-server.service
-sudo udevadm control --reload-rules
-sudo systemctl daemon-reload
-sudo systemctl enable --now jetlink-server
-sudo systemctl status jetlink-server
+jetlink status      # is it running, is the comma connected, which power setup
+jetlink logs        # follow the server's log; Ctrl-C to stop watching
+jetlink restart     # restart the server
+jetlink update      # get the newest Jetlink, keeping your answers
+jetlink setup       # answer the questions again, for example after rewiring the Jetson's power
+jetlink uninstall   # remove Jetlink; asks before deleting downloaded models
 ```
 
-Look for `active (running)` and press **q**. The service runs the exact image
-you built and sets the Jetson's clocks to fixed speeds. Select the 25 W power
-mode in the Jetson's power menu.
+The commands ask for your password when they need administrator rights.
 
-The `sed` line turns off idle suspend, which is the right default for an
-ignition-switched supply. If the Jetson has always-on power, read [always-on
-supply and suspend](transport.md#always-on-supply-and-suspend) first and skip
-that line.
-
-`--sleep-after` enables idle suspend and tells the comma to release the USB
-connection while parked. Without it, the link stays connected and the icon stays
-green while the comma remains awake.
-
-On switched power the Jetson boots after the car starts: allow 65 to 96 seconds
-from Jetson power to a prepared engine. The comma uses the small model during
-startup; the icon pulses, and then dims until the first stop with cruise off,
-which is when the large model takes over.
-
-To stop the service: `sudo systemctl disable --now jetlink-server`.
+On switched power, allow 65 to 96 seconds from power to a prepared engine. The comma drives on the small model until then; its icon
+pulses, then dims until the first stop with cruise off, which is when the large
+model takes over.
 
 ## Choosing a model
 
-Select a model under **Settings > Models > Big Model** while parked and
-connected to the internet. Wait for the download and preparation to finish. If
-you start driving during preparation, the comma uses the small model and
+Select a model under **Settings > Models > Big Model** on the comma while parked
+and connected to the internet. Wait for the download and preparation to finish.
+If you start driving during preparation, the comma uses the small model and
 switches at the first stop with cruise off after the large model is ready.
 
 The list uses sunnypilot's big-model catalog and updates without a software
 update. Use 766 MB models on the Jetson. Lebowski (1.7 GB) runs at 46 ms against
-a 50 ms frame budget, which leaves little margin. See [measured
-performance](status.md#measured-performance).
+a 50 ms frame budget, which leaves little margin, and needs the swap the
+installer offers. See [measured performance](status.md#measured-performance).
 
-### Swap for large models
-
-Building a 1.7 GB model such as Lebowski needs more memory than the 8 GB Jetson
-has. JetPack ships only compressed zram, which is not enough: the build gets
-killed part way through and the model never becomes ready. Add an 8 GB swap file
-once, before selecting a large model:
-
-```bash
-sudo fallocate -l 8G /mnt/data/swapfile
-sudo chmod 600 /mnt/data/swapfile
-sudo mkswap /mnt/data/swapfile
-sudo swapon /mnt/data/swapfile
-echo '/mnt/data/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-```
-
-`free -h` should show at least 8 GB of swap, including the new file. The swap is
-only used during the build; the finished engine is cached and running it does
-not touch swap. The 766 MB models build without it.
-
-### Prefetching a model
+### Downloading a model on the Jetson
 
 The Jetson can download a model itself instead of waiting for the comma to send
-it over the link, which is faster when the comma is on LTE. The Docker image
-includes the command. Replace `<ref>` with a model ref:
+it over the link, which is faster when the comma is on LTE. List the models and
+their refs, then fetch one by its ref:
 
 ```bash
-sudo docker run --rm -it -v /mnt/data/jetlink:/mnt/data/jetlink \
-  --entrypoint python3 jetlink:latest -m jetlink.registry fetch <ref>
+jetlink models list
+jetlink models fetch <ref>
 ```
 
-`<ref>` is the 40-character commit hash of the model in the catalog; replace
-`fetch <ref>` with `list` in the command above to see available refs. Stop the
-service with `sudo systemctl stop jetlink-server` before building a model with
-`prepare`: two processes building into one cache is unsupported.
-
-The server also has a local control channel, started with `--control-socket
-/run/jetlink-control.sock`, for scripting downloads and builds while it keeps
-serving. See [models and the model CLI](models.md#the-control-channel).
+`jetlink models` runs the [model CLI](models.md#commands) inside the server
+image, with the same models folder. To prepare a model ahead of time, stop the
+server first (`jetlink stop`), run `jetlink models prepare <ref>`, then
+`jetlink start`: two processes preparing into one folder is not supported.
 
 ## Troubleshooting
 
 | Problem | What to do |
 | --- | --- |
-| Server keeps waiting, or icon never pulses | Check the server is running, use a Jetson USB-A port, try another USB 3 data cable |
-| Engine build fails | Check free space in `/mnt/data/jetlink` and JetPack/TensorRT version |
-| Large model build is killed or hangs | Add [swap](#swap-for-large-models) |
-| Model repeatedly drops out | Check separate supplies and voltage dips, cable, cooling, and server logs |
-| Frame time exceeds 50 ms | Check USB 3 speed, Jetson power mode, cooling, and model choice |
+| The installer stops with an error | Run it again: it is safe to repeat, and picks up where it left off. The full log is in `/var/log/jetlink-install.log`. |
+| The icon never pulses, the server keeps waiting | `jetlink status` should say running. Use a Jetson USB-A port, and try another USB 3 data cable. |
+| Engine build fails | Check free disk space (`df -h /mnt/data`) and `jetlink logs` |
+| Large model build is killed or hangs | Run `jetlink setup` and accept the swap |
+| Model repeatedly drops out | Check separate supplies and voltage dips, cable, cooling, and `jetlink logs` |
+| Frame time exceeds 50 ms | Check USB 3 speed, the power mode (`sudo nvpmodel -q`), cooling, and model choice |
 | Jetson fails to wake | See [USB wake setup](transport.md#always-on-supply-and-suspend) |
 | Server refuses the comma after an update | Update both sides together, see [updates](releasing.md) |
 | “Speed Error: nan” or no path | Stop the test and collect logs |
 
-Live server logs (Ctrl-C stops viewing):
-
-```bash
-sudo journalctl -u jetlink-server -b -f
-```
-
 ### Reporting a problem
 
-Include your platform, Jetlink commit, selected model, time of the test, the
-exact alert, and what you saw or heard. For a drive investigation, share the
-dongle ID from **Settings > Device**.
+Include your platform, JetPack version, Jetlink commit (`jetlink status` shows
+the server image), selected model, time of the test, the exact alert, and what
+you saw or heard. For a drive investigation, share the dongle ID from
+**Settings > Device**.
 
 Save this boot's Jetson log (use `-b -1` for the previous boot):
 
@@ -163,3 +164,27 @@ From a laptop with the matching private key, run the command below. Replace
 ```bash
 ssh comma@<comma-ip> 'tar czf - /data/log' > comma-log.tgz
 ```
+
+## Installing by hand
+
+The installer is the supported way. For a custom setup, these are the pieces it
+puts together, from a checkout of this repository:
+
+1. Docker, and the NVIDIA Container Toolkit with `sudo nvidia-ctk runtime
+   configure --runtime=docker`. On JetPack 6 use Ubuntu's `docker.io`: Docker 28
+   and later cannot run containers on a JetPack 6 kernel.
+2. The server image: `sudo docker/build.sh` picks `docker/Dockerfile` (CUDA 13,
+   JetPack 7.2 and PCs) or `docker/Dockerfile.jetpack6`.
+3. `/etc/jetlink/server.env`, which `scripts/jetlink-run-server` reads to start
+   the container. Its header lists every setting; `JETLINK_IMAGE` is the
+   image's ID from `sudo docker image inspect --format '{{.Id}}' jetlink:latest`.
+4. `scripts/jetlink-run-server` installed as `/usr/local/lib/jetlink/run-server`
+   and `scripts/jetlink-server.service` in `/etc/systemd/system`, then
+   `sudo systemctl enable --now jetlink-server`.
+5. On an always-on supply, `scripts/99-jetlink-usb-wakeup.rules` in
+   `/etc/udev/rules.d` and `scripts/jetlink-wake-setup.sh` as
+   `/usr/local/lib/jetlink/wake-setup`, so the comma can wake the Jetson; and
+   optionally the `scripts/jetlink-poweroff.*` units.
+
+To try the server in a terminal first, `sudo docker/run.sh --transport usb`
+runs it in the foreground; Ctrl-C stops it.

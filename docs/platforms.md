@@ -4,7 +4,8 @@ Run Jetlink on a Mac, Linux PC, or Windows PC. Mac and Linux NVIDIA systems have
 hardware test results. Windows WSL2 is untested. Set up the comma with the steps
 in the [README](../README.md#quick-start).
 
-For terminal and Docker setup, clone the repository first:
+On Linux the [installer](#linux-nvidia-gpu) needs nothing else. For the
+terminal and Docker setups below, clone the repository first:
 
 ```bash
 git clone https://github.com/zoompilot/jetlink.git
@@ -61,8 +62,26 @@ budget. Details in [backends and measurements](backends.md#mac-measured).
 
 ## Linux (NVIDIA GPU)
 
-Use [Docker](#docker-nvidia-laptops-and-desktops) or the native install below.
-You need a working NVIDIA driver.
+For a PC or laptop with a GeForce RTX 20 series or newer GPU, on Ubuntu or
+Debian. Run the installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zoompilot/jetlink/main/install.sh | bash
+```
+
+It checks the NVIDIA driver (580 or newer, which CUDA 13 needs) and on Ubuntu
+offers to install it, in which case restart and run the installer again. It
+then installs Docker and the NVIDIA Container Toolkit if they are missing, gets
+the Jetlink server, and asks whether to start it with the computer. Afterwards
+`jetlink status`, `jetlink logs`, `jetlink update` and `jetlink uninstall` look
+after it; see [everyday use](jetson.md#everyday-use), which is the same on a PC.
+
+Plug the comma into a USB-A port, and keep the computer powered and awake while
+driving: sleep drops the link.
+
+### Without Docker
+
+For development. You need a working NVIDIA driver and Python 3.10 or later.
 
 ```bash
 sudo apt update
@@ -75,9 +94,9 @@ sudo udevadm control --reload-rules
 jetlink-server --backend trt --transport usb
 ```
 
-Plug the comma into a USB-A port. The udev rule grants USB access without root;
-unplug and replug the comma after installing it. In a new terminal, run `source
-.venv/bin/activate` before using `jetlink-server` again.
+The udev rule grants USB access without root; unplug and replug the comma after
+installing it. In a new terminal, run `source .venv/bin/activate` before using
+`jetlink-server` again.
 
 Use `jetlink-models` to download and prepare a model on the server before
 connecting the comma. See [models and the model CLI](models.md).
@@ -91,9 +110,15 @@ comma to Ubuntu and is not a validated path.
 
 ## Docker (NVIDIA laptops and desktops)
 
-For an x86-64 machine with an NVIDIA GPU, on Linux or Windows with WSL2. The
-image includes Python, CUDA, TensorRT, and USB support. You still need the
-NVIDIA driver on the host.
+The installer uses these images; this section is for running them yourself,
+for example on Windows with WSL2. The image includes Python, CUDA 13, TensorRT,
+and USB support. The host needs the NVIDIA driver, 580 or newer.
+
+| Image | For |
+| --- | --- |
+| `ghcr.io/zoompilot/jetlink:VERSION-cuda` | NVIDIA PCs (x86-64) and Jetsons on JetPack 7.2 or newer: one tag, and Docker pulls the right architecture |
+| `ghcr.io/zoompilot/jetlink:VERSION-jetpack6` | Jetsons on JetPack 6 (also tagged `-jetson`) |
+| `ghcr.io/zoompilot/jetlink:edge-cuda`, `edge-jetpack6` | the newest `main`, what the installer uses |
 
 **Enable GPU access.** On Linux, install Docker Engine and the [NVIDIA Container
 Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html),
@@ -109,22 +134,22 @@ GPU guide](https://docs.docker.com/desktop/features/gpu/). Run the remaining
 commands in your Ubuntu WSL terminal. Verify GPU access:
 
 ```bash
-docker run --rm --gpus all nvidia/cuda:12.9.1-runtime-ubuntu24.04 nvidia-smi
+docker run --rm --gpus all nvidia/cuda:13.2.1-base-ubuntu24.04 nvidia-smi
 ```
 
-**Pull or build.** Pull a release image. Replace `VERSION` with the release
-version, such as `0.3.0`:
+**Pull or build.** Pull a release image, replacing `VERSION` with the release
+version, such as `0.4.0`, or use `edge-cuda`:
 
 ```bash
 docker pull ghcr.io/zoompilot/jetlink:VERSION-cuda
 docker tag ghcr.io/zoompilot/jetlink:VERSION-cuda jetlink:cuda
 ```
 
-Use `-cuda` for an NVIDIA PC and `-jetson` for a Jetson. To build it yourself
-instead, from the checkout:
+To build it yourself instead, from the checkout (`docker/Dockerfile.jetpack6`
+on a JetPack 6 Jetson):
 
 ```bash
-docker build -f docker/Dockerfile.cuda -t jetlink:cuda .
+docker build -f docker/Dockerfile -t jetlink:cuda .
 ```
 
 **Run it.**
@@ -166,8 +191,9 @@ jetlink-server --backend ort --device cpu --transport tcp
 
 ## Test without a comma
 
-You need a large driving-model ONNX file. With a TCP server running (on a
-Jetson: `sudo docker/run.sh --transport tcp`), run these commands from the
+You need a large driving-model ONNX file. With a TCP server running (on an
+installed Jetson or PC: `jetlink stop`, then `sudo docker/run.sh --transport
+tcp` from a checkout), run these commands from the
 checkout in a second terminal. Replace `/path/to/big_model.onnx` with your model
 file path:
 
@@ -203,7 +229,7 @@ docker run --rm -it --network container:jetlink-cuda \
 | USB library error | Install native libusb as well as the Python package |
 | USB permission error on Linux | Install the udev rule, then replug the comma |
 | TCP connection refused | Start the server with `--transport tcp`. Check the IP address and allow port 5599 through the firewall. |
-| GPU not found in Docker | Redo the GPU access setup and rerun the `nvidia-smi` check |
+| GPU not found in Docker | Redo the GPU access setup and rerun the `nvidia-smi` check; the driver must be 580 or newer |
 | Mac looks stuck loading | CoreML prepares in about 10 seconds and loads in about 2 on an M1 Pro. If loading takes minutes, remove the prepared engine and prepare it again. Check the server output for errors. |
 | Link drops when laptop sleeps | Keep it awake, powered, and open |
 
