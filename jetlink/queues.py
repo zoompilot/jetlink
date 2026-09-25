@@ -4,7 +4,8 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-The model's history buffers, reimplemented in numpy.
+The model's history buffers, reimplemented in numpy, or looped for a graph
+that keeps its own.
 
 openpilot folds these into the tinygrad JIT on the GPU. Shipping the history
 across the link would cost ~10 MB a frame, so the queues live on the server and
@@ -15,6 +16,10 @@ Two value-preserving differences: ring buffers rather than openpilot's rolling
 `cat(buf[1:], new)`, which copies 8.4 MB a frame; and float16 storage rather
 than float32 cast at the model boundary, so only the new row is cast. Pass
 dtype=np.float32 for openpilot's exact intermediates.
+
+A stateful graph (openpilot #38916) does the queueing itself, so for one of
+those there is nothing to reimplement: StateLoop feeds each next_state_ output
+back as its state_ input. for_model() picks the one a spec needs.
 """
 from __future__ import annotations
 
@@ -27,6 +32,18 @@ from jetlink.spec import ModelSpec
 # 5.2 ns/element, 68% of the frame. Only 256 inputs exist, so a lookup gives the
 # same bits at memcpy speed. Viewed as uint16 so np.take can share the dtype.
 _U8_TO_F16_BITS = np.arange(256, dtype=np.uint8).astype(np.float16).view(np.uint16)
+
+
+def write_u8(dest: np.ndarray, value: np.ndarray) -> None:
+  """Copy uint8 image bytes into `dest`, through the lookup for an fp16 one."""
+  if dest.dtype == np.float16 and value.dtype == np.uint8:
+    # take-with-out, not `dest[:] = lut[src]`: the latter builds a 393 KB
+    # temporary, 2.4 ms against 1.4 ms on the Orin (the other way on x86, so
+    # measure there). clip skips a bounds check a uint8 index cannot fail.
+    np.take(_U8_TO_F16_BITS, value.reshape(-1),
+            out=dest.reshape(-1).view(np.uint16), mode='clip')
+  else:
+    np.copyto(dest, value.reshape(dest.shape), casting='unsafe')
 
 
 def _strided_runs(head: int, n: int, step: int) -> list[tuple[slice, slice]]:
@@ -65,11 +82,7 @@ class RingQueue:
     # The slot the oldest element occupies becomes the newest once head moves.
     dest = self.buf[self.head]
     if self._lut and getattr(value, 'dtype', None) == np.uint8:
-      # take-with-out, not `dest[:] = lut[src]`: the latter builds a 393 KB
-      # temporary, 2.4 ms against 1.4 ms on the Orin (the other way on x86, so
-      # measure there). clip skips a bounds check a uint8 index cannot fail.
-      np.take(_U8_TO_F16_BITS, value.reshape(-1),
-              out=dest.reshape(-1).view(np.uint16), mode='clip')
+      write_u8(dest, value)
     else:
       dest[...] = value
     self.head = (self.head + 1) % self.n
@@ -108,6 +121,14 @@ def sample_desire(q: RingQueue, frame_skip: int, out: np.ndarray | None = None) 
   return m.reshape(1, m.shape[0] * m.shape[1], *m.shape[2:])
 
 
+def _unpack_layout(spec: ModelSpec) -> list[tuple[int, int, tuple[int, ...]]]:
+  offset, out = 0, []
+  for size, shape in zip(spec.packed_sizes, spec.packed_shapes.values(), strict=True):
+    out.append((offset, offset + size, shape))
+    offset += size
+  return out
+
+
 class PolicyQueues:
   """Server-side state for one model. Everything `run_policy` owned in the JIT."""
 
@@ -116,11 +137,7 @@ class PolicyQueues:
     self.dtype = dtype
     self.frame_skip = spec.frame_skip
 
-    offset = 0
-    self._packed_layout = []
-    for size, shape in zip(spec.packed_sizes, spec.packed_shapes.values(), strict=True):
-      self._packed_layout.append((offset, offset + size, shape))
-      offset += size
+    self._packed_layout = _unpack_layout(spec)
 
     self.img_q = RingQueue(spec.img_buf_shape, dtype)
     self.big_img_q = RingQueue(spec.img_buf_shape, dtype)
@@ -134,6 +151,9 @@ class PolicyQueues:
   def reset(self) -> None:
     for q in (self.img_q, self.big_img_q, self.feat_q, self.desire_q):
       q.reset()
+
+  def after_run(self, outputs: dict[str, np.ndarray], dest: dict[str, np.ndarray]) -> None:
+    """Nothing: the comma sends the hidden state back as prev_feat."""
 
   def _unpack(self, packed: np.ndarray):
     # slice views, not np.split: the offsets never change and split allocates
@@ -186,3 +206,67 @@ class PolicyQueues:
     dest['traffic_convention'][...] = traffic_convention.reshape(
       dest['traffic_convention'].shape)
     dest['action_t'][...] = action_t.reshape(dest['action_t'].shape)
+
+
+class StateLoop:
+  """Server-side state for a graph that keeps its own history.
+
+  The frame goes into new_img and the scalars into their inputs as they are;
+  the queues are the graph's, handed back each frame as next_state_<q> and fed
+  in as state_<q> on the next. That is openpilot's ModelState since #38916,
+  which aliases each next_ output onto its state_ input.
+
+  An engine with `loop_state` keeps the loop in device memory: the queues are
+  12 MB, which would otherwise cross to the host and back every frame. For any
+  other engine the copy is done here, after the reply has gone.
+  """
+
+  def __init__(self, spec: ModelSpec, engine):
+    if not spec.stateful:
+      raise ValueError("StateLoop is for a stateful graph; this one takes img")
+    self.spec = spec
+    self.engine = engine
+    self.pairs = spec.state_pairs
+    if not self.pairs:
+      raise ValueError("the graph takes new_img but returns no next_state_ outputs")
+    for name in ('desire', 'traffic_convention', 'action_t'):
+      if name not in spec.input_shapes:
+        raise ValueError(f"the graph takes new_img but has no {name} input")
+    self._packed_layout = _unpack_layout(spec)
+    loop = getattr(engine, 'loop_state', None)
+    self.on_engine = bool(loop(self.pairs)) if callable(loop) else False
+
+  def reset(self) -> None:
+    """Empty queues, as openpilot's warmup leaves them."""
+    if self.on_engine:
+      self.engine.reset_state()
+    else:
+      for name in self.pairs:
+        self.engine.host_input(name)[...] = 0
+
+  def step_into(self, warped: np.ndarray, packed: np.ndarray,
+                dest: dict[str, np.ndarray]) -> None:
+    """Write one frame's inputs; the state inputs are already in place."""
+    spec = self.spec
+    if warped.shape != spec.warped_shape:
+      raise ValueError(f"warped {warped.shape} != {spec.warped_shape}")
+    if packed.size != spec.packed_nelem:
+      raise ValueError(f"packed {packed.size} != {spec.packed_nelem}")
+    write_u8(dest['new_img'], warped)
+    for name, (a, b, _) in zip(spec.packed_shapes, self._packed_layout, strict=True):
+      d = dest[name]
+      d[...] = packed[a:b].reshape(d.shape)
+
+  def after_run(self, outputs: dict[str, np.ndarray], dest: dict[str, np.ndarray]) -> None:
+    """Advance the queues: each next_state_ becomes next frame's state_."""
+    if self.on_engine:
+      return
+    for name, nxt in self.pairs.items():
+      d = dest[name]
+      np.copyto(d, outputs[nxt].reshape(d.shape), casting='unsafe')
+
+
+def for_model(spec: ModelSpec, engine) -> PolicyQueues | StateLoop:
+  """The server-side state a model needs: queues for a queued graph, the loop
+  for a stateful one."""
+  return StateLoop(spec, engine) if spec.stateful else PolicyQueues(spec)

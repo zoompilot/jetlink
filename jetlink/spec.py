@@ -6,10 +6,19 @@ See the LICENSE file in the root directory for more details.
 
 Every size on the wire, derived from the model's ONNX metadata.
 
-Mirrors get_policy_npy_shapes / make_input_queues in openpilot master's
-selfdrive/modeld/compile_modeld.py. feat_dim is prod(fb[2:]); older forks use
-fb[2], which gives 32 rather than 16384 for the big model's (1,32,32,512)
-features_buffer. tests/test_queues.py catches the drift.
+Two graph layouts are in the wild. The queued one takes its history as
+stacked inputs (img, features_buffer, desire_pulse) and the server keeps the
+queues; see queues.PolicyQueues. It mirrors get_policy_npy_shapes /
+make_input_queues in openpilot's selfdrive/modeld/compile_modeld.py up to
+openpilot #38916. feat_dim is prod(fb[2:]); older forks use fb[2], which gives
+32 rather than 16384 for the big model's (1,32,32,512) features_buffer.
+tests/test_queues.py catches the drift.
+
+The stateful one (openpilot #38916, 2026-09-15; Cinque Terre V3 onwards)
+carries its history in the graph: the newest warped frame goes in as new_img,
+each queue goes in as state_<q> and comes back advanced as next_state_<q>, and
+the hidden state never leaves the graph. The wire is the same frame and the
+same scalars minus prev_feat; see queues.StateLoop.
 """
 from __future__ import annotations
 
@@ -27,6 +36,10 @@ DEFAULT_FRAME_SKIP = MODEL_RUN_FREQ // MODEL_CONTEXT_FREQ  # 4
 
 CHUNK = 4 << 20  # model upload chunk
 
+# the input only a stateful graph has; see the module docstring
+STATEFUL_FRAME = 'new_img'
+STATE_OUTPUT_PREFIX = 'next_'
+
 
 @dataclass(frozen=True)
 class ModelSpec:
@@ -39,10 +52,23 @@ class ModelSpec:
   output_slices: dict[str, slice]
   checkpoint: str | None
 
+  # --- layout ---
+  @property
+  def stateful(self) -> bool:
+    """The graph keeps its own history (openpilot #38916)."""
+    return STATEFUL_FRAME in self.input_shapes
+
+  @property
+  def state_pairs(self) -> dict[str, str]:
+    """state_<q> input -> the next_state_<q> output that feeds it next frame.
+    Empty for a queued graph. Same rule as openpilot's ModelState."""
+    return {n: STATE_OUTPUT_PREFIX + n for n in self.input_shapes
+            if STATE_OUTPUT_PREFIX + n in self.output_shapes}
+
   # --- vision ---
   @property
   def img_shape(self) -> tuple[int, ...]:
-    return self.input_shapes['img']  # (1, 12, H, W)
+    return self.input_shapes['img']  # (1, 12, H, W); queued graphs only
 
   @property
   def n_frames(self) -> int:
@@ -50,7 +76,9 @@ class ModelSpec:
 
   @property
   def model_hw(self) -> tuple[int, int]:
-    return self.img_shape[2], self.img_shape[3]
+    # new_img is (2, 6, H, W) and img (1, 12, H, W): the last two either way
+    shape = self.input_shapes[STATEFUL_FRAME] if self.stateful else self.img_shape
+    return shape[-2], shape[-1]
 
   @property
   def img_buf_shape(self) -> tuple[int, int, int, int]:
@@ -76,9 +104,16 @@ class ModelSpec:
 
   @property
   def packed_shapes(self) -> dict[str, tuple[int, ...]]:
-    dp = self.input_shapes['desire_pulse']
     tc = self.input_shapes['traffic_convention']
     at = self.input_shapes['action_t']
+    if self.stateful:
+      # the pulse is the graph's own input and the hidden state stays inside it
+      return {
+        'desire': (math.prod(self.input_shapes['desire']),),
+        'traffic_convention': tuple(tc),
+        'action_t': tuple(at),
+      }
+    dp = self.input_shapes['desire_pulse']
     fb = self.input_shapes['features_buffer']
     return {
       'desire': (dp[2],),

@@ -452,9 +452,11 @@ class EngineHost:
       entry.write_meta({**meta, 'spec': spec.to_dict()})
 
   def _warm(self, engine, spec: ModelSpec) -> Loaded:
-    from jetlink.queues import PolicyQueues
-    queues = PolicyQueues(spec)
+    from jetlink.queues import for_model
     _check_shapes(engine, spec)
+    # before the warm run: a TensorRT engine that keeps the state loop on the
+    # GPU has to know it before the graph is captured
+    queues = for_model(spec, engine)
     # Warm runs on zeros, so the first real frame pays for nothing lazy: CUDA
     # state and the graph capture for TensorRT, a first replay for the others.
     host_inputs = {n: engine.host_input(n) for n in engine.inputs}
@@ -524,9 +526,18 @@ def _check_shapes(engine, spec: ModelSpec) -> None:
   missing = set(spec.input_shapes) - set(engine.inputs)
   if missing:
     raise ValueError(f"engine has no input(s) {sorted(missing)} the model spec declares")
-  out = next(iter(engine.outputs.values())).shape
+  out = _model_output(engine.outputs).shape
   if int(np.prod(out)) != spec.output_nelem:
     raise ValueError(f"output: engine {tuple(out)} vs spec {spec.output_nelem}")
+  missing = set(spec.state_pairs.values()) - set(engine.outputs)
+  if missing:
+    raise ValueError(f"engine has no output(s) {sorted(missing)} to feed the state back from")
+
+
+def _model_output(outputs: dict):
+  """The driving output. By name, since a stateful graph has its queues
+  beside it; a backend that reports one unnamed output has only that."""
+  return outputs['outputs'] if 'outputs' in outputs else next(iter(outputs.values()))
 
 
 class Session:
@@ -753,7 +764,7 @@ class Session:
     queue_us = int((time.perf_counter() - t0) * 1e6)
 
     outputs = loaded.engine.run()
-    out = next(iter(outputs.values())).reshape(-1)
+    out = _model_output(outputs).reshape(-1)
 
     # asarray, not astype: a no-op when the engine already outputs float32.
     # isfinite is ~7x faster on float32 and the non-finites map across exactly.
@@ -770,6 +781,9 @@ class Session:
     send_started = time.perf_counter()
     self._send(P.Msg.INFER_RESP, msg.seq, parts)
     send_us = int((time.perf_counter() - send_started) * 1e6)
+    # after the reply: nothing reads the state until the next frame, and a
+    # backend that loops it on the host copies 12 MB to do it
+    loaded.queues.after_run(outputs, loaded.host_inputs)
     self.frames += 1
     if total_us > SLOW_FRAME_US or send_us > 10_000:
       # After the reply, so the log never delays it. The comma logs the same

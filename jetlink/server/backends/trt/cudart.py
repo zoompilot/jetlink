@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover - depends on the wheel on the device
 cudaSuccess = _rt.cudaError_t.cudaSuccess
 cudaMemcpyHostToDevice = _rt.cudaMemcpyKind.cudaMemcpyHostToDevice
 cudaMemcpyDeviceToHost = _rt.cudaMemcpyKind.cudaMemcpyDeviceToHost
+cudaMemcpyDeviceToDevice = _rt.cudaMemcpyKind.cudaMemcpyDeviceToDevice
 cudaHostAllocDefault = 0
 
 
@@ -74,6 +75,14 @@ def memcpy_h2d_async(dst: int, src: int, nbytes: int, stream: int) -> None:
 
 def memcpy_d2h_async(dst: int, src: int, nbytes: int, stream: int) -> None:
   check(_rt.cudaMemcpyAsync(dst, src, nbytes, cudaMemcpyDeviceToHost, stream))
+
+
+def memcpy_d2d_async(dst: int, src: int, nbytes: int, stream: int) -> None:
+  check(_rt.cudaMemcpyAsync(dst, src, nbytes, cudaMemcpyDeviceToDevice, stream))
+
+
+def memset_async(ptr: int, value: int, nbytes: int, stream: int) -> None:
+  check(_rt.cudaMemsetAsync(ptr, value, nbytes, stream))
 
 
 def set_device(device: int) -> None:

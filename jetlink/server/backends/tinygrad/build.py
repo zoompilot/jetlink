@@ -142,11 +142,22 @@ def make_staging(plan: list[Staged]) -> tuple[dict[str, np.ndarray], dict]:
   return arrays, tensors
 
 
-def make_fn(runner, plan: list[Staged], device: str):
+def output_names(runner) -> list[str]:
+  """What the JIT returns, driving output first. A stateful graph's
+  next_state_ queues come after it; the server feeds them back."""
+  names = list(runner.graph_outputs)
+  if 'outputs' in names:
+    names.remove('outputs')
+    return ['outputs', *names]
+  return names[:1]
+
+
+def make_fn(runner, plan: list[Staged], device: str, names: list[str] | None = None):
   from tinygrad.dtype import _from_np_dtype
   from tinygrad.engine.jit import TinyJit
 
   casts = {s.name: _from_np_dtype(np.dtype(s.model_dtype)) for s in plan if s.model_dtype != s.host_dtype}
+  names = names or output_names(runner)
 
   def fn(**staged):
     inputs = {}
@@ -155,11 +166,18 @@ def make_fn(runner, plan: list[Staged], device: str):
       if s.name in casts:
         t = t.cast(casts[s.name])
       inputs[s.name] = t
-    out = next(iter(runner(inputs).values()))
+    outs = runner(inputs)
     # float32 out, as openpilot's JIT returns it and the protocol carries it
-    return out.cast('float32').contiguous().realize()
+    main = outs[names[0]].cast('float32').contiguous().realize()
+    if len(names) == 1:
+      return main
+    return (main, *(outs[n].contiguous().realize() for n in names[1:]))
 
   return TinyJit(fn, prune=True)
+
+
+def _first(out):
+  return out[0] if isinstance(out, tuple) else out
 
 
 def fill_random(arrays: dict[str, np.ndarray], plan: list[Staged], seed: int) -> None:
@@ -234,7 +252,8 @@ def build_jit(onnx_path: str | Path, out_path: str | Path, device: str,
   runner = OnnxRunner(onnx_path)
   plan = plan_inputs(runner)
   arrays, tensors = make_staging(plan)
-  jit = make_fn(runner, plan, device)
+  names = output_names(runner)
+  jit = make_fn(runner, plan, device, names)
   report('parse', 1.0, f'{len(plan)} inputs, {len(runner.graph_outputs)} outputs')
 
   # Compile, capture, replay. Each call is timed for the log because there is
@@ -247,16 +266,18 @@ def build_jit(onnx_path: str | Path, out_path: str | Path, device: str,
     out = jit(**tensors)
     Device[device].synchronize()
     log.info("%s: %.1f s", what, time.perf_counter() - t)
-  out_shape = tuple(int(d) for d in out.shape)
+  from tinygrad.dtype import _to_np_dtype
+  outs = out if isinstance(out, tuple) else (out,)
+  out_specs = [(n, [int(d) for d in t.shape], np.dtype(_to_np_dtype(t.dtype)).name) for n, t in zip(names, outs, strict=True)]
 
   # The replay must reproduce the capture: same inputs, same bits. compile_modeld
   # checks the same thing, and a JIT that fails it is not a model.
   fill_random(arrays, plan, SEED)
-  baseline = jit(**tensors).numpy().copy()
+  baseline = _first(jit(**tensors)).numpy().copy()
   fill_random(arrays, plan, SEED + 1)
-  other = jit(**tensors).numpy().copy()
+  other = _first(jit(**tensors)).numpy().copy()
   fill_random(arrays, plan, SEED)
-  again = jit(**tensors).numpy()
+  again = _first(jit(**tensors)).numpy()
   if not np.array_equal(baseline, again):
     raise RuntimeError('the captured jit does not reproduce its own output on the same inputs')
   if np.array_equal(baseline, other):
@@ -274,7 +295,8 @@ def build_jit(onnx_path: str | Path, out_path: str | Path, device: str,
     'tinygrad': identity,
     'device': device,
     'inputs': [(s.name, list(s.shape), s.host_dtype, s.model_dtype) for s in plan],
-    'outputs': [('outputs', list(out_shape), 'float32')],
+    # the driving output is 'outputs' whatever the graph called it, as it always was
+    'outputs': [('outputs', *out_specs[0][1:]), *out_specs[1:]],
     'jit': jit,
   }
   report('save', 0.0, 'writing the captured jit')

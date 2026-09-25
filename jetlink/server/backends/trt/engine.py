@@ -10,6 +10,10 @@ Device buffers, pinned host buffers and the stream are all preallocated at load
 time, so the steady state never allocates: the 50 ms frame budget is broken by
 the tail, not the mean. Callers write into the pinned arrays `host_input()`
 hands out, which saves a copy on the way to the GPU.
+
+A stateful graph's queues never leave the GPU: `loop_state` drops them from
+the per-frame copies and adds a device-side copy of each next_state_ output
+onto its state_ input, inside the captured graph.
 """
 from __future__ import annotations
 
@@ -95,6 +99,10 @@ class TrtEngine:
     self.outputs = {n: b for n, b in self.bindings.items() if not b.is_input}
     self.last_gpu_us = 0
     self.graph_exec = None
+    # state input -> the output that feeds it; see loop_state
+    self.looped: dict[str, str] = {}
+    self._zero_state = False
+    self._returned = dict(self.outputs)
 
   # -- introspection --------------------------------------------------------
 
@@ -116,13 +124,42 @@ class TrtEngine:
     from jetlink.server.backends.base import load_inputs
     load_inputs(self, values)
 
+  def loop_state(self, pairs: dict[str, str]) -> bool:
+    """Keep each state input on the GPU, fed from its output after every run.
+
+    `pairs` maps input to output, both the same size and type. The outputs
+    stop being copied back and run() leaves them out. Must come before the
+    graph is captured, since it changes what the graph does. True when the
+    engine took the loop, which is always unless a pair does not match.
+    """
+    if self.graph_exec is not None:
+      raise RuntimeError("loop_state after the cuda graph was captured")
+    for state, nxt in pairs.items():
+      a, b = self.inputs.get(state), self.outputs.get(nxt)
+      if a is None or b is None or a.nbytes != b.nbytes or a.dtype != b.dtype:
+        return False
+    self.looped = dict(pairs)
+    self._returned = {n: b for n, b in self.outputs.items() if n not in self.looped.values()}
+    self._zero_state = True
+    return True
+
+  def reset_state(self) -> None:
+    """Zero the looped state before the next run: empty queues."""
+    self._zero_state = True
+
   def _enqueue(self) -> None:
     for b in self.inputs.values():
-      cudart.memcpy_h2d_async(b.device_ptr, b.host_ptr, b.nbytes, self.stream)
+      if b.name not in self.looped:
+        cudart.memcpy_h2d_async(b.device_ptr, b.host_ptr, b.nbytes, self.stream)
     if not self.context.execute_async_v3(self.stream):
       raise RuntimeError("execute_async_v3 failed")
-    for b in self.outputs.values():
+    for b in self._returned.values():
       cudart.memcpy_d2h_async(b.host_ptr, b.device_ptr, b.nbytes, self.stream)
+    # the queues the graph just advanced become next frame's; a copy rather
+    # than swapping addresses, which the captured graph has baked in
+    for state, nxt in self.looped.items():
+      a, b = self.inputs[state], self.outputs[nxt]
+      cudart.memcpy_d2d_async(a.device_ptr, b.device_ptr, a.nbytes, self.stream)
 
   def capture_graph(self) -> bool:
     """Capture the per-frame sequence into a CUDA graph.
@@ -157,13 +194,19 @@ class TrtEngine:
   def run(self) -> dict[str, np.ndarray]:
     """Run one frame. Returns views over pinned output memory, valid until the next run."""
     t0 = time.perf_counter()
+    if self._zero_state:
+      # outside the graph, ahead of it on the same stream
+      for state in self.looped:
+        b = self.inputs[state]
+        cudart.memset_async(b.device_ptr, 0, b.nbytes, self.stream)
+      self._zero_state = False
     if self.graph_exec is not None:
       cudart.graph_launch(self.graph_exec, self.stream)
     else:
       self._enqueue()
     cudart.stream_sync(self.stream)
     self.last_gpu_us = int((time.perf_counter() - t0) * 1e6)
-    return {n: b.host for n, b in self.outputs.items()}
+    return {n: b.host for n, b in self._returned.items()}
 
   def infer(self, values: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     self.load_inputs(values)

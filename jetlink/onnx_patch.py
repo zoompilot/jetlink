@@ -8,7 +8,9 @@ Make an openpilot driving model acceptable to TensorRT's ONNX parser.
 
 TensorRT 10.3 rejects UINT8 graph inputs ("Found unsupported input type of
 UINT8"), so the image inputs are declared FP16 and the head Cast deleted.
-Feeding 0..255 as fp16 is exact and free; the weights are FP16 already.
+Feeding 0..255 as fp16 is exact and free; the weights are FP16 already. A
+stateful graph also hands its uint8 frame queue back as an output, which is
+retyped with it.
 
 Runs on the Jetson at build time. The shipped model is never modified in place.
 """
@@ -18,7 +20,14 @@ import numpy as np
 import onnx
 from onnx import TensorProto, helper, numpy_helper
 
-IMG_INPUTS = ('img', 'big_img')
+# img and big_img in a queued graph; the newest frame and the frame queue in a
+# stateful one (openpilot #38916)
+IMG_INPUTS = ('img', 'big_img', 'new_img', 'state_img_q')
+# Ops that only move image bytes around. Each one's output has its input's
+# type, so a retyped input retypes the output, and 0..255 comes through every
+# one of them exactly.
+LAYOUT_OPS = frozenset(('Concat', 'Slice', 'Gather', 'Reshape', 'Unsqueeze', 'Squeeze',
+                        'Transpose', 'Flatten', 'Identity', 'Expand'))
 
 # tinygrad's exporter leaves layout hints in its own domain, and TensorRT rejects
 # any op in a domain it does not know. Contiguous is about tinygrad's buffers,
@@ -230,34 +239,43 @@ def _static_info(model: onnx.ModelProto, wanted: set[str]) -> tuple[dict[str, tu
 
 
 def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
-  """Retype the uint8 image inputs to fp16 and drop the head Cast. In place."""
+  """Retype the uint8 image inputs to fp16 and drop the head Cast. In place.
+
+  Everything between the inputs and the Cast is followed, so the fix is the
+  same whatever the exporter put there:
+
+    comma      Concat(img, big_img) -> cat -> Cast(fp16)
+    sunnypilot Cast(img), Cast(big_img) -> Concat -> cat
+    stateful   Concat(Slice(state_img_q), Unsqueeze(new_img)) -> next_state_img_q
+                 -> Gather, Slice, Reshape -> Concat -> Cast(fp16)
+
+  Every tensor on the way is retyped, next_state_img_q included, so the queue
+  the graph hands back is fp16 too and feeds straight back into its input.
+  """
   g = model.graph
 
   img_inputs = [vi for vi in g.input if vi.name in IMG_INPUTS]
   if not img_inputs:
     raise ValueError(f"model has none of {IMG_INPUTS} as graph inputs")
+  for vi in img_inputs:
+    if vi.type.tensor_type.elem_type != TensorProto.UINT8:
+      raise ValueError(f"{vi.name} is not uint8; model already patched?")
 
-  # Two graph shapes in the wild, same fix either way: the casts are all that
-  # stands between a uint8 input and the fp16 the model wants.
-  #
-  #   comma      Concat(img, big_img) -> cat -> Cast(fp16)
-  #   sunnypilot Cast(img), Cast(big_img) -> Concat -> cat
-  casts = _head_casts(g)
+  retyped, casts = _image_dataflow(g, {vi.name for vi in img_inputs})
   if not casts:
     raise ValueError("could not find the head Cast on the image inputs; "
-                      "neither a Cast per input nor one after their Concat")
-
+                     "neither a Cast per input nor one after their Concat")
+  graph_outputs = {vi.name for vi in g.output}
   for cast in casts:
     to = next(onnx.helper.get_attribute_value(a) for a in cast.attribute if a.name == 'to')
     if to != TensorProto.FLOAT16:
       raise ValueError(f"head Cast targets {to}, expected FLOAT16 ({TensorProto.FLOAT16})")
+    if cast.output[0] in graph_outputs:
+      raise ValueError(f"head Cast {cast.name} feeds a graph output; dropping it would rename one")
 
   for vi in img_inputs:
-    if vi.type.tensor_type.elem_type != TensorProto.UINT8:
-      raise ValueError(f"{vi.name} is not uint8; model already patched?")
     vi.type.tensor_type.elem_type = TensorProto.FLOAT16
 
-  retyped = set()
   for cast in casts:
     # Everything downstream reads the cast's source directly now.
     source, produced = cast.input[0], cast.output[0]
@@ -266,14 +284,35 @@ def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
         if name == produced:
           n.input[i] = source
     g.node.remove(cast)
-    retyped.add(source)
 
   # TensorRT tolerates a stale uint8 value_info; onnxruntime rejects the model.
-  for vi in g.value_info:
+  for vi in list(g.value_info) + list(g.output):
     if vi.name in retyped:
       vi.type.tensor_type.elem_type = TensorProto.FLOAT16
 
   return model
+
+
+def _image_dataflow(g, sources: set[str]) -> tuple[set[str], list]:
+  """The tensors carrying image bytes from `sources`, and the Casts that end
+  them. Nodes are in topological order, as ONNX requires, so one pass sees
+  every producer before its consumers.
+
+  Anything else reading the bytes is refused: an op that does arithmetic on
+  uint8 would change meaning under fp16, and guessing is not safe."""
+  retyped = set(sources)
+  casts = []
+  for node in g.node:
+    if not any(i in retyped for i in node.input):
+      continue
+    if node.op_type == 'Cast':
+      casts.append(node)
+    elif node.op_type in LAYOUT_OPS:
+      retyped.update(node.output)
+    else:
+      raise ValueError(f"{node.op_type} {node.name!r} reads the uint8 images; only layout ops "
+                       "and the head Cast are expected there")
+  return retyped, casts
 
 
 # A weight smaller than this stays as it is. onnxruntime writes an initializer
@@ -392,22 +431,6 @@ def _drop_unused_initializers(model: onnx.ModelProto) -> int:
   for t in stale:
     g.initializer.remove(t)
   return len(stale)
-
-
-def _head_casts(g) -> list:
-  """The Cast nodes turning the uint8 image inputs into fp16, in either shape."""
-  per_input = [n for n in g.node
-               if n.op_type == 'Cast' and len(n.input) == 1 and n.input[0] in IMG_INPUTS]
-  if per_input:
-    return per_input
-
-  concat = next((n for n in g.node if n.op_type == 'Concat'
-                 and all(i in IMG_INPUTS for i in n.input)), None)
-  if concat is None:
-    return []
-  cat = concat.output[0]
-  cast = next((n for n in g.node if n.op_type == 'Cast' and list(n.input) == [cat]), None)
-  return [cast] if cast is not None else []
 
 
 def patch_file(src: str, dst: str, check: bool = True) -> str:

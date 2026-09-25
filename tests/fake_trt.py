@@ -55,10 +55,11 @@ def install_stubs() -> None:
   # cuda-python: jetlink.server.cudart reads a few enum members at import.
   runtime = types.ModuleType('cuda.bindings.runtime')
   runtime.cudaError_t = _enum(cudaSuccess=0)
-  runtime.cudaMemcpyKind = _enum(cudaMemcpyHostToDevice=1, cudaMemcpyDeviceToHost=2)
+  runtime.cudaMemcpyKind = _enum(cudaMemcpyHostToDevice=1, cudaMemcpyDeviceToHost=2,
+                                 cudaMemcpyDeviceToDevice=3)
   for name in ('cudaMalloc', 'cudaFree', 'cudaHostAlloc', 'cudaFreeHost',
                'cudaStreamCreate', 'cudaStreamDestroy', 'cudaStreamSynchronize',
-               'cudaMemcpyAsync', 'cudaMemGetInfo', 'cudaGetDeviceProperties',
+               'cudaMemcpyAsync', 'cudaMemsetAsync', 'cudaMemGetInfo', 'cudaGetDeviceProperties',
                'cudaGetErrorName', 'cudaGetErrorString'):
     setattr(runtime, name, lambda *a, **k: (0, 0))
 
