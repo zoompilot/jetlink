@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Start the Jetlink server container as /etc/jetlink/server.env describes.
+#
+# jetlink-server.service runs this, and `jetlink run` runs it in the
+# foreground. install.sh writes the env file; this script is the one place the
+# docker command line is put together, so the service, the helper and a manual
+# install cannot drift apart. Installed to /usr/local/lib/jetlink/run-server.
+#
+#   JETLINK_IMAGE        immutable image ID (sha256:...) to run. Required.
+#   JETLINK_FLAVOR       cuda (CUDA 13: PCs and JetPack 7.2) or jetpack6
+#   JETLINK_CACHE_DIR    models and prepared engines on the host
+#   JETLINK_JETSON       1 on a Jetson: sysfs telemetry and jetson_clocks
+#   JETLINK_SLEEP_AFTER  seconds without the comma before deep suspend; 0 = never
+#   JETLINK_TRANSPORT    usb (the comma on a USB cable) or tcp (a bench)
+#   JETLINK_GPU_ARGS     how docker hands this box's GPU to the container, as
+#                        the installer found works here; the flavor's usual way
+#                        when unset
+#   JETLINK_EXTRA_ARGS   anything else for jetlink-server, space separated
+#
+# The defaults are what the JetPack 6 unit did before install.sh existed, so
+# an env file holding only JETLINK_IMAGE still starts the same server.
+#
+# JETLINK_DRY_RUN=1 prints the docker command instead of running it.
+set -euo pipefail
+
+ENV_FILE="${JETLINK_ENV_FILE:-/etc/jetlink/server.env}"
+if [ -r "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
+
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE="${JETLINK_IMAGE:?JETLINK_IMAGE is not set; run the installer or set it in $ENV_FILE}"
+FLAVOR="${JETLINK_FLAVOR:-jetpack6}"
+CACHE_DIR="${JETLINK_CACHE_DIR:-/mnt/data/jetlink}"
+JETSON="${JETLINK_JETSON:-1}"
+SLEEP_AFTER="${JETLINK_SLEEP_AFTER:-120}"
+TRANSPORT="${JETLINK_TRANSPORT:-usb}"
+DRY_RUN="${JETLINK_DRY_RUN:-0}"
+
+foreground=0
+if [ "${1:-}" = "--foreground" ]; then
+  foreground=1
+  shift
+fi
+
+# Inside the container the cache is always here, whichever image runs: the
+# JetPack 6 image's own default is /mnt/data/jetlink and the CUDA image's is
+# this, so naming it here makes both behave the same.
+CONTAINER_CACHE=/var/cache/jetlink
+
+args=(run --rm --name jetlink
+  # host networking: the server needs no ports for USB, and Docker 28 on a
+  # JetPack 6 kernel cannot set up bridge networking at all (no iptables raw
+  # table). A TCP bench listens on the host's 5599 directly.
+  --network host
+  # the comma is a USB device the server opens through usbfs (major 189)
+  --device-cgroup-rule "c 189:* rmw"
+  -v /dev/bus/usb:/dev/bus/usb
+  -v "$CACHE_DIR:$CONTAINER_CACHE"
+  -e "JETLINK_CACHE=$CONTAINER_CACHE")
+
+if [ "$foreground" = 1 ] && [ -t 0 ]; then
+  args+=(-it)
+fi
+
+case "$FLAVOR" in
+  cuda) gpu="--runtime nvidia --gpus all" ;;
+  jetpack6) gpu="--runtime nvidia" ;;
+  *) echo "run-server: unknown JETLINK_FLAVOR $FLAVOR" >&2; exit 2 ;;
+esac
+# deliberately split on spaces: a list of docker flags
+# shellcheck disable=SC2206
+args+=(${JETLINK_GPU_ARGS:-$gpu})
+
+server=(--transport "$TRANSPORT")
+
+if [ "$JETSON" = 1 ]; then
+  # the Tegra thermal zones and the INA3221 power monitor the telemetry reads
+  args+=(-v /sys:/sys:ro)
+  # jetson_clocks pins the clocks and turns DVFS off, so the part sits at the
+  # power mode's ceiling instead of ramping between frames that are idle 16 ms
+  # in every 50. It does not survive a reboot, which is why it runs here.
+  if [ "$DRY_RUN" != 1 ] && command -v jetson_clocks >/dev/null 2>&1; then
+    jetson_clocks || echo "run-server: jetson_clocks failed; serving at default clocks" >&2
+  fi
+fi
+
+if [ "${SLEEP_AFTER%.*}" -gt 0 ] 2>/dev/null; then
+  server+=(--sleep-after "$SLEEP_AFTER")
+  # --sleep-after writes /sys/power/state, so that one directory goes in
+  # read-write over the read-only /sys. rtc0's real directory too, so the
+  # server can arm its wake backstop: resolved rather than hardcoded (PMIC RTC
+  # on one board, Tegra on another), and --mount because the path has colons
+  # (bpmp:i2c) that -v cannot parse.
+  args+=(-v /sys/power:/sys/power)
+  rtc="$(readlink -f /sys/class/rtc/rtc0 2>/dev/null || true)"
+  if [ -n "$rtc" ]; then
+    args+=(--mount "type=bind,source=$rtc,target=$rtc")
+  fi
+  # The comma presenting its gadget only wakes a sleeping Jetson if the hub it
+  # hangs off is armed for remote wakeup; see wake-setup. On the host, because
+  # /sys is read-only in the container.
+  if [ "$DRY_RUN" != 1 ] && [ -x "$LIB_DIR/wake-setup" ]; then
+    "$LIB_DIR/wake-setup" || true
+  fi
+fi
+
+if [ -n "${JETLINK_EXTRA_ARGS:-}" ]; then
+  # deliberately split on spaces: a list of flags
+  # shellcheck disable=SC2206
+  server+=($JETLINK_EXTRA_ARGS)
+fi
+
+if [ "$DRY_RUN" = 1 ]; then
+  printf '%q ' docker "${args[@]}" "$IMAGE" "${server[@]}"
+  echo
+  exit 0
+fi
+
+mkdir -p "$CACHE_DIR"
+exec docker "${args[@]}" "$IMAGE" "${server[@]}"

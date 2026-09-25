@@ -1,54 +1,28 @@
-# systemd unit for the Jetson. Set /etc/jetlink/server.env to a verified
-# immutable image ID first (docs/releasing.md), then install to
-# /etc/systemd/system/ and: sudo systemctl enable --now jetlink-server
+# systemd unit for the Jetlink server container. install.sh installs it, with
+# the launcher it runs (scripts/jetlink-run-server, as
+# /usr/local/lib/jetlink/run-server) and /etc/jetlink/server.env, which says
+# which image to run and how. Everything about the docker command line lives in
+# the launcher, so this file is the same on every platform.
+#
+# By hand, after writing server.env (JETLINK_IMAGE at least):
+#   sudo install -D -m 755 scripts/jetlink-run-server /usr/local/lib/jetlink/run-server
+#   sudo install -m 644 scripts/jetlink-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now jetlink-server
 #
 # The Jetson is the USB host, so there is nothing to set up on this side beyond
 # /dev/bus/usb; the comma runs the gadget (docs/transport.md).
-#
-# --sleep-after assumes an always-on supply: with no gadget for that long the box
-# deep-suspends and the next USB edge wakes it, engine still loaded. That needs
-# /sys/power writable, hence the second /sys mount.
-#
-# That edge only wakes us if the hub the gadget hangs off is armed for remote
-# wakeup, and the SuperSpeed one ships disarmed. 99-jetlink-usb-wakeup.rules does
-# it at boot; ExecStartPre repeats it because a re-flash loses the rule silently.
-# It has to be on the host: /sys is read-only in the container.
-#
-# jetson_clocks pins the clocks and turns DVFS off, so the part sits at the
-# nvpmodel ceiling instead of ramping between frames that are idle 16 ms in every
-# 50. It does not survive a reboot, which is why it is here. Leading `-` because
-# a board without the tool can still serve.
-#
-# rtc0 is bind-mounted read-write so Sleeper can arm its wake backstop; without
-# it the alarm is a warning and the USB edge is the only way back. Resolved
-# rather than hardcoded (PMIC RTC on one board, Tegra on another), and --mount
-# rather than -v because that path contains colons (bpmp:i2c).
 [Unit]
-Description=jetlink inference server
+Description=Jetlink inference server
 After=docker.service
 Requires=docker.service
-# without the mount up, -v creates the cache dir on the 3.7 GB rootfs and the
-# first plan fills it
-RequiresMountsFor=/mnt/data/jetlink
 
 [Service]
 Type=simple
 Restart=always
 RestartSec=5
-EnvironmentFile=/etc/jetlink/server.env
-ExecStartPre=/bin/sh -c 'echo "$$JETLINK_IMAGE" | grep -Eq "^sha256:[0-9a-f]{64}$"'
+# a container left behind by a crash or a reboot holds the name
 ExecStartPre=-/usr/bin/docker rm -f jetlink
-ExecStartPre=-/usr/local/bin/jetlink-wake-setup.sh
-ExecStartPre=-/usr/bin/jetson_clocks
-ExecStart=/bin/sh -c 'exec /usr/bin/docker run --rm --name jetlink \
-  --runtime nvidia \
-  --device-cgroup-rule "c 189:* rmw" \
-  -v /mnt/data/jetlink:/mnt/data/jetlink \
-  -v /dev/bus/usb:/dev/bus/usb \
-  -v /sys:/sys:ro \
-  -v /sys/power:/sys/power \
-  $$(rtc=$$(readlink -f /sys/class/rtc/rtc0 2>/dev/null); [ -n "$$rtc" ] && echo --mount "type=bind,source=$$rtc,target=$$rtc") \
-  "$$JETLINK_IMAGE" --transport usb --sleep-after 120'
+ExecStart=/usr/local/lib/jetlink/run-server
 ExecStop=/usr/bin/docker stop jetlink
 
 [Install]

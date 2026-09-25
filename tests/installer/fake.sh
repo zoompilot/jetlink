@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# One stand-in for every system command the installer touches, dispatched on
+# the name it is called by (scenarios.sh symlinks each name to this file). Each
+# call is appended to $FAKE_LOG, and the answers come from $FAKE_* variables,
+# so a scenario can say "Docker is missing" or "only CDI reaches the GPU".
+#
+# Test code only: nothing here runs outside tests/installer.
+set -u
+name="$(basename "$0")"
+state="${FAKE_STATE:-/tmp/fake-state}"
+mkdir -p "$state"
+printf '%s %s\n' "$name" "$*" >>"${FAKE_LOG:-/tmp/fake.log}"
+
+case "$name" in
+  uname)
+    case "${1:-}" in
+      -m) echo "${FAKE_ARCH:-aarch64}" ;;
+      -s|'') echo Linux ;;
+      *) /bin/uname "$@" ;;
+    esac ;;
+
+  apt-get)
+    # installing Docker or the toolkit makes their commands appear
+    for pkg in "$@"; do
+      case "$pkg" in
+        docker.io|docker-ce) ln -sf "$0" "$FAKE_BIN/docker" ;;
+        nvidia-container|nvidia-container-toolkit) ln -sf "$0" "$FAKE_BIN/nvidia-ctk" ;;
+      esac
+    done ;;
+
+  systemctl)
+    case "${1:-}" in
+      is-active) [ "${FAKE_DOCKER_DOWN:-0}" = 1 ] && [ "${*: -1}" = docker ] && exit 3; echo active ;;
+      is-enabled) if [ -f "$state/masked-${*: -1}" ]; then echo masked; else echo enabled; fi ;;
+      list-unit-files)
+        for u in ${FAKE_UNITS:-systemd-networkd-wait-online.service}; do
+          [ "$u" = "${*: -1}" ] && echo "$u enabled enabled"
+        done ;;
+      mask) for u in "${@:2}"; do touch "$state/masked-$u"; done ;;
+      unmask) for u in "${@:2}"; do rm -f "$state/masked-$u"; done ;;
+      show) echo "${FAKE_RESTARTS:-0}" ;;
+    esac ;;
+
+  journalctl)
+    echo "backend trt 10.16.2.10 on Orin-sm87, cache /var/cache/jetlink"
+    echo "waiting for a jetlink gadget at 1209:0001" ;;
+
+  docker)
+    case "${1:-}" in
+      --version) echo "Docker version 29.1.0, build fake" ;;
+      info) if [ -f "$state/nvidia-runtime" ] || [ "${FAKE_NVIDIA_RUNTIME:-0}" = 1 ]; then
+              echo '{"nvidia":{"path":"nvidia-container-runtime"},"runc":{"path":"runc"}}'
+            else echo '{"runc":{"path":"runc"}}'; fi ;;
+      manifest) [ "${FAKE_PUBLISHED:-0}" = 1 ] || { echo "no such manifest" >&2; exit 1; } ;;
+      pull|build|rm|rmi|stop) ;;
+      image)
+        case "${2:-}" in
+          inspect) echo "sha256:$(printf '%064d' 7)" ;;
+          ls) echo "jetlink:local-cuda" ;;
+        esac ;;
+      run)
+        case " $* " in
+          *" -m jetlink.registry "*) echo "fake model list" ;;
+          *" --entrypoint python3 "*)
+            # the GPU probe: only the way this scenario says works, and a
+            # CDI-only toolkit only once its device list has been generated
+            ok="${FAKE_GPU_OK:---runtime nvidia --gpus all}"
+            if [[ " $* " == *" --network host $ok --entrypoint "* ]] \
+                && { [ "$ok" != "--device nvidia.com/gpu=all" ] || [ -f "$state/cdi" ]; }; then
+              echo "Orin (compute 8.7), TensorRT 10.16.2.10"
+              exit 0
+            fi
+            echo "could not select device driver" >&2
+            exit 125 ;;
+        esac ;;
+    esac ;;
+
+  nvidia-ctk)
+    case "${1:-} ${2:-}" in
+      "runtime configure") touch "$state/nvidia-runtime" ;;
+      "cdi generate") touch "$state/cdi" ;;
+    esac ;;
+
+  nvpmodel)
+    case "${1:-}" in
+      -q) echo "NV Power Mode: $(cat "$state/pm" 2>/dev/null || echo 15W)"; echo 0 ;;
+      -m) read -r _ || true
+          if [ "${FAKE_PM_REBOOT:-0}" = 1 ]; then echo "reboot required"; else echo "${FAKE_PM_NAME:-MAXN_SUPER}" >"$state/pm"; fi ;;
+    esac ;;
+
+  nvidia-smi)
+    [ -n "${FAKE_SMI:-}" ] || exit 9
+    echo "$FAKE_SMI" ;;
+
+  ubuntu-drivers|udevadm|fallocate|mkswap|swapon|swapoff|jetson_clocks) ;;
+
+  curl)
+    # the network the installer needs, answered from here; anything else fails
+    case " $* " in
+      *" https://github.com "*) ;;
+      *download.docker.com*|*nvidia.github.io*) echo "deb https://example.invalid/fake stable main" ;;
+      *) echo "fake curl: no route for $*" >&2; exit 22 ;;
+    esac ;;
+
+  gpg) cat >/dev/null ;;
+
+  *) echo "fake.sh: no stand-in for $name" >&2; exit 127 ;;
+esac
+exit 0

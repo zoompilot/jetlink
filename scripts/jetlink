@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# The `jetlink` command install.sh puts on the PATH: check on the server, read
+# its log, update it, change the setup, or remove it, without knowing docker or
+# systemd. Installed to /usr/local/bin/jetlink.
+set -euo pipefail
+
+ETC_DIR=/etc/jetlink
+CONF="$ETC_DIR/install.conf"
+ENV_FILE="$ETC_DIR/server.env"
+LIB_DIR=/usr/local/lib/jetlink
+UNIT=jetlink-server
+INSTALLER_URL_BASE="https://raw.githubusercontent.com/zoompilot/jetlink"
+
+if [ -t 1 ]; then
+  B=$'\e[1m' D=$'\e[2m' G=$'\e[32m' Y=$'\e[33m' R=$'\e[31m' N=$'\e[0m'
+else
+  B='' D='' G='' Y='' R='' N=''
+fi
+
+usage() {
+  cat <<EOF
+${B}jetlink${N}: manage the Jetlink server on this computer
+
+  ${B}jetlink status${N}      is it running, and is the comma connected
+  ${B}jetlink logs${N}        follow the server's log (Ctrl-C to stop)
+  ${B}jetlink restart${N}     restart the server
+  ${B}jetlink stop${N}        stop it until the next restart or ${B}jetlink start${N}
+  ${B}jetlink update${N}      update Jetlink, keeping your settings
+  ${B}jetlink setup${N}       answer the setup questions again
+  ${B}jetlink models${N} ...  list, download or prepare models (${B}jetlink models --help${N})
+  ${B}jetlink uninstall${N}   remove Jetlink from this computer
+
+Help and troubleshooting: https://github.com/zoompilot/jetlink
+EOF
+}
+
+load() {
+  if [ ! -r "$CONF" ] || [ ! -r "$ENV_FILE" ]; then
+    echo "${R}Jetlink is not installed here.${N} Install it with:"
+    echo "  curl -fsSL $INSTALLER_URL_BASE/main/install.sh | bash"
+    exit 1
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  . "$CONF"
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+}
+
+as_root() {
+  if [ "$(id -u)" -ne 0 ]; then
+    exec sudo -- "$0" "$@"
+  fi
+}
+
+human_size() {
+  du -sh "$1" 2>/dev/null | cut -f1 || echo "?"
+}
+
+comma_state() {
+  # The newest line that says either way wins.
+  local line
+  line="$(journalctl -u "$UNIT" -b --no-pager -o cat 2>/dev/null \
+    | grep -E 'client connected over usb|client disconnected|waiting for a jetlink gadget|client connected from' \
+    | tail -1 || true)"
+  case "$line" in
+    *"client connected"*) echo "${G}connected${N}" ;;
+    *"waiting for a jetlink gadget"*|*"client disconnected"*) echo "not connected ${D}(waiting for it)${N}" ;;
+    *) echo "${D}unknown yet${N}" ;;
+  esac
+}
+
+cmd_status() {
+  load
+  local state since image_ref
+  state="$(systemctl is-active "$UNIT" 2>/dev/null || true)"
+  since="$(systemctl show -p ActiveEnterTimestamp --value "$UNIT" 2>/dev/null || true)"
+  image_ref="${JETLINK_IMAGE_REF:-$JETLINK_IMAGE}"
+  echo
+  case "$state" in
+    active) echo "  ${G}●${N} ${B}Jetlink is running${N} ${D}since $since${N}" ;;
+    activating) echo "  ${Y}●${N} ${B}Jetlink is starting${N}" ;;
+    failed) echo "  ${R}●${N} ${B}Jetlink has stopped with an error${N} ${D}(see: jetlink logs)${N}" ;;
+    *) echo "  ${Y}●${N} ${B}Jetlink is not running${N} ${D}(start it with: jetlink start)${N}" ;;
+  esac
+  echo
+  if [ "$state" = active ]; then
+    echo "  comma          $(comma_state)"
+  fi
+  echo "  computer       ${JETLINK_PLATFORM_NAME:-unknown}"
+  echo "  server         $image_ref ${D}(${JETLINK_IMAGE:7:12})${N}"
+  echo "  models folder  $JETLINK_CACHE_DIR ${D}($(human_size "$JETLINK_CACHE_DIR"))${N}"
+  if [ "${JETLINK_JETSON:-0}" = 1 ]; then
+    local power="switched: turns on and off with the car"
+    if [ "${JETLINK_POWER:-}" = always ]; then
+      power="always on"
+      [ "${JETLINK_SLEEP_AFTER:-0}" != 0 ] && power="$power: sleeps when the car is off"
+      [ "${JETLINK_POWEROFF_WITH_COMMA:-0}" = 1 ] && power="$power; the comma can shut it down"
+    fi
+    echo "  power          $power"
+  fi
+  echo "  starts at boot $(systemctl is-enabled "$UNIT" 2>/dev/null || echo no)"
+  echo
+  echo "  ${D}recent log:${N}"
+  journalctl -u "$UNIT" -n 6 --no-pager -o cat 2>/dev/null | sed "s/^/  ${D}│${N} /" || true
+  echo
+}
+
+cmd_logs() {
+  exec journalctl -u "$UNIT" -f -n 50 -o cat
+}
+
+cmd_models() {
+  load
+  local default=(--runtime nvidia)
+  [ "${JETLINK_FLAVOR:-jetpack6}" = cuda ] && default+=(--gpus all)
+  local gpu=("${default[@]}")
+  # the way the installer found this box's GPU reaches a container
+  # shellcheck disable=SC2206
+  [ -n "${JETLINK_GPU_ARGS:-}" ] && gpu=($JETLINK_GPU_ARGS)
+  local tty=()
+  [ -t 0 ] && tty=(-it)
+  if [ "${1:-}" = prepare ] && systemctl is-active --quiet "$UNIT"; then
+    echo "${Y}The server is running.${N} Two processes preparing into one folder is not"
+    echo "supported: run ${B}jetlink stop${N} first, and ${B}jetlink start${N} afterwards."
+    exit 1
+  fi
+  exec docker run --rm "${tty[@]}" --network host "${gpu[@]}" \
+    -v "$JETLINK_CACHE_DIR:/var/cache/jetlink" -e JETLINK_CACHE=/var/cache/jetlink \
+    --entrypoint python3 "$JETLINK_IMAGE" -m jetlink.registry "$@"
+}
+
+# update, setup and uninstall are the installer's: it is the one place that
+# knows what it changed on this computer.
+run_installer() {
+  load
+  local src="${JETLINK_SOURCE_DIR:-}"
+  if [ "${JETLINK_SOURCE:-git}" = git ] && [ -d "$src/.git" ]; then
+    if [ "$1" = --update ]; then
+      echo "Getting the newest Jetlink ($JETLINK_REF)..."
+      git -C "$src" fetch --depth 1 origin "$JETLINK_REF" >/dev/null 2>&1 \
+        && git -C "$src" reset --hard FETCH_HEAD >/dev/null
+    fi
+    exec bash "$src/install.sh" "$@"
+  fi
+  if [ -f "$src/install.sh" ]; then
+    if [ "$1" = --update ]; then
+      echo "Jetlink was installed from your checkout at $src."
+      echo "Update it there (git pull), then run: sudo $src/install.sh --update"
+      exit 0
+    fi
+    exec bash "$src/install.sh" "$@"
+  fi
+  # The source copy is gone: fetch the installer again.
+  curl -fsSL "$INSTALLER_URL_BASE/${JETLINK_REF:-main}/install.sh" | bash -s -- "$@"
+}
+
+main() {
+  local cmd="${1:-help}"
+  [ $# -gt 0 ] && shift
+  case "$cmd" in
+    help|-h|--help) usage ;;
+    status) as_root status "$@"; cmd_status ;;
+    logs|log) as_root logs "$@"; cmd_logs ;;
+    restart|start|stop)
+      as_root "$cmd" "$@"
+      load
+      systemctl "$cmd" "$UNIT"
+      echo "Jetlink: $cmd done."
+      ;;
+    run)
+      # the server in this terminal, for a bench; stop the service first
+      as_root run "$@"
+      load
+      if systemctl is-active --quiet "$UNIT"; then
+        echo "Stopping the background server while this one runs..."
+        systemctl stop "$UNIT"
+      fi
+      exec "$LIB_DIR/run-server" --foreground
+      ;;
+    models|model) as_root models "$@"; cmd_models "$@" ;;
+    update|upgrade) as_root update "$@"; run_installer --update "$@" ;;
+    setup|configure|reconfigure) as_root setup "$@"; run_installer --reconfigure "$@" ;;
+    uninstall|remove) as_root uninstall "$@"; run_installer --uninstall "$@" ;;
+    *) echo "Unknown command: $cmd"; echo; usage; exit 2 ;;
+  esac
+}
+
+main "$@"
