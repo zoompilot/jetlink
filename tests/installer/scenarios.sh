@@ -109,7 +109,9 @@ cp /etc/fstab /tmp/fstab.orig 2>/dev/null || : >/tmp/fstab.orig
 # what `curl | bash` clones: the tree under test, committed
 rm -rf /tmp/repo
 git init -q -b main /tmp/repo
-cp -a "$SRC/." /tmp/repo/
+# -R, not -a: the bind-mounted tree belongs to the CI runner's user, and a repo
+# owned by someone else is "dubious ownership" to the root git below
+cp -R "$SRC/." /tmp/repo/
 git -C /tmp/repo add -A
 git -C /tmp/repo -c user.name=test -c user.email=test@example.invalid commit -qm "tree under test"
 # shellcheck disable=SC1091
