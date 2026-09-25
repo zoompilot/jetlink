@@ -234,6 +234,20 @@ def test_an_empty_coreml_cache_is_artifact_invalid(backend, built):
     (out / MANIFEST).write_text(json.dumps(manifest))
 
 
+def test_a_model_that_keeps_its_history_is_prepared_for_the_gpu_on_the_neural_engine(tmp_path):
+  """The Neural Engine cannot compile a stateful graph's queues, so `ane` gets
+  the GPU's units and none of the Neural Engine rewrites for one."""
+  providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
+  path = tiny_model.write_stateful(tmp_path / 'stateful.onnx')
+  backend = OrtBackend('ane', providers=providers)
+  staged = tmp_path / 'staged'
+  staged.mkdir()
+  manifest = backend._stage(path, staged, tmp_path / 'ane.ortcache')
+  assert manifest[0]['units'] == 'CPUAndGPU'
+  prepared = onnx.load(str(staged / 'model.onnx'))
+  assert not [n for n in prepared.graph.node if n.name.endswith('__cast_in')]
+
+
 def test_a_manifest_of_two_sessions_runs_as_a_chain(tmp_path):
   """The worker runs sessions back to back, feeding one's outputs to the next
   by name; a split graph was measured through this and lost on a Mac, but the

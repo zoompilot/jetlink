@@ -170,6 +170,18 @@ def _cache_key(out_path: Path, part: str) -> str:
   return re.sub(r'[^A-Za-z0-9]', '', out_path.stem + part)[:63]
 
 
+def keeps_history(onnx_path: Path) -> bool:
+  """Whether the graph carries its own history queues (openpilot #38916),
+  read from its inputs without loading the weights."""
+  from jetlink.onnx_meta import parse_file
+  from jetlink.spec import STATEFUL_FRAME
+  try:
+    return STATEFUL_FRAME in parse_file(str(onnx_path)).inputs
+  except Exception as e:
+    log.warning("could not read %s's inputs: %s", Path(onnx_path).name, e)
+    return False
+
+
 def _prepared_model(onnx_path: Path, for_ane: bool, for_coreml: bool = False):
   """The ONNX as onnxruntime will see it, in memory."""
   import onnx
@@ -490,14 +502,24 @@ class OrtBackend:
     import onnx
 
     coreml = self._on_coreml
-    model = _prepared_model(onnx_path, for_ane=self.device == 'ane', for_coreml=coreml)
+    for_ane = self.device == 'ane'
+    units = COREML_UNITS[self.device] if coreml else None
+    if for_ane and keeps_history(onnx_path):
+      # Measured 2026-09-25 on an M1 Pro with Cinque Terre V3: Apple's Neural
+      # Engine compiler rejects the program (ANECCompile() FAILED) and CoreML
+      # runs the frame in 107 ms, against 43 ms on the GPU. The same Mac
+      # compiles Cinque Terre V1 for it and runs 42 ms, so it is the graph's
+      # own history queues. The GPU keeps the model inside the budget.
+      log.warning("the Neural Engine cannot compile a model that keeps its own history; "
+                  "preparing it for the GPU instead")
+      for_ane, units = False, COREML_UNITS['coreml']
+    model = _prepared_model(onnx_path, for_ane=for_ane, for_coreml=coreml)
     # What the convert stage is working towards: onnxruntime writes the
     # initializers out as the MLProgram's weight file, so their size is the
     # total the bytes on disk can honestly be reported against.
     self._weights_bytes = sum(len(t.raw_data) for t in model.graph.initializer)
     onnx.save(_with_cache_key(model, _cache_key(out_path, 'model')), str(staged / 'model.onnx'))
-    manifest = [{'model': 'model.onnx', 'units': COREML_UNITS[self.device] if coreml else None,
-                 'cache': 'coreml' if coreml else None}]
+    manifest = [{'model': 'model.onnx', 'units': units, 'cache': 'coreml' if coreml else None}]
     for entry in manifest:
       if entry['cache']:
         (staged / entry['cache']).mkdir()
