@@ -16,8 +16,11 @@ dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
 usb = ["libusb1>=3.0"]
-# The Jetson image: TensorRT and CUDA come with JetPack, so only their neighbours.
+# The JetPack 6 image: TensorRT and CUDA 12 come with JetPack, so only their neighbours.
 server = ["onnx>=1.16", "cuda-python>=12.6,<13"]
+# The CUDA 13 image (docker/Dockerfile): TensorRT goes in first, from PyPI on
+# amd64 and from JetPack's apt repository on a Jetson, so again only its neighbours.
+server-cu13 = ["onnx>=1.16", "cuda-python>=13,<14"]
 # A desktop or laptop NVIDIA GPU: TensorRT from PyPI, 11.x at the time of writing.
 trt = ["onnx>=1.16", "tensorrt-cu12>=10.3", "cuda-python>=12.6,<13"]
 # Apple silicon (CoreML) and a fallback anywhere else (CUDA or CPU providers).
