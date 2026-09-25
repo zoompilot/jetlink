@@ -189,16 +189,16 @@ jobs:
             macos/build/Jetlink-*.zip
             macos/build/SHA256SUMS
 
-  docker-jetson:
-    name: Jetson image
+  docker-jetpack6:
+    name: JetPack 6 image
     needs: check
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     continue-on-error: true
     outputs:
       # A job with continue-on-error reports success whatever happened, so the
-      # release job cannot read needs.docker-jetson.result. This output is set
-      # by a step that only runs when the push succeeded.
+      # release job cannot read needs.docker-jetpack6.result. This output is
+      # set by a step that only runs when the push succeeded.
       pushed: ${{ steps.pushed.outputs.pushed }}
     steps:
       - name: Check out the repository
@@ -221,12 +221,13 @@ jobs:
           images: ghcr.io/zoompilot/jetlink
           flavor: |
             latest=false
-            suffix=-jetson
+            suffix=-jetpack6
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=match,pattern=v(.*),group=1
-          # Three notes on this block.
+            type=match,pattern=v(.*),group=1,suffix=-jetson
+          # Four notes on this block.
           #
           # The semver patterns parse a semver tag, and a PEP 440 prerelease is
           # not one: v0.3.0a1 has no hyphen before its suffix, so both were
@@ -240,15 +241,18 @@ jobs:
           # `docker pull` handed out a prerelease.
           #
           # The suffix is what makes two images out of one name. arm64 alone
-          # does not mean Jetson: this image wants the L4T stack and the nvidia
-          # container runtime, and an ordinary arm64 server pulling it would get
-          # something that cannot run. Naming the platform says which is which.
+          # does not mean Jetson on JetPack 6: this image wants the L4T r36
+          # stack and the nvidia container runtime, and an ordinary arm64
+          # server pulling it would get something that cannot run.
+          #
+          # -jetson is what this image was called before JetPack 7.2 needed a
+          # second one; the alias keeps older instructions working.
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/Dockerfile
+          file: docker/Dockerfile.jetpack6
           platforms: linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -263,25 +267,95 @@ jobs:
         id: pushed
         run: echo "pushed=true" >> "$GITHUB_OUTPUT"
 
-  docker-cuda:
-    name: CUDA image
+  docker-cuda-build:
+    name: CUDA image (${{ matrix.arch }})
     needs: check
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     continue-on-error: true
-    outputs:
-      pushed: ${{ steps.pushed.outputs.pushed }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
 
       - name: Make room for the image
         run: |
-          # TensorRT's libraries are 4.4 GB on their own and the runner starts
+          # TensorRT's libraries are 4 GB on their own and the runner starts
           # with about 25 GB free, which the build has run close to. These are
           # not used by anything here.
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           df -h /
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=ghcr.io/zoompilot/jetlink,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=cuda-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=cuda-${{ matrix.arch }}
+        # One architecture per native runner; docker-cuda joins the two
+        # digests under the release's tags.
+
+      - name: Record the digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload the digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-cuda-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  docker-cuda:
+    name: CUDA image
+    needs: docker-cuda-build
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    outputs:
+      pushed: ${{ steps.pushed.outputs.pushed }}
+    steps:
+      - name: Download the digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-cuda-*
+          merge-multiple: true
+
+      - name: Check both architectures built
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          # an image for one architecture under a tag that promises both would
+          # hand the other a manifest it cannot run
+          count=$(find . -type f | wc -l)
+          if [ "$count" -ne 2 ]; then
+            echo "error: $count of 2 architectures built" >&2
+            exit 1
+          fi
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
@@ -306,17 +380,14 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=match,pattern=v(.*),group=1
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile.cuda
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=cuda
-          cache-to: type=gha,mode=max,scope=cuda
+      - name: Tag both architectures
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/zoompilot/jetlink@sha256:%s ' *)
+          docker buildx imagetools inspect "$(jq -r '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
 
       - name: Record that the image was pushed
         id: pushed
@@ -324,7 +395,7 @@ jobs:
 
   release:
     name: GitHub release
-    needs: [python-dist, macos-app, docker-jetson, docker-cuda]
+    needs: [python-dist, macos-app, docker-jetpack6, docker-cuda]
     if: always() && needs.python-dist.result == 'success' && needs.macos-app.result == 'success'
     runs-on: ubuntu-24.04
     steps:
@@ -354,7 +425,7 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-          JETSON_PUSHED: ${{ needs.docker-jetson.outputs.pushed }}
+          JETPACK6_PUSHED: ${{ needs.docker-jetpack6.outputs.pushed }}
           CUDA_PUSHED: ${{ needs.docker-cuda.outputs.pushed }}
         run: |
           set -euo pipefail
@@ -383,16 +454,18 @@ jobs:
           {
             printf '%s\n\n' "$NOTES"
             printf '## Container images\n\n'
-            printf 'Tagged by platform: an arm64 Jetson image and an amd64 CUDA image are different stacks, and `arm64` on its own does not mean Jetson.\n\n'
-            if [ "${JETSON_PUSHED:-}" = "true" ]; then
-              printf '```\ndocker pull ghcr.io/zoompilot/jetlink:%s-jetson\n```\n\n' "$VERSION"
-            else
-              printf 'The Jetson image build failed for this tag; no `ghcr.io/zoompilot/jetlink:%s-jetson` was pushed. Build it on the Jetson with `sudo docker/build.sh`.\n\n' "$VERSION"
-            fi
+            printf 'On a Jetson or a Linux PC with an NVIDIA GPU, the installer picks the right image and sets everything up:\n\n'
+            printf '```bash\ncurl -fsSL https://raw.githubusercontent.com/zoompilot/jetlink/%s/install.sh | bash -s -- --ref %s\n```\n\n' "$GITHUB_REF_NAME" "$GITHUB_REF_NAME"
+            printf 'The images themselves, tagged by platform:\n\n'
             if [ "${CUDA_PUSHED:-}" = "true" ]; then
-              printf '```\ndocker pull ghcr.io/zoompilot/jetlink:%s-cuda\n```\n\n' "$VERSION"
+              printf -- '- NVIDIA PCs (amd64, driver 580 or newer) and Jetsons on JetPack 7.2 or newer (arm64): `ghcr.io/zoompilot/jetlink:%s-cuda`\n' "$VERSION"
             else
-              printf 'The CUDA image build failed for this tag; no `ghcr.io/zoompilot/jetlink:%s-cuda` was pushed. Build it with `docker build -f docker/Dockerfile.cuda -t jetlink:cuda .`.\n\n' "$VERSION"
+              printf -- '- The CUDA image build failed for this tag; no `ghcr.io/zoompilot/jetlink:%s-cuda` was pushed. The installer builds it instead (`--build`).\n' "$VERSION"
+            fi
+            if [ "${JETPACK6_PUSHED:-}" = "true" ]; then
+              printf -- '- Jetsons on JetPack 6: `ghcr.io/zoompilot/jetlink:%s-jetpack6` (also `-jetson`)\n\n' "$VERSION"
+            else
+              printf -- '- The JetPack 6 image build failed for this tag; no `ghcr.io/zoompilot/jetlink:%s-jetpack6` was pushed. The installer builds it instead (`--build`).\n\n' "$VERSION"
             fi
             if ls artifacts/macos-app/*-unsigned.zip >/dev/null 2>&1; then
               printf '## The macOS app is not signed\n\n'

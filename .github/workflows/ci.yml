@@ -46,6 +46,27 @@ jobs:
         # No `ruff format --check`: the tree is not formatted by ruff and
         # reformatting it would rewrite every file for no gain.
 
+  installer:
+    name: Installer and host scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Run shellcheck
+        run: |
+          # what the installer runs or installs; the bench scripts are not
+          # held to it yet
+          shellcheck install.sh scripts/jetlink scripts/jetlink-run-server \
+            scripts/jetlink-wake-setup.sh scripts/jetlink-poweroff.sh \
+            docker/*.sh tests/installer/*.sh
+
+      - name: Run the installer scenarios
+        run: tests/installer/run.sh
+        # The installer end to end in Ubuntu 24.04 and 22.04 containers, with
+        # apt, systemd, docker and the Jetson tools replaced by stand-ins: a
+        # JetPack 7.2 and a JetPack 6 Jetson, a PC, an update, an uninstall.
+
   python-test-linux:
     name: Python tests on Linux
     runs-on: ubuntu-24.04
