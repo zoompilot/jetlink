@@ -15,7 +15,9 @@ since there is no GPU here.
 from __future__ import annotations
 
 import importlib.util
+import json
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -344,3 +346,64 @@ class TestTensorRTLoop:
     eng, _ = engine
     loop = StateLoop(spec, eng)
     assert loop.on_engine and eng.looped == tiny_model.STATE_PAIRS
+
+
+class TestBenchTools:
+  """verify_parity and verify_engine on a stateful graph: the reference loops
+  the graph's state itself, and a capture replays through the server's loop.
+  Neither imports onnxruntime here; a stand-in session runs the tiny graph."""
+
+  @staticmethod
+  def script(name):
+    import importlib.util
+    import sys
+    scripts = str(Path(__file__).resolve().parents[1] / 'scripts')
+    if scripts not in sys.path:
+      sys.path.insert(0, scripts)   # verify_engine imports its sibling
+    spec_ = importlib.util.spec_from_file_location(name, f'{scripts}/{name}.py')
+    mod = importlib.util.module_from_spec(spec_)
+    spec_.loader.exec_module(mod)
+    return mod
+
+  @staticmethod
+  def capture(spec, d, frames):
+    """What verify_parity's capture would write, the link played by the server's loop."""
+    (d / 'spec.json').write_text(json.dumps(spec.to_dict()))
+    for i, (f, out) in enumerate(zip(frames, drive(NumpyEngine(), spec, frames), strict=True)):
+      np.save(d / f'in_warped_{i}.npy', f['new_img'])
+      np.save(d / f'in_packed_{i}.npy', packed_for(f))
+      np.save(d / f'out_link_{i}.npy', out)
+
+  def test_the_reference_loops_the_state_itself(self, spec, tmp_path):
+    vp = self.script('verify_parity')
+
+    class Session:
+      def get_inputs(self):
+        return [SimpleNamespace(name=n, shape=list(s), type='tensor(uint8)' if n in IMAGES else 'tensor(float)')
+                for n, s in tiny_model.STATEFUL_SHAPES.items()]
+
+      def get_outputs(self):
+        return [SimpleNamespace(name=n) for n in ('outputs', *tiny_model.STATE_PAIRS.values())]
+
+      def run(self, _, feed):
+        state = {n: feed[n] for n in tiny_model.STATE_PAIRS}
+        out, nxt = tiny_model.stateful_step(state, feed['new_img'], feed['desire'],
+                                            feed['traffic_convention'], feed['action_t'])
+        return [out.reshape(1, -1), *(nxt[n] for n in tiny_model.STATE_PAIRS)]
+
+    frames = tiny_model.stateful_frames(6, seed=9)
+    self.capture(spec, tmp_path, frames)
+    assert vp.reference_stateful(spec, Session(), tmp_path, len(frames)) == 0
+    for i, want in enumerate(reference(frames)):
+      np.testing.assert_allclose(np.load(tmp_path / f'out_ref_{i}.npy'), want, rtol=1e-6, atol=1e-6)
+    assert not vp.feeds_hidden_back(spec)
+
+  def test_a_capture_replays_bit_for_bit_and_a_corrupt_one_does_not(self, spec, tmp_path):
+    ve = self.script('verify_engine')
+    frames = tiny_model.stateful_frames(5, seed=4)
+    self.capture(spec, tmp_path, frames)
+    assert ve.replay_capture(NumpyEngine(), tmp_path) == 0
+    bad = np.load(tmp_path / 'out_link_3.npy')
+    bad[0] += 1
+    np.save(tmp_path / 'out_link_3.npy', bad)
+    assert ve.replay_capture(NumpyEngine(), tmp_path) == 2

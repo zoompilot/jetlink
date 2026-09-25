@@ -10,9 +10,11 @@ Does the link return the same numbers the model would?
 Compares what comes back over the cable against onnxruntime on the unmodified
 ONNX, per output slice and per column, so a regression lands on a named head
 rather than in an 18452-wide vector. That covers onnx_patch's UINT8->FP16
-surgery, the TensorRT build, the wire format and the output slicing. Not the
-queues: reference() runs the same PolicyQueues, so a queue bug cancels out on
-both sides, and tests/test_queues.py is the queue check.
+surgery, the TensorRT build, the wire format and the output slicing. For a
+queued graph, not the queues: reference() runs the same PolicyQueues, so a queue
+bug cancels out on both sides, and tests/test_queues.py is the queue check. For
+a stateful graph (openpilot #38916, Cinque Terre V3 on) reference() feeds each
+next_state_ output back itself, so the server's state loop is checked too.
 
 The graph is float16 end to end, so this is two float16 implementations
 differing in accumulation order, not half against full precision: expect an
@@ -125,6 +127,23 @@ def hidden_slice(spec: ModelSpec) -> slice:
   return spec.output_slices['hidden_state']
 
 
+def feeds_hidden_back(spec: ModelSpec) -> bool:
+  """Whether the comma sends the hidden state back as prev_feat. A stateful
+  graph keeps it on the server, and its packed inputs have no room for it."""
+  return 'prev_feat' in spec.packed_shapes
+
+
+def unpack(spec: ModelSpec, packed: np.ndarray) -> dict[str, np.ndarray]:
+  """The packed floats as named graph inputs, for a stateful graph whose packed
+  names are its own input names."""
+  out, off = {}, 0
+  for name, shape in spec.packed_shapes.items():
+    size = int(np.prod(shape))
+    out[name] = packed[off:off + size].reshape(spec.input_shapes[name])
+    off += size
+  return out
+
+
 # -- capture: what actually comes back over the link -------------------------
 
 def capture(args) -> int:
@@ -164,7 +183,7 @@ def capture(args) -> int:
       np.save(out / f'in_warped_{i}.npy', warped)
       np.save(out / f'in_packed_{i}.npy', packed)
       np.save(out / f'out_link_{i}.npy', np.asarray(result, np.float32))
-      if i + 1 < len(frames):
+      if i + 1 < len(frames) and feeds_hidden_back(spec):
         frames[i + 1][1][-(hid.stop - hid.start):] = result[hid]
       print(f"  frame {i}: {len(result)} values, "
             f"finite={bool(np.all(np.isfinite(result)))}")
@@ -209,15 +228,17 @@ def reference(args) -> int:
   d = Path(args.dir)
 
   sess = ort.InferenceSession(args.onnx, providers=['CPUExecutionProvider'])
+  n = len(sorted(d.glob('in_warped_*.npy')))
+  if not n:
+    raise SystemExit(f"no captured inputs in {d}; run capture first")
+  if spec.stateful:
+    return reference_stateful(spec, sess, d, n)
+
   # The untouched ONNX still wants UINT8 images where the queues hand back FP16.
   # 0..255 is exact in both, so the cast is lossless.
   dtypes = _ort_feed_dtypes(sess)
   queues = PolicyQueues(spec)
   queues.reset()
-
-  n = len(sorted(d.glob('in_warped_*.npy')))
-  if not n:
-    raise SystemExit(f"no captured inputs in {d}; run capture first")
 
   hid = hidden_slice(spec)
   prev_hidden = None
@@ -237,6 +258,30 @@ def reference(args) -> int:
     np.save(d / f'out_ref_{i}.npy', out)
     print(f"  frame {i}: {out.shape[0]} values, finite={bool(np.all(np.isfinite(out)))}")
     prev_hidden = out[hid]
+  return 0
+
+
+def reference_stateful(spec: ModelSpec, sess, d: Path, n: int) -> int:
+  """A stateful graph run the way openpilot's ModelState runs it: the frame and
+  the scalars in, each next_state_ output fed back as its state_ input, and
+  every state zero at the start as after the capture's reset."""
+  dtypes = _ort_feed_dtypes(sess)
+  shapes = {i.name: tuple(i.shape) for i in sess.get_inputs()}
+  names = [o.name for o in sess.get_outputs()]
+  state = {name: np.zeros(shapes[name], dtypes[name]) for name in spec.state_pairs}
+  for i in range(n):
+    warped = np.load(d / f'in_warped_{i}.npy')
+    packed = np.load(d / f'in_packed_{i}.npy')
+    feed = {'new_img': warped, **unpack(spec, packed), **state}
+    missing = set(dtypes) - set(feed)
+    if missing:
+      raise SystemExit(f"no value for graph input(s) {sorted(missing)}")
+    feed = {k: np.ascontiguousarray(v, dtype=dtypes[k]).reshape(shapes[k]) for k, v in feed.items()}
+    outs = dict(zip(names, sess.run(None, feed), strict=True))
+    out = np.asarray(outs['outputs'], np.float32).reshape(-1)
+    np.save(d / f'out_ref_{i}.npy', out)
+    print(f"  frame {i}: {out.shape[0]} values, finite={bool(np.all(np.isfinite(out)))}")
+    state = {name: outs[nxt] for name, nxt in spec.state_pairs.items()}
   return 0
 
 

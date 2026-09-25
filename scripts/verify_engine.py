@@ -21,9 +21,10 @@ are really judged.
     python3 scripts/verify_engine.py --engine <plan> --inputs <dir> --ref ref_out.npy --spec spec.json
 
 --capture asks instead whether the comma received what the engine computed. It
-replays a verify_parity capture through the same PolicyQueues and staging
-buffers the server uses and demands bit identity with out_link_*, which leaves
-every remaining difference against onnxruntime as inference precision.
+replays a verify_parity capture through the same queues (or, for a stateful
+graph, the same state loop) and staging buffers the server uses and demands
+bit identity with out_link_*, which leaves every remaining difference against
+onnxruntime as inference precision.
 
     python3 scripts/verify_engine.py --engine <plan> --capture <dir from verify_parity capture>
 
@@ -46,12 +47,20 @@ from jetlink.server.backends import NAMES, select
 from jetlink.server.backends.base import Engine, infer
 
 
+def model_output(outputs: dict) -> np.ndarray:
+  """The driving output, by name: a stateful graph returns its queues beside it."""
+  out = outputs['outputs'] if 'outputs' in outputs else next(iter(outputs.values()))
+  return np.asarray(out, np.float32).reshape(-1)
+
+
 def replay_capture(engine: Engine, d: Path) -> int:
   """Feed a verify_parity capture through the server's own path and compare with out_link_*."""
-  from jetlink.queues import PolicyQueues
+  from jetlink.queues import for_model
 
   spec = load_spec_file(d / 'spec.json')
-  queues = PolicyQueues(spec)
+  # as EngineHost._warm builds it: before the warm run, so a TensorRT engine
+  # that keeps the state loop on the GPU knows it before the graph is captured
+  queues = for_model(spec, engine)
   host_inputs = {n: engine.host_input(n) for n in engine.inputs}
   # same warm-up as EngineHost._warm, so the replay runs the kernels the server runs
   queues.step_into(np.zeros(spec.warped_shape, np.uint8), np.zeros(spec.packed_nelem, np.float32), host_inputs)
@@ -64,9 +73,12 @@ def replay_capture(engine: Engine, d: Path) -> int:
     return 1
   bad = 0
   for i in range(n):
-    # in_packed_i already carries the hidden state the link returned for frame i-1
+    # in_packed_i already carries the hidden state the link returned for frame
+    # i-1; a stateful graph carries it in its own queues instead
     queues.step_into(np.load(d / f'in_warped_{i}.npy'), np.load(d / f'in_packed_{i}.npy'), host_inputs)
-    out = np.asarray(next(iter(engine.run().values())).reshape(-1), np.float32)
+    outputs = engine.run()
+    out = model_output(outputs)
+    queues.after_run(outputs, host_inputs)
     link = np.load(d / f'out_link_{i}.npy').reshape(-1)
     same = np.array_equal(out, link)
     bad += not same
@@ -115,7 +127,7 @@ def main() -> int:
       return 1
     values[name] = np.load(f).astype(b.dtype, copy=False).reshape(b.shape)
 
-  out = next(iter(infer(engine, values).values())).astype(np.float32).reshape(-1)
+  out = model_output(infer(engine, values))
   print(f'output: {out.shape} finite={np.all(np.isfinite(out))} '
         f'mean={out.mean():.5f} std={out.std():.5f}')
 
