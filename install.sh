@@ -469,29 +469,6 @@ ask_questions() {
       POWER=switched SLEEP_AFTER=0 POWEROFF_WITH_COMMA=0
     fi
 
-    if [ -n "$PM_BEST_NAME" ]; then
-      if [ "$PM_CURRENT" = "$PM_BEST_NAME" ]; then
-        FAST_MODE=1
-      else
-        local fast
-        ask_yn fast y "Run the Jetson in its fastest power mode ($PM_BEST_NAME)?" \
-          "Recommended: the large models need it to keep up. Your power supply must be" \
-          "able to deliver it (25 W or more for an Orin Nano)."
-        if [ "$fast" = y ]; then FAST_MODE=1; else FAST_MODE=0; fi
-      fi
-      if [ "$PM_BEST_NAME" != MAXN_SUPER ] && [[ "$MODEL" == *"Orin Nano"* ]]; then
-        note "This install does not offer the Orin Nano's Super modes. JetPack 7.2.1's installer"
-        note "sets them up; Jetlink still works, a little slower."
-      fi
-    fi
-
-    if swap_wanted; then
-      local sw
-      ask_yn sw y "Add ${SWAP_GB} GB of swap so the largest models can be prepared?" \
-        "Recommended. The 1.7 GB models need more memory than the Jetson has while they" \
-        "are prepared. It uses ${SWAP_GB} GB of disk space."
-      if [ "$sw" = y ]; then ADD_SWAP=1; else ADD_SWAP=0; fi
-    fi
     AUTOSTART=1
   else
     local auto
@@ -512,29 +489,48 @@ set_always_on() {
 
 take_defaults() {
   # --yes on a fresh install: the recommended answers
-  if [ "$JETSON" = 1 ]; then
-    if [ -z "$POWER" ]; then
-      if [ "$DEEP_SLEEP" = 1 ]; then
-        set_always_on
-        POWEROFF_WITH_COMMA=1
-      else
-        POWER=switched SLEEP_AFTER=0 POWEROFF_WITH_COMMA=0
-      fi
+  if [ "$JETSON" = 1 ] && [ -z "$POWER" ]; then
+    if [ "$DEEP_SLEEP" = 1 ]; then
+      set_always_on
+      POWEROFF_WITH_COMMA=1
+    else
+      POWER=switched SLEEP_AFTER=0 POWEROFF_WITH_COMMA=0
     fi
-    [ -n "$PM_BEST_NAME" ] && FAST_MODE=1
-    swap_wanted && ADD_SWAP=1
   fi
   return 0
 }
 
-swap_wanted() {
-  [ "$JETSON" = 1 ] || return 1
-  [ -n "$SWAP_FILE" ] && return 0
-  # real swap only: JetPack's zram is compressed memory and does not help
+# Not questions: the large models need both, so every Jetson install gets
+# them, updates included.
+jetson_musts() {
+  [ "$JETSON" = 1 ] || return 0
+  FAST_MODE=0
+  if [ -n "$PM_BEST_NAME" ]; then
+    FAST_MODE=1
+    if [ "$PM_BEST_NAME" != MAXN_SUPER ] && [[ "$MODEL" == *"Orin Nano"* ]]; then
+      note "This JetPack install does not offer the Orin Nano's Super modes; JetPack 7.2.1's"
+      note "installer sets them up. Jetlink still works, a little slower, in $PM_BEST_NAME."
+    fi
+  fi
+  ADD_SWAP=0
+  if [ -n "$SWAP_FILE" ]; then
+    ADD_SWAP=1
+  elif swap_short; then
+    if [ "$DISK_GB" -ge $((MIN_DISK_GB + SWAP_GB + 5)) ]; then
+      ADD_SWAP=1
+    else
+      note "Not enough disk space for ${SWAP_GB} GB of swap, so the 1.7 GB models may fail to prepare."
+    fi
+  fi
+  return 0
+}
+
+# less than the swap the 1.7 GB models need; JetPack's zram is compressed
+# memory, not swap, and does not count
+swap_short() {
   local kb
   kb=$(awk 'NR > 1 && $1 !~ /zram/ {s += $3} END {printf "%d", s}' "$SWAPS" 2>/dev/null || echo 0)
-  [ "${kb:-0}" -lt $(((SWAP_GB - 1) * 1048576)) ] || return 1
-  [ "$DISK_GB" -ge $((MIN_DISK_GB + SWAP_GB + 5)) ]
+  [ "${kb:-0}" -lt $(((SWAP_GB - 1) * 1048576)) ]
 }
 
 # ---------------------------------------------------------------------------
@@ -648,10 +644,10 @@ show_plan() {
       say "  • Let the comma shut down the Jetson to protect the car battery"
     fi
     if [ "$FAST_MODE" = 1 ] && [ "$PM_CURRENT" != "$PM_BEST_NAME" ]; then
-      say "  • Switch to the fastest power mode, $PM_BEST_NAME ${D}(may need a restart)${N}"
+      say "  • Switch to the fastest power mode, $PM_BEST_NAME, which the large models need ${D}(may need a restart)${N}"
     fi
     if [ "$ADD_SWAP" = 1 ] && [ -z "$SWAP_FILE" ]; then
-      say "  • Add ${SWAP_GB} GB of swap for preparing the largest models"
+      say "  • Add ${SWAP_GB} GB of swap, which the largest models need while they are prepared"
     fi
     say "  • Start up without waiting for a network, and keep the system log small"
   fi
@@ -1163,6 +1159,7 @@ main() {
   else
     take_defaults
   fi
+  jetson_musts
 
   local here=''
   [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ] && here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

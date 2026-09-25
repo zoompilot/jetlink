@@ -52,15 +52,13 @@ On the Jetson, open a terminal (or connect with `ssh`) and run:
 curl -fsSL https://raw.githubusercontent.com/zoompilot/jetlink/main/install.sh | bash
 ```
 
-It shows what it found, asks a few questions, shows the plan, and asks before
+It shows what it found, asks how the Jetson is powered, shows the plan, and asks before
 changing anything. Press Enter at each question for the recommended answer.
 
 | It asks | What it means |
 | --- | --- |
 | How is the Jetson powered in the car? | **Always on** (recommended): the Jetson sleeps when the car is off to save battery and wakes when you start the car, so the large model is ready within seconds. **Switched**: it turns on and off with the car, and the large model is ready about a minute after you start it. |
 | Allow the comma to shut down the Jetson to protect the car battery? | Always on only. When the comma shuts itself down for low battery, it turns the Jetson off too. The Jetson then stays off until its power is reconnected. See [powering off with the comma](transport.md#powering-off-with-the-comma). |
-| Run in the fastest power mode? | Switches to MAXN SUPER, which the large models need to keep up. The power supply has to be able to deliver it. Switching can need one restart; the installer says so at the end. |
-| Add 8 GB of swap? | The 1.7 GB models need more memory than the Jetson has while they are prepared. Uses 8 GB of disk space. |
 
 The installer then:
 
@@ -68,6 +66,10 @@ The installer then:
 - downloads the Jetlink server, or builds it on the Jetson when there is no
   ready-made one for its JetPack (the same 10 to 30 minutes)
 - checks that the server can use the GPU
+- switches the Jetson to its fastest power mode, MAXN SUPER, which the large
+  models need to keep up (the power supply has to deliver it; switching can
+  need one restart, and the installer says so at the end)
+- adds 8 GB of swap, which the 1.7 GB models need while they are prepared
 - sets up the `jetlink-server` service to start at every boot, and the
   `jetlink` command
 - stops the Jetson waiting for a network at boot (the car has none, and waiting
@@ -111,7 +113,7 @@ switches at the first stop with cruise off after the large model is ready.
 The list uses sunnypilot's big-model catalog and updates without a software
 update. Use 766 MB models on the Jetson. Lebowski (1.7 GB) runs at 46 ms against
 a 50 ms frame budget, which leaves little margin, and needs the swap the
-installer offers. See [measured performance](status.md#measured-performance).
+installer adds. See [measured performance](status.md#measured-performance).
 
 ### Downloading a model on the Jetson
 
@@ -136,7 +138,7 @@ server first (`jetlink stop`), run `jetlink models prepare <ref>`, then
 | The installer stops with an error | Run it again: it is safe to repeat, and picks up where it left off. The full log is in `/var/log/jetlink-install.log`. |
 | The icon never pulses, the server keeps waiting | `jetlink status` should say running. Use a Jetson USB-A port, and try another USB 3 data cable. |
 | Engine build fails | Check free disk space (`df -h /mnt/data`) and `jetlink logs` |
-| Large model build is killed or hangs | Run `jetlink setup` and accept the swap |
+| Large model build is killed or hangs | Check `free -h` shows 8 GB of swap; the installer skips it when the disk is too small |
 | Model repeatedly drops out | Check separate supplies and voltage dips, cable, cooling, and `jetlink logs` |
 | Frame time exceeds 50 ms | Check USB 3 speed, the power mode (`sudo nvpmodel -q`), cooling, and model choice |
 | Jetson fails to wake | See [USB wake setup](transport.md#always-on-supply-and-suspend) |

@@ -118,12 +118,14 @@ echo "installer scenarios on $(. /etc/os-release; echo "$PRETTY_NAME")"
 # ---------------------------------------------------------------------------
 scenario "JetPack 7.2 Jetson, always-on power, fresh install"
 reset_box; jetson 39 2.1; f=$FAILED
-# questions: power (1 = always on), let the comma shut it down, fast mode, swap, go ahead
-install '1\ny\ny\ny\ny\n'
+# questions: power (1 = always on), let the comma shut it down, go ahead
+install '1\ny\ny\n'
 expect_rc 0
 expect_out "Orin Nano"
 expect_out "JetPack 7 (Jetson Linux 39.2.1)"
 expect_out "How is the Jetson powered in the car?"
+expect_no_out "fastest power mode ("
+expect_no_out "Add 8 GB of swap so"
 expect_out "Jetlink is installed and running"
 expect_ran "apt-get -o DPkg::Lock::Timeout=900 -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin"
 expect_ran "nvidia-ctk runtime configure --runtime=docker"
@@ -226,8 +228,8 @@ show_on_failure "$f"
 scenario "JetPack 6.2 Jetson, switched power"
 reset_box; jetson 36 4.3; f=$FAILED
 export FAKE_GPU_OK="--runtime nvidia"
-# questions: power (2 = switched), then Enter at fast mode, swap and go ahead
-install '2\n\n\n\n'
+# questions: power (2 = switched), then Enter to go ahead
+install '2\n\n'
 expect_rc 0
 expect_out "JetPack 6 (Jetson Linux 36.4.3)"
 expect_ran "apt-get -o DPkg::Lock::Timeout=900 -y install docker.io"
@@ -235,6 +237,8 @@ expect_ran "docker build --network host -f /src/docker/Dockerfile.jetpack6 -t je
 expect_in /etc/jetlink/server.env "JETLINK_FLAVOR=jetpack6"
 expect_in /etc/jetlink/server.env "JETLINK_SLEEP_AFTER=0"
 expect_in /etc/jetlink/server.env 'JETLINK_GPU_ARGS=--runtime\ nvidia'
+expect_ran "nvpmodel -m 2"
+expect_in /etc/fstab "/mnt/data/jetlink-swapfile none swap sw 0 0"
 expect_no_file /etc/systemd/system/jetlink-poweroff.path
 expect_no_file /etc/udev/rules.d/99-jetlink-usb-wakeup.rules
 JETLINK_DRY_RUN=1 /usr/local/lib/jetlink/run-server >/tmp/cmd.txt 2>&1
@@ -319,6 +323,16 @@ install '' --yes
 expect_rc 0
 expect_in /etc/jetlink/install.conf "JETLINK_POWER=switched"
 expect_in /etc/jetlink/server.env "JETLINK_SLEEP_AFTER=0"
+show_on_failure "$f"
+
+# ---------------------------------------------------------------------------
+scenario "no swap on a disk too small for it, said plainly"
+reset_box; jetson 39 2.1; with_docker; f=$FAILED
+JETLINK_TEST_FREE_GB=20 install '' --yes
+expect_rc 0
+expect_out "Not enough disk space for 8 GB of swap"
+refute "no swap should be added" grep -q swapfile /etc/fstab
+expect_ran "nvpmodel -m 2"
 show_on_failure "$f"
 
 # ---------------------------------------------------------------------------
