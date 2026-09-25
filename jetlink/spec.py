@@ -36,6 +36,8 @@ DEFAULT_FRAME_SKIP = MODEL_RUN_FREQ // MODEL_CONTEXT_FREQ  # 4
 
 CHUNK = 4 << 20  # model upload chunk
 
+# the driving output every layout has, 18452 floats in openpilot's layout
+DRIVING_OUTPUT = 'outputs'
 # the input only a stateful graph has; see the module docstring
 STATEFUL_FRAME = 'new_img'
 STATE_OUTPUT_PREFIX = 'next_'
@@ -147,7 +149,7 @@ class ModelSpec:
   # --- output ---
   @property
   def output_nelem(self) -> int:
-    return math.prod(self.output_shapes['outputs'])
+    return math.prod(self.output_shapes[DRIVING_OUTPUT])
 
   @property
   def output_nbytes(self) -> int:

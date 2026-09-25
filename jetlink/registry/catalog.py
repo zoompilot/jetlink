@@ -35,9 +35,6 @@ CATALOG_URL = CATALOG_URL_TEMPLATE.format(version=CATALOG_VERSION)
 # the first that is not there, so a model published later is listed without a
 # release of this package. See merge_catalogs.
 PROBE_LIMIT = 10
-# the override marking a model only an accelerator can run: it came from a
-# catalog at another selector version, so its tinygrad build is not for us
-ACCELERATOR_ONLY = 'accelerator_only'
 # The selector version the fork requires (REQUIRED_JSON_VERSION on the comma).
 # It is a string in the JSON; bundles at any other version describe fields we
 # would misread.
@@ -61,8 +58,8 @@ class VerifyError(RegistryError):
   """Bytes arrived, but not the bytes that were asked for. Exit code 3."""
 
 
-class CatalogMissing(NetworkError):
-  """The server answered: no such catalog version."""
+class NotFound(NetworkError):
+  """The server answered that there is nothing at the URL."""
 
 
 @dataclass(frozen=True)
@@ -91,15 +88,12 @@ def parse_catalog(data: dict) -> list[CatalogModel]:
   nothing else, so each bundle is parsed in its own try.
   """
   found: dict[str, CatalogModel] = {}
-  bundles = (data or {}).get('bundles') or []
-  if not isinstance(bundles, list):
-    return []
-  for bundle in bundles:
+  for bundle in _bundles(data):
     try:
       ref = bundle.get('ref')
       if not is_ref(ref) or ref in found:
         continue
-      if int(bundle.get('minimum_selector_version', 0)) != REQUIRED_SELECTOR_VERSION or not bundle.get('is_big'):
+      if _selector(bundle) != REQUIRED_SELECTOR_VERSION or not bundle.get('is_big'):
         continue
       found[ref] = CatalogModel(name=str(bundle.get('display_name') or ref[:10]), short_name=str(bundle.get('short_name') or ''),
                                 ref=ref, build_time=str(bundle.get('build_time') or ''), index=int(bundle.get('index', 0)))
@@ -108,20 +102,34 @@ def parse_catalog(data: dict) -> list[CatalogModel]:
   return sorted(found.values(), key=lambda m: m.index, reverse=True)
 
 
-def fetch_catalog(url: str = CATALOG_URL, timeout: float = CATALOG_TIMEOUT, opener=None) -> dict:
-  """The catalog JSON. Every failure, transport or content, is a NetworkError."""
+def http_get(url: str, timeout: float, opener=None, limit: int = -1) -> bytes:
+  """The body at `url`, at most `limit` bytes. A 404 is NotFound, and every
+  other failure a NetworkError, so a caller only catches what it treats apart."""
   opener = opener or urllib.request.urlopen
   try:
     with opener(url, timeout=timeout) as response:
-      data = json.loads(response.read().decode())
+      return response.read(limit)
   except urllib.error.HTTPError as e:
-    kind = CatalogMissing if e.code == 404 else NetworkError
-    raise kind(f"could not fetch the model catalog from {url}: {e}") from e
+    raise (NotFound if e.code == 404 else NetworkError)(f"could not fetch {url}: {e}") from e
   except (OSError, ValueError) as e:
-    raise NetworkError(f"could not fetch the model catalog from {url}: {e}") from e
-  if not isinstance(data, dict):
-    raise NetworkError(f"{url} did not serve a JSON object")
+    raise NetworkError(f"could not fetch {url}: {e}") from e
+
+
+def http_json(url: str, timeout: float, opener=None, kind: type = dict):
+  """http_get, parsed, and of the type asked for."""
+  body = http_get(url, timeout, opener)
+  try:
+    data = json.loads(body.decode())
+  except ValueError as e:
+    raise NetworkError(f"{url} did not serve JSON: {e}") from e
+  if not isinstance(data, kind):
+    raise NetworkError(f"{url} did not serve a JSON {kind.__name__}")
   return data
+
+
+def fetch_catalog(url: str = CATALOG_URL, timeout: float = CATALOG_TIMEOUT, opener=None) -> dict:
+  """The catalog JSON. Every failure, transport or content, is a NetworkError."""
+  return http_json(url, timeout, opener)
 
 
 def catalog_version(url: str) -> int | None:
@@ -140,10 +148,9 @@ def newer_catalogs(url: str = CATALOG_URL, limit: int = PROBE_LIMIT, timeout: fl
     return []
   found = []
   for v in range(version + 1, version + 1 + limit):
-    newer = CATALOG_URL_TEMPLATE.format(version=v)
     try:
-      found.append(fetch_catalog(newer, timeout=timeout, opener=opener))
-    except CatalogMissing:
+      found.append(fetch_catalog(CATALOG_URL_TEMPLATE.format(version=v), timeout=timeout, opener=opener))
+    except NotFound:
       break
     except NetworkError as e:
       log.warning("stopped probing for newer catalogs: %s", e)
@@ -157,35 +164,29 @@ def merge_catalogs(catalogs: list[dict], selector: int = REQUIRED_SELECTOR_VERSI
   A model some catalog lists at `selector` comes through as published, so a
   chestnut can still fetch its build. One listed only at another selector
   version, which is where sunnypilot puts every model once it moves runtimes,
-  comes from the newest catalog that has it, retyped to `selector`, with no
-  artifacts and the ACCELERATOR_ONLY override: an accelerator runs the
-  commit's ONNX and needs nothing else from the entry.
+  comes from the newest catalog that has it, retyped to `selector` and with no
+  artifacts: an accelerator runs the commit's ONNX and needs nothing else from
+  the entry, and a chestnut has nothing to download.
   """
   if not catalogs:
     return {}
-  kept: list[dict] = []
-  seen: set[str] = set()
+  kept: dict[str, dict] = {}
+  others: dict[str, dict] = {}
   for data in catalogs:
     for bundle in _bundles(data):
       ref = bundle.get('ref')
-      if is_ref(ref) and ref not in seen and _selector(bundle) == selector:
-        kept.append(bundle)
-        seen.add(ref)
-  newest: dict[str, dict] = {}
-  for data in catalogs:
-    for bundle in _bundles(data):
-      ref = bundle.get('ref')
-      if is_ref(ref) and ref not in seen and bundle.get('is_big'):
-        newest[ref] = bundle
-  for bundle in newest.values():
-    overrides = bundle.get('overrides') if isinstance(bundle.get('overrides'), dict) else {}
-    kept.append({**bundle, 'minimum_selector_version': str(selector), 'models': [],
-                 'overrides': {**overrides, ACCELERATOR_ONLY: '1'}})
-  return {**catalogs[0], 'bundles': kept}
+      if not is_ref(ref):
+        continue
+      if _selector(bundle) == selector:
+        kept.setdefault(ref, bundle)
+      elif bundle.get('is_big'):
+        others[ref] = bundle   # the newest catalog's entry wins
+  extra = [{**b, 'minimum_selector_version': str(selector), 'models': []} for ref, b in others.items() if ref not in kept]
+  return {**catalogs[0], 'bundles': [*kept.values(), *extra]}
 
 
 def _bundles(data: dict) -> list[dict]:
-  bundles = (data or {}).get('bundles') if isinstance(data, dict) else None
+  bundles = data.get('bundles') if isinstance(data, dict) else None
   return [b for b in bundles if isinstance(b, dict)] if isinstance(bundles, list) else []
 
 

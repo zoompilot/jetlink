@@ -34,6 +34,7 @@ from jetlink.server.telemetry import CachedTelemetry, NoTelemetry
 from jetlink.spec import (
   CHUNK,
   DEFAULT_FRAME_SKIP,
+  DRIVING_OUTPUT,
   ModelSpec,
   sha256_file,
   spec_from_onnx,
@@ -526,18 +527,12 @@ def _check_shapes(engine, spec: ModelSpec) -> None:
   missing = set(spec.input_shapes) - set(engine.inputs)
   if missing:
     raise ValueError(f"engine has no input(s) {sorted(missing)} the model spec declares")
-  out = _model_output(engine.outputs).shape
+  out = engine.outputs[DRIVING_OUTPUT].shape
   if int(np.prod(out)) != spec.output_nelem:
     raise ValueError(f"output: engine {tuple(out)} vs spec {spec.output_nelem}")
   missing = set(spec.state_pairs.values()) - set(engine.outputs)
   if missing:
     raise ValueError(f"engine has no output(s) {sorted(missing)} to feed the state back from")
-
-
-def _model_output(outputs: dict):
-  """The driving output. By name, since a stateful graph has its queues
-  beside it; a backend that reports one unnamed output has only that."""
-  return outputs['outputs'] if 'outputs' in outputs else next(iter(outputs.values()))
 
 
 class Session:
@@ -764,7 +759,7 @@ class Session:
     queue_us = int((time.perf_counter() - t0) * 1e6)
 
     outputs = loaded.engine.run()
-    out = _model_output(outputs).reshape(-1)
+    out = outputs[DRIVING_OUTPUT].reshape(-1)
 
     # asarray, not astype: a no-op when the engine already outputs float32.
     # isfinite is ~7x faster on float32 and the non-finites map across exactly.

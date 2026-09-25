@@ -34,8 +34,8 @@ from jetlink.spec import ModelSpec
 _U8_TO_F16_BITS = np.arange(256, dtype=np.uint8).astype(np.float16).view(np.uint16)
 
 
-def write_u8(dest: np.ndarray, value: np.ndarray) -> None:
-  """Copy uint8 image bytes into `dest`, through the lookup for an fp16 one."""
+def store(dest: np.ndarray, value: np.ndarray) -> None:
+  """Copy `value` into `dest`, casting; uint8 images into fp16 through the lookup."""
   if dest.dtype == np.float16 and value.dtype == np.uint8:
     # take-with-out, not `dest[:] = lut[src]`: the latter builds a 393 KB
     # temporary, 2.4 ms against 1.4 ms on the Orin (the other way on x86, so
@@ -71,8 +71,6 @@ class RingQueue:
     self.buf = np.zeros(shape, dtype=dtype)
     self.n = shape[0]
     self.head = 0
-    # only fp16 rings can use the lookup table; float32 falls back to assignment
-    self._lut = self.buf.dtype == np.float16
 
   def reset(self) -> None:
     self.buf[:] = 0
@@ -80,11 +78,7 @@ class RingQueue:
 
   def push(self, value) -> None:
     # The slot the oldest element occupies becomes the newest once head moves.
-    dest = self.buf[self.head]
-    if self._lut and getattr(value, 'dtype', None) == np.uint8:
-      write_u8(dest, value)
-    else:
-      dest[...] = value
+    store(self.buf[self.head], value)
     self.head = (self.head + 1) % self.n
 
   def gather(self, step: int, out: np.ndarray) -> np.ndarray:
@@ -121,12 +115,21 @@ def sample_desire(q: RingQueue, frame_skip: int, out: np.ndarray | None = None) 
   return m.reshape(1, m.shape[0] * m.shape[1], *m.shape[2:])
 
 
-def _unpack_layout(spec: ModelSpec) -> list[tuple[int, int, tuple[int, ...]]]:
+def _unpack_layout(spec: ModelSpec) -> list[tuple[str, int, int, tuple[int, ...]]]:
+  """(name, start, stop, shape) of each input in the packed scalars."""
   offset, out = 0, []
-  for size, shape in zip(spec.packed_sizes, spec.packed_shapes.values(), strict=True):
-    out.append((offset, offset + size, shape))
+  for name, shape in spec.packed_shapes.items():
+    size = int(np.prod(shape))
+    out.append((name, offset, offset + size, shape))
     offset += size
   return out
+
+
+def _check_frame(spec: ModelSpec, warped: np.ndarray, packed: np.ndarray) -> None:
+  if warped.shape != spec.warped_shape:
+    raise ValueError(f"warped {warped.shape} != {spec.warped_shape}")
+  if packed.size != spec.packed_nelem:
+    raise ValueError(f"packed {packed.size} != {spec.packed_nelem}")
 
 
 class PolicyQueues:
@@ -157,14 +160,10 @@ class PolicyQueues:
 
   def _unpack(self, packed: np.ndarray):
     # slice views, not np.split: the offsets never change and split allocates
-    return tuple(packed[a:b].reshape(shape) for a, b, shape in self._packed_layout)
+    return tuple(packed[a:b].reshape(shape) for _, a, b, shape in self._packed_layout)
 
   def _push(self, warped: np.ndarray, packed: np.ndarray):
-    spec = self.spec
-    if warped.shape != spec.warped_shape:
-      raise ValueError(f"warped {warped.shape} != {spec.warped_shape}")
-    if packed.size != spec.packed_nelem:
-      raise ValueError(f"packed {packed.size} != {spec.packed_nelem}")
+    _check_frame(self.spec, warped, packed)
     desire, traffic_convention, action_t, prev_feat = self._unpack(packed)
     # push() casts into a typed buffer, so uint8 -> float16 costs one row here
     # rather than the whole sampled window later
@@ -222,16 +221,11 @@ class StateLoop:
   """
 
   def __init__(self, spec: ModelSpec, engine):
-    if not spec.stateful:
-      raise ValueError("StateLoop is for a stateful graph; this one takes img")
     self.spec = spec
     self.engine = engine
     self.pairs = spec.state_pairs
     if not self.pairs:
       raise ValueError("the graph takes new_img but returns no next_state_ outputs")
-    for name in ('desire', 'traffic_convention', 'action_t'):
-      if name not in spec.input_shapes:
-        raise ValueError(f"the graph takes new_img but has no {name} input")
     self._packed_layout = _unpack_layout(spec)
     loop = getattr(engine, 'loop_state', None)
     self.on_engine = bool(loop(self.pairs)) if callable(loop) else False
@@ -247,23 +241,17 @@ class StateLoop:
   def step_into(self, warped: np.ndarray, packed: np.ndarray,
                 dest: dict[str, np.ndarray]) -> None:
     """Write one frame's inputs; the state inputs are already in place."""
-    spec = self.spec
-    if warped.shape != spec.warped_shape:
-      raise ValueError(f"warped {warped.shape} != {spec.warped_shape}")
-    if packed.size != spec.packed_nelem:
-      raise ValueError(f"packed {packed.size} != {spec.packed_nelem}")
-    write_u8(dest['new_img'], warped)
-    for name, (a, b, _) in zip(spec.packed_shapes, self._packed_layout, strict=True):
-      d = dest[name]
-      d[...] = packed[a:b].reshape(d.shape)
+    _check_frame(self.spec, warped, packed)
+    store(dest['new_img'], warped)
+    for name, a, b, _ in self._packed_layout:
+      store(dest[name], packed[a:b])
 
   def after_run(self, outputs: dict[str, np.ndarray], dest: dict[str, np.ndarray]) -> None:
     """Advance the queues: each next_state_ becomes next frame's state_."""
     if self.on_engine:
       return
     for name, nxt in self.pairs.items():
-      d = dest[name]
-      np.copyto(d, outputs[nxt].reshape(d.shape), casting='unsafe')
+      store(dest[name], outputs[nxt])
 
 
 def for_model(spec: ModelSpec, engine) -> PolicyQueues | StateLoop:

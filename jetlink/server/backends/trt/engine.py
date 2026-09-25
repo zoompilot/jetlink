@@ -102,7 +102,6 @@ class TrtEngine:
     # state input -> the output that feeds it; see loop_state
     self.looped: dict[str, str] = {}
     self._zero_state = False
-    self._returned = dict(self.outputs)
 
   # -- introspection --------------------------------------------------------
 
@@ -139,21 +138,31 @@ class TrtEngine:
       if a is None or b is None or a.nbytes != b.nbytes or a.dtype != b.dtype:
         return False
     self.looped = dict(pairs)
-    self._returned = {n: b for n, b in self.outputs.items() if n not in self.looped.values()}
+    # their pinned host buffers are never copied again: 24 MB of page-locked
+    # memory on a board that shares it with the GPU. Plain arrays keep
+    # host_input() working, and stay unbacked while nothing writes them
+    for name in (*pairs, *pairs.values()):
+      b = self.bindings[name]
+      cudart.host_free(b.host_ptr)
+      b.host_ptr, b.host = 0, np.zeros(b.shape, b.dtype)
     self._zero_state = True
     return True
+
+  def _copied(self, bindings: dict[str, Binding]) -> list[Binding]:
+    """The bindings that cross to the host each frame: all but the looped state."""
+    looped = {*self.looped, *self.looped.values()}
+    return [b for n, b in bindings.items() if n not in looped]
 
   def reset_state(self) -> None:
     """Zero the looped state before the next run: empty queues."""
     self._zero_state = True
 
   def _enqueue(self) -> None:
-    for b in self.inputs.values():
-      if b.name not in self.looped:
-        cudart.memcpy_h2d_async(b.device_ptr, b.host_ptr, b.nbytes, self.stream)
+    for b in self._copied(self.inputs):
+      cudart.memcpy_h2d_async(b.device_ptr, b.host_ptr, b.nbytes, self.stream)
     if not self.context.execute_async_v3(self.stream):
       raise RuntimeError("execute_async_v3 failed")
-    for b in self._returned.values():
+    for b in self._copied(self.outputs):
       cudart.memcpy_d2h_async(b.host_ptr, b.device_ptr, b.nbytes, self.stream)
     # the queues the graph just advanced become next frame's; a copy rather
     # than swapping addresses, which the captured graph has baked in
@@ -206,7 +215,7 @@ class TrtEngine:
       self._enqueue()
     cudart.stream_sync(self.stream)
     self.last_gpu_us = int((time.perf_counter() - t0) * 1e6)
-    return {n: b.host for n, b in self._returned.items()}
+    return {b.name: b.host for b in self._copied(self.outputs)}
 
   def infer(self, values: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     self.load_inputs(values)

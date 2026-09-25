@@ -97,11 +97,20 @@ class TestBothGraphShapes:
       patch_uint8_inputs(once)
 
 
-def test_a_model_without_image_inputs_says_so():
+def test_a_model_without_uint8_inputs_says_so():
+  graph = helper.make_graph([helper.make_node('Identity', ['x'], ['out'])], 'g',
+                            [helper.make_tensor_value_info('x', TensorProto.FLOAT16, SHAPE)],
+                            [helper.make_tensor_value_info('out', TensorProto.FLOAT16, SHAPE)])
+  assert not needs_patch(helper.make_model(graph))
+  with pytest.raises(ValueError, match="no uint8 inputs"):
+    patch_uint8_inputs(helper.make_model(graph))
+
+
+def test_a_uint8_chain_with_no_cast_says_so():
   graph = helper.make_graph([helper.make_node('Identity', ['x'], ['out'])], 'g',
                             [helper.make_tensor_value_info('x', TensorProto.UINT8, SHAPE)],
                             [helper.make_tensor_value_info('out', TensorProto.UINT8, SHAPE)])
-  with pytest.raises(ValueError, match="none of"):
+  with pytest.raises(ValueError, match="head Cast"):
     patch_uint8_inputs(helper.make_model(graph))
 
 

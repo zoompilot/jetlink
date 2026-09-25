@@ -25,7 +25,7 @@ import pytest
 
 from jetlink import protocol as P
 from jetlink.client import JetlinkClient
-from jetlink.queues import PolicyQueues
+from jetlink.queues import PolicyQueues, for_model
 from jetlink.server.cache import EngineCache
 from jetlink.server.session import EngineHost, Job, Loaded, Request, Session
 from jetlink.spec import ModelSpec
@@ -100,7 +100,7 @@ def ready_session(spec, transport, engine=None, cache='/tmp/jetlink-test-cache')
   host = EngineHost(EngineCache(cache, FakeBackend(spec)), telemetry=FakeSensor())
   session = Session(transport, host)
   engine = engine or FakeEngine(spec)
-  host.loaded = Loaded(spec.sha256, spec, engine, PolicyQueues(spec),
+  host.loaded = Loaded(spec.sha256, spec, engine, for_model(spec, engine),
                        {n: engine.host_input(n) for n in spec.input_shapes})
   session.request = Request(spec.sha256, spec.nbytes, spec.frame_skip)
   return session, engine

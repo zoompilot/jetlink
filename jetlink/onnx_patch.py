@@ -20,8 +20,9 @@ import numpy as np
 import onnx
 from onnx import TensorProto, helper, numpy_helper
 
-# img and big_img in a queued graph; the newest frame and the frame queue in a
-# stateful one (openpilot #38916)
+# where vision_nodes starts: img and big_img in a queued graph, the newest
+# frame and the frame queue in a stateful one (openpilot #38916). The uint8
+# patch needs no names; it starts from whatever inputs are uint8.
 IMG_INPUTS = ('img', 'big_img', 'new_img', 'state_img_q')
 # Ops that only move image bytes around. Each one's output has its input's
 # type, so a retyped input retypes the output, and 0..255 comes through every
@@ -37,9 +38,12 @@ TINYGRAD_DOMAIN = 'org.tinygrad'
 PASSTHROUGH_OPS = ('Contiguous',)
 
 
+def _uint8_inputs(model: onnx.ModelProto) -> list:
+  return [vi for vi in model.graph.input if vi.type.tensor_type.elem_type == TensorProto.UINT8]
+
+
 def needs_patch(model: onnx.ModelProto) -> bool:
-  return any(vi.name in IMG_INPUTS and vi.type.tensor_type.elem_type == TensorProto.UINT8
-             for vi in model.graph.input)
+  return bool(_uint8_inputs(model))
 
 
 def strip_tinygrad_ops(model: onnx.ModelProto) -> int:
@@ -239,10 +243,10 @@ def _static_info(model: onnx.ModelProto, wanted: set[str]) -> tuple[dict[str, tu
 
 
 def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
-  """Retype the uint8 image inputs to fp16 and drop the head Cast. In place.
+  """Retype the uint8 inputs, the images, to fp16 and drop the head Cast. In place.
 
   Everything between the inputs and the Cast is followed, so the fix is the
-  same whatever the exporter put there:
+  same whatever the exporter put there or called the inputs:
 
     comma      Concat(img, big_img) -> cat -> Cast(fp16)
     sunnypilot Cast(img), Cast(big_img) -> Concat -> cat
@@ -254,17 +258,13 @@ def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
   """
   g = model.graph
 
-  img_inputs = [vi for vi in g.input if vi.name in IMG_INPUTS]
+  img_inputs = _uint8_inputs(model)
   if not img_inputs:
-    raise ValueError(f"model has none of {IMG_INPUTS} as graph inputs")
-  for vi in img_inputs:
-    if vi.type.tensor_type.elem_type != TensorProto.UINT8:
-      raise ValueError(f"{vi.name} is not uint8; model already patched?")
+    raise ValueError("model has no uint8 inputs; already patched?")
 
   retyped, casts = _image_dataflow(g, {vi.name for vi in img_inputs})
   if not casts:
-    raise ValueError("could not find the head Cast on the image inputs; "
-                     "neither a Cast per input nor one after their Concat")
+    raise ValueError("could not find the head Cast: no Cast ends the uint8 image chain")
   graph_outputs = {vi.name for vi in g.output}
   for cast in casts:
     to = next(onnx.helper.get_attribute_value(a) for a in cast.attribute if a.name == 'to')
@@ -272,9 +272,6 @@ def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
       raise ValueError(f"head Cast targets {to}, expected FLOAT16 ({TensorProto.FLOAT16})")
     if cast.output[0] in graph_outputs:
       raise ValueError(f"head Cast {cast.name} feeds a graph output; dropping it would rename one")
-
-  for vi in img_inputs:
-    vi.type.tensor_type.elem_type = TensorProto.FLOAT16
 
   for cast in casts:
     # Everything downstream reads the cast's source directly now.
@@ -285,8 +282,9 @@ def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
           n.input[i] = source
     g.node.remove(cast)
 
-  # TensorRT tolerates a stale uint8 value_info; onnxruntime rejects the model.
-  for vi in list(g.value_info) + list(g.output):
+  # the inputs, and every tensor on the way to the Cast: TensorRT tolerates a
+  # stale uint8 value_info, onnxruntime rejects the model
+  for vi in [*g.input, *g.value_info, *g.output]:
     if vi.name in retyped:
       vi.type.tensor_type.elem_type = TensorProto.FLOAT16
 

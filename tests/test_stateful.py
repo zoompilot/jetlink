@@ -29,14 +29,12 @@ from jetlink.client import JetlinkClient  # noqa: E402
 from jetlink.onnx_patch import needs_patch, patch_uint8_inputs  # noqa: E402
 from jetlink.queues import PolicyQueues, StateLoop, for_model  # noqa: E402
 from jetlink.server.backends.base import IO  # noqa: E402
-from jetlink.server.cache import EngineCache  # noqa: E402
-from jetlink.server.session import EngineHost, Loaded, Request, Session  # noqa: E402
 from jetlink.spec import ModelSpec, spec_from_onnx  # noqa: E402
 from jetlink.transport.tcp import TcpTransport  # noqa: E402
 from tests import tiny_model  # noqa: E402
-from tests.fake_backend import FakeBackend  # noqa: E402
+from tests.test_session import ready_session  # noqa: E402
 
-IMAGES = ('new_img', 'state_img_q')
+IMAGES = tiny_model.STATEFUL_IMAGES
 
 
 @pytest.fixture(scope='module')
@@ -238,14 +236,6 @@ def test_tinygrad_returns_the_queues_and_loops_them(model_path, spec, tmp_path):
   _agrees(backend, model_path, spec, tmp_path, '.pkl')
 
 
-class QuietSensor:
-  def read(self):
-    return {}
-
-  def close(self):
-    pass
-
-
 class TestOverTheLink:
   """A real client and Session over TCP, only the engine faked."""
 
@@ -255,13 +245,7 @@ class TestOverTheLink:
     client_t = TcpTransport.connect('127.0.0.1', srv.getsockname()[1])
     server_t, _ = TcpTransport.accept(srv)
     srv.close()
-    host = EngineHost(EngineCache(tmp_path, FakeBackend(spec)), telemetry=QuietSensor())
-    session = Session(server_t, host)
-    engine = NumpyEngine()
-    queues = for_model(spec, engine)
-    host.loaded = Loaded(spec.sha256, spec, engine, queues, {n: engine.host_input(n) for n in engine.inputs})
-    queues.reset()
-    session.request = Request(spec.sha256, spec.nbytes, spec.frame_skip)
+    session, _ = ready_session(spec, server_t, engine=NumpyEngine(), cache=tmp_path)
     thread = threading.Thread(target=session.serve_forever, daemon=True)
     thread.start()
     client = JetlinkClient(client_t, deadline=10.0)
@@ -270,7 +254,7 @@ class TestOverTheLink:
     client.close()
     server_t.close()
     thread.join(1.0)
-    host.close()
+    session.host.close()
 
   def test_the_state_carries_from_frame_to_frame(self, link, spec):
     frames = tiny_model.stateful_frames(8, seed=2)
@@ -307,7 +291,7 @@ class TestTensorRTLoop:
     bindings, ptr = {}, 0x1000
     for is_input, table in ((True, shapes), (False, outs)):
       for name, shape in table.items():
-        dtype = np.dtype(np.float16 if name.endswith('img_q') or name == 'new_img' else np.float32)
+        dtype = np.dtype(np.float16 if name.removeprefix('next_') in IMAGES else np.float32)
         nbytes = int(np.prod(shape)) * dtype.itemsize
         bindings[name] = E.Binding(name, shape, dtype, nbytes, ptr, ptr + 1, np.zeros(shape, dtype), is_input)
         ptr += 0x100000
@@ -318,7 +302,7 @@ class TestTensorRTLoop:
     eng.stream = 1
     eng.graph_exec = None
     eng.last_gpu_us = 0
-    eng.looped, eng._zero_state, eng._returned = {}, False, dict(eng.outputs)
+    eng.looped, eng._zero_state = {}, False
     return eng, calls
 
   def test_the_queues_stay_on_the_gpu(self, engine):
@@ -357,6 +341,6 @@ class TestTensorRTLoop:
       eng.loop_state(tiny_model.STATE_PAIRS)
 
   def test_the_session_hands_the_loop_to_the_engine(self, engine, spec):
-    eng, calls = engine
+    eng, _ = engine
     loop = StateLoop(spec, eng)
     assert loop.on_engine and eng.looped == tiny_model.STATE_PAIRS

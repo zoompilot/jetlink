@@ -42,7 +42,6 @@ def weights(seed: int = 7) -> tuple[np.ndarray, np.ndarray]:
 
 
 def write(path: Path, with_contiguous: bool = True) -> Path:
-  import onnx
   from onnx import TensorProto, helper, numpy_helper
 
   w, b = weights()
@@ -73,11 +72,18 @@ def write(path: Path, with_contiguous: bool = True) -> Path:
   opsets = [helper.make_opsetid('', 17)]
   if with_contiguous:
     opsets.append(helper.make_opsetid('org.tinygrad', 1))
+  return _save(graph, opsets, SLICES, 'tiny-test', path)
+
+
+def _save(graph, opsets, slices: dict, checkpoint: str, path: Path) -> Path:
+  """The model with openpilot's metadata_props, as an exporter writes it."""
+  import onnx
+  from onnx import helper
+
   model = helper.make_model(graph, opset_imports=opsets)
   model.ir_version = 8
-  model.metadata_props.add(key='output_slices',
-                           value=codecs.encode(pickle.dumps(SLICES), 'base64').decode())
-  model.metadata_props.add(key='model_checkpoint', value='tiny-test')
+  model.metadata_props.add(key='output_slices', value=codecs.encode(pickle.dumps(slices), 'base64').decode())
+  model.metadata_props.add(key='model_checkpoint', value=checkpoint)
   onnx.save(model, str(path))
   return path
 
@@ -124,6 +130,7 @@ STATEFUL_SHAPES = {
   'state_feat_q': (4, 1, 16),
 }
 STATE_PAIRS = {n: f'next_{n}' for n in STATEFUL_SHAPES if n.startswith('state_')}
+STATEFUL_IMAGES = ('new_img', 'state_img_q')   # uint8; everything else is float32
 STATEFUL_SLICES = {'plan': slice(0, 16), 'lead_prob': slice(16, 19), 'hidden_state': slice(32, 48)}
 STATEFUL_FEATURES = 24 + 6 * 8 + 2 + 2 + 4 * 16
 _BIG = 2 ** 62
@@ -137,12 +144,13 @@ def stateful_weights(seed: int = 11) -> tuple[np.ndarray, np.ndarray]:
 
 
 def write_stateful(path: Path) -> Path:
-  import onnx
   from onnx import TensorProto, helper, numpy_helper
 
+  def elem(name):
+    return TensorProto.UINT8 if name in STATEFUL_IMAGES else TensorProto.FLOAT
+
   w, b = stateful_weights()
-  types = {'new_img': TensorProto.UINT8, 'state_img_q': TensorProto.UINT8}
-  inputs = [helper.make_tensor_value_info(n, types.get(n, TensorProto.FLOAT), s) for n, s in STATEFUL_SHAPES.items()]
+  inputs = [helper.make_tensor_value_info(n, elem(n), s) for n, s in STATEFUL_SHAPES.items()]
   const = {
     'i0': np.array(0, np.int64), 'i1': np.array(1, np.int64),
     'ax0': np.array([0], np.int64), 'ax1': np.array([1], np.int64),
@@ -186,22 +194,15 @@ def write_stateful(path: Path) -> Path:
     helper.make_node('Concat', ['feat_tail', 'hidden_new'], ['next_state_feat_q'], axis=0),
   ]
   outputs = [helper.make_tensor_value_info('outputs', TensorProto.FLOAT, (1, N_OUT))]
-  outputs += [helper.make_tensor_value_info(nxt, types.get(n, TensorProto.FLOAT), STATEFUL_SHAPES[n])
-              for n, nxt in STATE_PAIRS.items()]
+  outputs += [helper.make_tensor_value_info(nxt, elem(n), STATEFUL_SHAPES[n]) for n, nxt in STATE_PAIRS.items()]
   graph = helper.make_graph(nodes, 'tiny_stateful', inputs, outputs,
                             initializer=[numpy_helper.from_array(w, 'W'), numpy_helper.from_array(b, 'B')]
                             + [numpy_helper.from_array(v, k) for k, v in const.items()])
-  model = helper.make_model(graph, opset_imports=[helper.make_opsetid('', 17)])
-  model.ir_version = 8
-  model.metadata_props.add(key='output_slices',
-                           value=codecs.encode(pickle.dumps(STATEFUL_SLICES), 'base64').decode())
-  model.metadata_props.add(key='model_checkpoint', value='tiny-stateful-test')
-  onnx.save(model, str(path))
-  return path
+  return _save(graph, [helper.make_opsetid('', 17)], STATEFUL_SLICES, 'tiny-stateful-test', path)
 
 
 def empty_state() -> dict[str, np.ndarray]:
-  return {n: np.zeros(STATEFUL_SHAPES[n], np.uint8 if n == 'state_img_q' else np.float32) for n in STATE_PAIRS}
+  return {n: np.zeros(STATEFUL_SHAPES[n], np.uint8 if n in STATEFUL_IMAGES else np.float32) for n in STATE_PAIRS}
 
 
 def stateful_step(state: dict[str, np.ndarray], new_img: np.ndarray, desire: np.ndarray,

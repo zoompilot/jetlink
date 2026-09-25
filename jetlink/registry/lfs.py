@@ -30,14 +30,13 @@ import json
 import logging
 import re
 import shutil
-import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from jetlink.registry.catalog import NetworkError, RegistryError, VerifyError, is_sha256
+from jetlink.registry.catalog import NetworkError, NotFound, RegistryError, VerifyError, http_get, http_json, is_sha256
 
 log = logging.getLogger('jetlink.registry')
 
@@ -97,17 +96,10 @@ def parse_pointer_text(text: str) -> Pointer | None:
 def fetch_pointer(ref: str, timeout: float = POINTER_TIMEOUT, opener=None) -> Pointer:
   """The oid and size of the ONNX at a comma commit: in its tree, or for a
   commit that ships a precompiled pkl instead, the export its subject names."""
-  opener = opener or urllib.request.urlopen
-  url = POINTER_URL.format(ref=ref)
   try:
-    with opener(url, timeout=timeout) as response:
-      text = response.read(POINTER_MAX).decode('utf-8', 'replace')
-  except urllib.error.HTTPError as e:
-    if e.code != 404:
-      raise NetworkError(f"could not fetch the lfs pointer at {url}: {e}") from e
+    text = http_get(POINTER_URL.format(ref=ref), timeout, opener, POINTER_MAX).decode('utf-8', 'replace')
+  except NotFound:
     return fetch_export_pointer(ref, timeout=timeout, opener=opener)
-  except (OSError, ValueError) as e:
-    raise NetworkError(f"could not fetch the lfs pointer at {url}: {e}") from e
   pointer = parse_pointer_text(text)
   if pointer is None:
     raise RegistryError(f"{ref[:10]} did not serve an lfs pointer")
@@ -116,14 +108,8 @@ def fetch_pointer(ref: str, timeout: float = POINTER_TIMEOUT, opener=None) -> Po
 
 def commit_subject(ref: str, timeout: float = POINTER_TIMEOUT, opener=None) -> str:
   """A comma commit's subject line, from the head of its patch."""
-  opener = opener or urllib.request.urlopen
   url = COMMIT_PATCH_URL.format(ref=ref)
-  try:
-    with opener(url, timeout=timeout) as response:
-      head = response.read(POINTER_MAX).decode('utf-8', 'replace')
-  except (OSError, ValueError) as e:
-    raise NetworkError(f"could not fetch {url}: {e}") from e
-  lines = head.splitlines()
+  lines = http_get(url, timeout, opener, POINTER_MAX).decode('utf-8', 'replace').splitlines()
   for i, line in enumerate(lines):
     if line.startswith('Subject:'):
       subject = [line.removeprefix('Subject:').strip()]
@@ -138,19 +124,11 @@ def commit_subject(ref: str, timeout: float = POINTER_TIMEOUT, opener=None) -> s
 
 def _tree(path: str, timeout: float, opener) -> list[dict]:
   url = DRIVING_MODELS_TREE_URL + (f"/{urllib.parse.quote(path)}?recursive=true" if path else '')
-  try:
-    with opener(url, timeout=timeout) as response:
-      entries = json.loads(response.read().decode())
-  except (OSError, ValueError) as e:
-    raise NetworkError(f"could not list {url}: {e}") from e
-  if not isinstance(entries, list):
-    raise NetworkError(f"{url} did not serve a listing")
-  return [e for e in entries if isinstance(e, dict) and isinstance(e.get('path'), str)]
+  return [e for e in http_json(url, timeout, opener, list) if isinstance(e, dict) and isinstance(e.get('path'), str)]
 
 
 def fetch_export_pointer(ref: str, timeout: float = POINTER_TIMEOUT, opener=None) -> Pointer:
   """The big ONNX a precompiled-pkl commit was built from, in comma's model repo."""
-  opener = opener or urllib.request.urlopen
   subject = commit_subject(ref, timeout=timeout, opener=opener)
   ids = list(dict.fromkeys(_EXPORT_ID.findall(subject)))
   if not ids:

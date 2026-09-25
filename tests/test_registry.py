@@ -226,7 +226,7 @@ class TestNewerCatalogs:
     from jetlink.registry.catalog import CATALOG_VERSION, newer_catalogs
     v = CATALOG_VERSION
     opener = FakeOpener({self.url(v + 1): {'bundles': []}, self.url(v + 2): {'bundles': []},
-                         self.url(v + 3): urllib.error.HTTPError(self.url(v + 3), 404, 'Not Found', {}, None)})
+                         self.url(v + 3): not_found(self.url(v + 3))})
     assert len(newer_catalogs(opener=opener)) == 2
     assert opener.calls == [self.url(v + 1), self.url(v + 2), self.url(v + 3)]
 
@@ -236,7 +236,7 @@ class TestNewerCatalogs:
     assert len(newer_catalogs(opener=opener)) == 1
 
   def test_the_merge_keeps_builds_at_our_version_and_adds_the_rest_for_an_accelerator(self):
-    from jetlink.registry.catalog import ACCELERATOR_ONLY, merge_catalogs
+    from jetlink.registry.catalog import merge_catalogs
     a, b, c = 'a' * 40, 'b' * 40, 'c' * 40
     pinned = {'tinygrad_ref': 'pinned', 'bundles': [_bundle(a, 1), _bundle(b, 2)]}
     next_runtime = {'tinygrad_ref': 'next', 'bundles': [_bundle(a, 1, '20'), _bundle(b, 2, '20'), _bundle(c, 3, '20', 'Old name')]}
@@ -247,7 +247,7 @@ class TestNewerCatalogs:
     assert by_ref[a] == pinned['bundles'][0] and by_ref[b] == pinned['bundles'][1]
     assert by_ref[c]['display_name'] == 'Cinque Terre V4'
     assert by_ref[c]['minimum_selector_version'] == '19' and by_ref[c]['models'] == []
-    assert by_ref[c]['overrides'] == {'folder': 'Master Models', ACCELERATOR_ONLY: '1'}
+    assert by_ref[c]['overrides'] == {'folder': 'Master Models'}
     assert [m.ref for m in parse_catalog(merged)] == [c, b, a]
 
   def test_the_registry_lists_a_model_only_a_newer_catalog_has(self, tmp_path):
