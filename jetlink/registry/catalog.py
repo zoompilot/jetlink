@@ -17,13 +17,27 @@ Stdlib only, and every network call takes an `opener` so tests stay offline.
 from __future__ import annotations
 
 import json
+import logging
 import re
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+log = logging.getLogger('jetlink.registry')
+
+CATALOG_URL_TEMPLATE = 'https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_chestnut_v{version}.json'
 # v26 is v25 plus Cinque Terre V3, at the same selector version. v27 onwards
 # are selector 20 and a newer tinygrad, for sunnypilot's next sync.
-CATALOG_URL = 'https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_chestnut_v26.json'
+CATALOG_VERSION = 26
+CATALOG_URL = CATALOG_URL_TEMPLATE.format(version=CATALOG_VERSION)
+# sunnypilot publishes a new catalog version for new models or a new runtime,
+# and keeps the old ones. The versions after the pinned one are probed up to
+# the first that is not there, so a model published later is listed without a
+# release of this package. See merge_catalogs.
+PROBE_LIMIT = 10
+# the override marking a model only an accelerator can run: it came from a
+# catalog at another selector version, so its tinygrad build is not for us
+ACCELERATOR_ONLY = 'accelerator_only'
 # The selector version the fork requires (REQUIRED_JSON_VERSION on the comma).
 # It is a string in the JSON; bundles at any other version describe fields we
 # would misread.
@@ -45,6 +59,10 @@ class NetworkError(RegistryError):
 
 class VerifyError(RegistryError):
   """Bytes arrived, but not the bytes that were asked for. Exit code 3."""
+
+
+class CatalogMissing(NetworkError):
+  """The server answered: no such catalog version."""
 
 
 @dataclass(frozen=True)
@@ -96,8 +114,83 @@ def fetch_catalog(url: str = CATALOG_URL, timeout: float = CATALOG_TIMEOUT, open
   try:
     with opener(url, timeout=timeout) as response:
       data = json.loads(response.read().decode())
+  except urllib.error.HTTPError as e:
+    kind = CatalogMissing if e.code == 404 else NetworkError
+    raise kind(f"could not fetch the model catalog from {url}: {e}") from e
   except (OSError, ValueError) as e:
     raise NetworkError(f"could not fetch the model catalog from {url}: {e}") from e
   if not isinstance(data, dict):
     raise NetworkError(f"{url} did not serve a JSON object")
   return data
+
+
+def catalog_version(url: str) -> int | None:
+  """The version a catalog URL names, or None for one not in sunnypilot's scheme."""
+  m = re.search(r'_v(\d+)\.json$', url)
+  return int(m.group(1)) if m else None
+
+
+def newer_catalogs(url: str = CATALOG_URL, limit: int = PROBE_LIMIT, timeout: float = CATALOG_TIMEOUT,
+                   opener=None) -> list[dict]:
+  """Every catalog sunnypilot has published after the one at `url`, oldest
+  first. Stops at the first version that is not there; a failure past the
+  first is logged and ends the probe, since what was found is still good."""
+  version = catalog_version(url)
+  if version is None:
+    return []
+  found = []
+  for v in range(version + 1, version + 1 + limit):
+    newer = CATALOG_URL_TEMPLATE.format(version=v)
+    try:
+      found.append(fetch_catalog(newer, timeout=timeout, opener=opener))
+    except CatalogMissing:
+      break
+    except NetworkError as e:
+      log.warning("stopped probing for newer catalogs: %s", e)
+      break
+  return found
+
+
+def merge_catalogs(catalogs: list[dict], selector: int = REQUIRED_SELECTOR_VERSION) -> dict:
+  """One catalog in the first one's shape, listing every big model of them all.
+
+  A model some catalog lists at `selector` comes through as published, so a
+  chestnut can still fetch its build. One listed only at another selector
+  version, which is where sunnypilot puts every model once it moves runtimes,
+  comes from the newest catalog that has it, retyped to `selector`, with no
+  artifacts and the ACCELERATOR_ONLY override: an accelerator runs the
+  commit's ONNX and needs nothing else from the entry.
+  """
+  if not catalogs:
+    return {}
+  kept: list[dict] = []
+  seen: set[str] = set()
+  for data in catalogs:
+    for bundle in _bundles(data):
+      ref = bundle.get('ref')
+      if is_ref(ref) and ref not in seen and _selector(bundle) == selector:
+        kept.append(bundle)
+        seen.add(ref)
+  newest: dict[str, dict] = {}
+  for data in catalogs:
+    for bundle in _bundles(data):
+      ref = bundle.get('ref')
+      if is_ref(ref) and ref not in seen and bundle.get('is_big'):
+        newest[ref] = bundle
+  for bundle in newest.values():
+    overrides = bundle.get('overrides') if isinstance(bundle.get('overrides'), dict) else {}
+    kept.append({**bundle, 'minimum_selector_version': str(selector), 'models': [],
+                 'overrides': {**overrides, ACCELERATOR_ONLY: '1'}})
+  return {**catalogs[0], 'bundles': kept}
+
+
+def _bundles(data: dict) -> list[dict]:
+  bundles = (data or {}).get('bundles') if isinstance(data, dict) else None
+  return [b for b in bundles if isinstance(b, dict)] if isinstance(bundles, list) else []
+
+
+def _selector(bundle: dict) -> int | None:
+  try:
+    return int(bundle.get('minimum_selector_version', 0))
+  except (TypeError, ValueError):
+    return None

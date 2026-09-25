@@ -30,6 +30,11 @@ the export, and its ONNX comes from comma's model repo on Hugging Face
 (`commaai/openpilot_driving_models`). Resolving and fetching work the same for
 both kinds.
 
+The list is sunnypilot's big-model catalog plus every newer one it has
+published since this release, so a model added later shows up without an
+update here. A model only a newer catalog has is built by sunnypilot for its
+next runtime, which a jetlink server does not need: it runs the commit's ONNX.
+
 Those newer models also keep their history inside the model. The server feeds
 each frame's queues back into the next one, on the GPU under TensorRT, so what
 crosses the link per frame is the same as for older models.

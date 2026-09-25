@@ -202,10 +202,61 @@ def test_catalog_is_cached_until_it_goes_stale(tmp_path):
   assert payload['default_ref'] == 'f877d7a0ccc3cce943c76e285214c020cd65c899'
 
   registry.catalog(opener=opener)
-  assert len(opener.calls) == 1, 'a fresh cache must not go to the network'
+  assert opener.calls.count(CATALOG_URL) == 1, 'a fresh cache must not go to the network'
 
   registry.catalog(max_age=-1, opener=opener)
-  assert len(opener.calls) == 2
+  assert opener.calls.count(CATALOG_URL) == 2
+
+
+def _bundle(ref: str, index: int, selector: str = '19', name: str = '', **extra) -> dict:
+  return {'ref': ref, 'index': index, 'minimum_selector_version': selector, 'is_big': True,
+          'display_name': name or ref[:6], 'short_name': name[:4], 'generation': '12', 'environment': 'development',
+          'runner': 'tinygrad', 'build_time': '2026-09-25T00:00:00Z', 'overrides': {'folder': 'Master Models'},
+          'models': [{'type': 'chunked', 'artifact': {'file_name': f'{ref[:6]}.pkl'}}], **extra}
+
+
+class TestNewerCatalogs:
+  """A model sunnypilot publishes after this release is still listed."""
+
+  def url(self, v):
+    from jetlink.registry.catalog import CATALOG_URL_TEMPLATE
+    return CATALOG_URL_TEMPLATE.format(version=v)
+
+  def test_versions_are_probed_up_to_the_first_missing_one(self):
+    from jetlink.registry.catalog import CATALOG_VERSION, newer_catalogs
+    v = CATALOG_VERSION
+    opener = FakeOpener({self.url(v + 1): {'bundles': []}, self.url(v + 2): {'bundles': []},
+                         self.url(v + 3): urllib.error.HTTPError(self.url(v + 3), 404, 'Not Found', {}, None)})
+    assert len(newer_catalogs(opener=opener)) == 2
+    assert opener.calls == [self.url(v + 1), self.url(v + 2), self.url(v + 3)]
+
+  def test_an_outage_past_the_pin_keeps_what_was_found(self):
+    from jetlink.registry.catalog import CATALOG_VERSION, newer_catalogs
+    opener = FakeOpener({self.url(CATALOG_VERSION + 1): {'bundles': []}})
+    assert len(newer_catalogs(opener=opener)) == 1
+
+  def test_the_merge_keeps_builds_at_our_version_and_adds_the_rest_for_an_accelerator(self):
+    from jetlink.registry.catalog import ACCELERATOR_ONLY, merge_catalogs
+    a, b, c = 'a' * 40, 'b' * 40, 'c' * 40
+    pinned = {'tinygrad_ref': 'pinned', 'bundles': [_bundle(a, 1), _bundle(b, 2)]}
+    next_runtime = {'tinygrad_ref': 'next', 'bundles': [_bundle(a, 1, '20'), _bundle(b, 2, '20'), _bundle(c, 3, '20', 'Old name')]}
+    newest = {'tinygrad_ref': 'newer', 'bundles': [_bundle(c, 3, '20', 'Cinque Terre V4')]}
+    merged = merge_catalogs([pinned, next_runtime, newest])
+    assert merged['tinygrad_ref'] == 'pinned'
+    by_ref = {x['ref']: x for x in merged['bundles']}
+    assert by_ref[a] == pinned['bundles'][0] and by_ref[b] == pinned['bundles'][1]
+    assert by_ref[c]['display_name'] == 'Cinque Terre V4'
+    assert by_ref[c]['minimum_selector_version'] == '19' and by_ref[c]['models'] == []
+    assert by_ref[c]['overrides'] == {'folder': 'Master Models', ACCELERATOR_ONLY: '1'}
+    assert [m.ref for m in parse_catalog(merged)] == [c, b, a]
+
+  def test_the_registry_lists_a_model_only_a_newer_catalog_has(self, tmp_path):
+    from jetlink.registry.catalog import CATALOG_VERSION
+    fresh = 'e' * 40
+    opener = catalog_opener(**{self.url(CATALOG_VERSION + 1): {'bundles': [_bundle(fresh, 99, '20', 'Cinque Terre V4')]}})
+    models = Registry(tmp_path).catalog(opener=opener)['models']
+    assert models[0]['ref'] == fresh and models[0]['name'] == 'Cinque Terre V4'
+    assert len(models) == 14
 
 
 def test_a_failed_refresh_keeps_the_previous_list(tmp_path):

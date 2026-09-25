@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jetlink.registry.catalog import (CATALOG_URL, DEFAULT_BIG_MODEL_REF, REQUIRED_SELECTOR_VERSION, CatalogModel, NetworkError, RegistryError,
-                                      VerifyError, fetch_catalog, is_ref, is_sha256, parse_catalog)
+                                      VerifyError, fetch_catalog, is_ref, is_sha256, merge_catalogs, newer_catalogs, parse_catalog)
 from jetlink.registry.lfs import (COMMIT_PATCH_URL, DRIVING_MODELS_TREE_URL, LFS_ENDPOINTS, POINTER_URL, Pointer, ProgressFn, StopFn,
                                   fetch_export_pointer, fetch_pointer, lfs_download, lfs_resolve, parse_pointer_text)
 from jetlink.server.cache import LAST_LOADED, EngineCache
@@ -46,7 +46,7 @@ log = logging.getLogger('jetlink.registry')
 __all__ = ['CATALOG_URL', 'COMMIT_PATCH_URL', 'DEFAULT_BIG_MODEL_REF', 'DRIVING_MODELS_TREE_URL', 'LFS_ENDPOINTS', 'POINTER_URL',
            'REQUIRED_SELECTOR_VERSION', 'CatalogModel', 'LocalModel', 'NetworkError', 'Pointer', 'ProgressFn', 'Registry', 'RegistryError',
            'StopFn', 'VerifyError', 'fetch_catalog', 'fetch_export_pointer', 'fetch_pointer', 'is_ref', 'is_sha256', 'lfs_download',
-           'lfs_resolve', 'parse_catalog', 'parse_pointer_text']
+           'lfs_resolve', 'merge_catalogs', 'newer_catalogs', 'parse_catalog', 'parse_pointer_text']
 
 CATALOG_MAX_AGE = 3600.0
 _SHA16 = re.compile(r'[0-9a-f]{16}')
@@ -97,7 +97,9 @@ class Registry:
 
     if refresh or raw is None or fetched_at is None or time.time() - fetched_at > max_age:
       try:
-        fresh = fetch_catalog(CATALOG_URL, opener=opener)
+        # the pinned catalog and whatever sunnypilot has published since:
+        # the server runs any of their commits
+        fresh = merge_catalogs([fetch_catalog(CATALOG_URL, opener=opener), *newer_catalogs(CATALOG_URL, opener=opener)])
       except RegistryError as e:
         error = str(e)
       else:
