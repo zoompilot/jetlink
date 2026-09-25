@@ -24,6 +24,16 @@ A **SHA-256** is a 64-character hash of the ONNX file. The comma and server use
 it to identify the model and its cached files. One ref resolves to exactly one
 SHA-256, and that never changes.
 
+Most refs have the ONNX in their own tree. Newer ones, starting with Cinque
+Terre V3, ship only a precompiled tinygrad file; their commit subject names
+the export, and its ONNX comes from comma's model repo on Hugging Face
+(`commaai/openpilot_driving_models`). Resolving and fetching work the same for
+both kinds.
+
+Those newer models also keep their history inside the model. The server feeds
+each frame's queues back into the next one, on the GPU under TensorRT, so what
+crosses the link per frame is the same as for older models.
+
 Anywhere a command takes `REF_OR_SHA256`, use a 40-character hexadecimal ref or
 a 64-character hexadecimal SHA-256 hash. Anything else is an error.
 
@@ -71,6 +81,7 @@ jetlink-models list
 
 ```
   #  Model                  Ref         Size    On disk
+ 13  Cinque Terre V3 Model   bf3e3631b3  766 MB  no
  12  Cinque Terre Model V2   37bfa1413e  766 MB  no
  11  BMRLNAP Model v4        f877d7a0cc  766 MB  prepared (default)
 ```
@@ -80,7 +91,7 @@ protocol](#the-protocol). Example:
 
 ```json
 {"fetched_at": 1757440000.0,
- "url": "https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_chestnut_v25.json",
+ "url": "https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_chestnut_v26.json",
  "default_ref": "f877d7a0ccc3cce943c76e285214c020cd65c899", "error": null,
  "models": [{"name": "Cinque Terre Model V2", "short_name": "CTMV2",
              "ref": "37bfa1413edcdc2e8844984b83727c33f81d8f46", "build_time": "<ISO 8601 timestamp>",
@@ -344,7 +355,7 @@ Unix seconds, as shown by each field.
 // Emitted on connect, after every build or load completes, after forget, after
 // a download or import completes, and on the inventory command.
 
-{"event":"catalog","t":0,"fetched_at":1757440000.0,"url":"https://…/driving_models_chestnut_v25.json",
+{"event":"catalog","t":0,"fetched_at":1757440000.0,"url":"https://…/driving_models_chestnut_v26.json",
  "default_ref":"f877d7a0ccc3cce943c76e285214c020cd65c899","error":null,
  "models":[{"name":"Cinque Terre Model V2","short_name":"CTMV2",
             "ref":"37bfa1413edcdc2e8844984b83727c33f81d8f46","build_time":"<ISO 8601 timestamp>","index":12,

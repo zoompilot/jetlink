@@ -21,7 +21,9 @@ import re
 import urllib.request
 from dataclasses import dataclass
 
-CATALOG_URL = 'https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_chestnut_v25.json'
+# v26 is v25 plus Cinque Terre V3, at the same selector version. v27 onwards
+# are selector 20 and a newer tinygrad, for sunnypilot's next sync.
+CATALOG_URL = 'https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_chestnut_v26.json'
 # The selector version the fork requires (REQUIRED_JSON_VERSION on the comma).
 # It is a string in the JSON; bundles at any other version describe fields we
 # would misread.

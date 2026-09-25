@@ -22,7 +22,8 @@ from pathlib import Path
 
 import pytest
 
-from jetlink.registry import LFS_ENDPOINTS, POINTER_URL, Pointer, Registry, RegistryError, VerifyError, lfs_resolve, parse_catalog, parse_pointer_text
+from jetlink.registry import (COMMIT_PATCH_URL, DRIVING_MODELS_TREE_URL, LFS_ENDPOINTS, POINTER_URL, Pointer, Registry, RegistryError, VerifyError,
+                              fetch_pointer, lfs_resolve, parse_catalog, parse_pointer_text)
 from jetlink.registry.catalog import CATALOG_URL, NetworkError
 from jetlink.registry.cli import main as cli_main
 from jetlink.server.cache import EngineCache
@@ -312,6 +313,89 @@ def test_fetching_by_sha256_needs_a_known_size(tmp_path):
     registry.fetch(BLOB_SHA, opener=FakeOpener({}))
   with pytest.raises(RegistryError, match='neither'):
     registry.fetch('nothex', opener=FakeOpener({}))
+
+
+# --- a commit that ships a precompiled pkl -----------------------------------
+# Cinque Terre V3, as github and huggingface served it on 2026-09-25.
+
+V3_REF = 'bf3e3631b3f91d92a1020a5e0dd4298b93ff4244'
+V3_OID = '404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4'
+V3_SIZE = 766354845
+V3_FOLDER = 'f78ed37d-afad-4dbc-8050-40ea885eedde'
+
+
+def not_found(url):
+  return urllib.error.HTTPError(url, 404, 'Not Found', {}, None)
+
+
+def patch_head(subject: str) -> bytes:
+  return (f"From {V3_REF} Mon Sep 17 00:00:00 2001\nFrom: Bruce Wayne <x@example.com>\n"
+          f"Date: Tue, 15 Sep 2026 23:30:35 -0700\nSubject: [PATCH] {subject}\n\n---\n"
+          " openpilot/selfdrive/modeld/models/big_driving_tinygrad.pkl | 2 +-\n").encode()
+
+
+def onnx_entry(path: str, oid: str = V3_OID, size: int = V3_SIZE) -> dict:
+  return {'type': 'file', 'path': f"{path}/big_driving_supercombo.onnx", 'size': size,
+          'lfs': {'oid': oid, 'size': size, 'pointerSize': 134}}
+
+
+def export_routes(subject='Use f78ed37d for the precompiled eGPU driving model', folder_files=None) -> dict:
+  url = POINTER_URL.format(ref=V3_REF)
+  return {
+    url: not_found(url),
+    COMMIT_PATCH_URL.format(ref=V3_REF): patch_head(subject),
+    DRIVING_MODELS_TREE_URL: [{'type': 'directory', 'path': '1a421175-db71-4e3d-9d62-e2166421b02b'},
+                              {'type': 'directory', 'path': V3_FOLDER},
+                              {'type': 'file', 'path': 'README.md', 'size': 21}],
+    f"{DRIVING_MODELS_TREE_URL}/{V3_FOLDER}?recursive=true": folder_files or [
+      {'type': 'directory', 'path': f"{V3_FOLDER}/12864"}, onnx_entry(f"{V3_FOLDER}/12864")],
+  }
+
+
+def test_a_commit_without_the_onnx_resolves_to_the_export_its_subject_names(tmp_path):
+  registry = Registry(tmp_path)
+  assert registry.resolve(V3_REF, opener=FakeOpener(export_routes())) == Pointer(V3_OID, V3_SIZE)
+  # kept for good like any other pointer
+  assert Registry(tmp_path).resolve(V3_REF, opener=FakeOpener({})) == Pointer(V3_OID, V3_SIZE)
+
+
+def test_the_export_repo_is_the_last_lfs_server_asked():
+  assert LFS_ENDPOINTS[-1] == 'https://huggingface.co/commaai/openpilot_driving_models.git/info/lfs'
+
+
+def test_a_subject_that_names_the_checkpoint_picks_among_several(tmp_path):
+  files = [onnx_entry(f"{V3_FOLDER}/12000", oid='1' * 64), onnx_entry(f"{V3_FOLDER}/12864")]
+  opener = FakeOpener(export_routes(subject=f"{V3_FOLDER}/12864", folder_files=files))
+  assert fetch_pointer(V3_REF, opener=opener) == Pointer(V3_OID, V3_SIZE)
+  opener = FakeOpener(export_routes(folder_files=files))
+  with pytest.raises(RegistryError, match='2 copies'):
+    fetch_pointer(V3_REF, opener=opener)
+
+
+def test_a_folded_subject_is_read_whole_and_the_diffstat_is_not():
+  from jetlink.registry.lfs import commit_subject
+  head = patch_head('Use f78ed37d for the precompiled eGPU\n driving model')
+  assert commit_subject(V3_REF, opener=FakeOpener({COMMIT_PATCH_URL.format(ref=V3_REF): head})) == \
+    'Use f78ed37d for the precompiled eGPU driving model'
+
+
+@pytest.mark.parametrize(('subject', 'match'), [
+  ('Update tinygrad and use retargetable model artifacts (#38933)', 'names no export'),
+  ('Use 0badc0de for the precompiled eGPU driving model', 'no folder'),
+])
+def test_a_subject_that_leads_nowhere_says_so(subject, match):
+  with pytest.raises(RegistryError, match=match):
+    fetch_pointer(V3_REF, opener=FakeOpener(export_routes(subject=subject)))
+
+
+def test_only_a_missing_file_falls_back_and_an_outage_does_not():
+  url = POINTER_URL.format(ref=V3_REF)
+  routes = export_routes()
+  routes[url] = urllib.error.HTTPError(url, 503, 'Unavailable', {}, None)
+  opener = FakeOpener(routes)
+  with pytest.raises(NetworkError):
+    fetch_pointer(V3_REF, opener=opener)
+  assert opener.calls == [url]
 
 
 # --- importing ---------------------------------------------------------------
