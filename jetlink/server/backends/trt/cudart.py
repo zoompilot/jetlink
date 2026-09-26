@@ -85,6 +85,31 @@ def memset_async(ptr: int, value: int, nbytes: int, stream: int) -> None:
   check(_rt.cudaMemsetAsync(ptr, value, nbytes, stream))
 
 
+# An event the host blocks on rather than spins: cudaEventBlockingSync |
+# cudaEventDisableTiming. A default event's synchronize busy-waits, which cost
+# 37% of a core on the Orin where the stream sync it replaced cost nothing.
+cudaEventBlockingSyncNoTiming = 0x3
+# records inside a stream capture as an event node the host can wait on,
+# rather than as a dependency between streams
+cudaEventRecordExternal = 0x1
+
+
+def event_create() -> int:
+  return check(_rt.cudaEventCreateWithFlags(cudaEventBlockingSyncNoTiming))
+
+
+def event_destroy(event: int) -> None:
+  check(_rt.cudaEventDestroy(event))
+
+
+def event_record_external(event: int, stream: int) -> None:
+  check(_rt.cudaEventRecordWithFlags(event, stream, cudaEventRecordExternal))
+
+
+def event_sync(event: int) -> None:
+  check(_rt.cudaEventSynchronize(event))
+
+
 def set_device(device: int) -> None:
   """Which GPU this thread's context is. A laptop has one; a desktop may not."""
   check(_rt.cudaSetDevice(device))

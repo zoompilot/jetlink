@@ -305,6 +305,7 @@ class TestTensorRTLoop:
     eng.graph_exec = None
     eng.last_gpu_us = 0
     eng.looped, eng._zero_state = {}, False
+    eng.reply_event = None
     return eng, calls
 
   def test_the_queues_stay_on_the_gpu(self, engine):
@@ -330,6 +331,23 @@ class TestTensorRTLoop:
     calls.clear()
     eng.run()
     assert [c[0] for c in calls][:3] == ['memset'] * 3
+
+  def test_the_reply_waits_for_the_outputs_not_the_state_copy(self, engine, monkeypatch):
+    from jetlink.server.backends.trt import engine as E
+    eng, calls = engine
+    assert eng.loop_state(tiny_model.STATE_PAIRS)
+    monkeypatch.setattr(E.cudart, 'event_record_external', lambda ev, s: calls.append(('event', ev)))
+    calls.clear()
+    eng._enqueue(reply_event=7)
+    kinds = [c[0] for c in calls]
+    assert kinds.index('memcpy_d2h_async') < kinds.index('event') < kinds.index('memcpy_d2d_async')
+    # run() then waits on that event, not on the whole stream
+    synced = []
+    monkeypatch.setattr(E.cudart, 'event_sync', lambda ev: synced.append(('event', ev)))
+    monkeypatch.setattr(E.cudart, 'stream_sync', lambda s: synced.append(('stream', s)))
+    eng.reply_event = 7
+    eng.run()
+    assert synced == [('event', 7)]
 
   def test_a_pair_that_does_not_match_is_left_to_the_host(self, engine):
     eng, _ = engine

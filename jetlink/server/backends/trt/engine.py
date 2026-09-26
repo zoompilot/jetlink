@@ -13,7 +13,9 @@ hands out, which saves a copy on the way to the GPU.
 
 A stateful graph's queues never leave the GPU: `loop_state` drops them from
 the per-frame copies and adds a device-side copy of each next_state_ output
-onto its state_ input, inside the captured graph.
+onto its state_ input, inside the captured graph. That copy is 12 MB, so the
+graph also marks the moment the outputs are home, and run() returns then
+rather than when the copy is done: 0.3 ms of the reply on an Orin.
 """
 from __future__ import annotations
 
@@ -102,6 +104,8 @@ class TrtEngine:
     # state input -> the output that feeds it; see loop_state
     self.looped: dict[str, str] = {}
     self._zero_state = False
+    # set when the captured graph has a state copy to keep off the reply
+    self.reply_event: int | None = None
 
   # -- introspection --------------------------------------------------------
 
@@ -157,13 +161,18 @@ class TrtEngine:
     """Zero the looped state before the next run: empty queues."""
     self._zero_state = True
 
-  def _enqueue(self) -> None:
+  def _enqueue(self, reply_event: int | None = None) -> None:
     for b in self._copied(self.inputs):
       cudart.memcpy_h2d_async(b.device_ptr, b.host_ptr, b.nbytes, self.stream)
     if not self.context.execute_async_v3(self.stream):
       raise RuntimeError("execute_async_v3 failed")
     for b in self._copied(self.outputs):
       cudart.memcpy_d2h_async(b.host_ptr, b.device_ptr, b.nbytes, self.stream)
+    if reply_event is not None:
+      # the outputs are home: run() may return while the state copy below runs.
+      # The next frame's work queues behind it on the same stream, and nothing
+      # it touches on the host is read by the copy.
+      cudart.event_record_external(reply_event, self.stream)
     # the queues the graph just advanced become next frame's; a copy rather
     # than swapping addresses, which the captured graph has baked in
     for state, nxt in self.looped.items():
@@ -179,16 +188,21 @@ class TrtEngine:
     """
     if self.graph_exec is not None:
       return True
+    event = None
     try:
+      event = cudart.event_create() if self.looped else None
       cudart.stream_begin_capture(self.stream)
-      self._enqueue()
+      self._enqueue(event)
       graph = cudart.stream_end_capture(self.stream)
       self.graph_exec = cudart.graph_instantiate(graph)
       cudart.graph_destroy(graph)
+      self.reply_event = event
       return True
     except Exception:
       # Not fatal: fall back to enqueueing each frame.
       self.graph_exec = None
+      if event is not None:
+        cudart.event_destroy(event)
       return False
 
   def warm(self) -> str:
@@ -213,7 +227,10 @@ class TrtEngine:
       cudart.graph_launch(self.graph_exec, self.stream)
     else:
       self._enqueue()
-    cudart.stream_sync(self.stream)
+    if self.reply_event is not None:
+      cudart.event_sync(self.reply_event)
+    else:
+      cudart.stream_sync(self.stream)
     self.last_gpu_us = int((time.perf_counter() - t0) * 1e6)
     return {b.name: b.host for b in self._copied(self.outputs)}
 
@@ -225,6 +242,17 @@ class TrtEngine:
   # reference back here, so a GC-driven close would free pages someone is still
   # writing into. Whoever swaps an engine out closes it.
   def close(self) -> None:
+    try:
+      # the last frame's state copy may still be running into these buffers
+      cudart.stream_sync(self.stream)
+    except Exception:
+      pass
+    if self.reply_event is not None:
+      try:
+        cudart.event_destroy(self.reply_event)
+      except Exception:
+        pass
+      self.reply_event = None
     for b in self.bindings.values():
       try:
         cudart.free(b.device_ptr)
