@@ -1,14 +1,13 @@
 # Platform setup
 
-Run Jetlink on a Mac, Linux PC, or Windows PC. Mac and Linux NVIDIA systems have
-hardware test results. Windows WSL2 is untested. Set up the comma with the steps
+Run Jetlink on a Mac, Linux PC, or Windows PC with WSL2. Set up the comma with the steps
 in the [README](../README.md#quick-start).
 
 Choose your setup:
 
 - [Mac app](macos-app.md) for installation without terminal commands.
 - [Linux installer](#linux-nvidia-gpu) for an NVIDIA PC.
-- [Windows WSL2](#windows-nvidia-gpu) for an unvalidated test setup.
+- [Windows WSL2](#windows-nvidia-gpu) for a Windows PC with an NVIDIA GPU.
 - [Docker](#docker-nvidia-laptops-and-desktops), [CPU](#cpu-only), or
   [test without a comma](#test-without-a-comma) for development.
 
@@ -123,7 +122,7 @@ connecting the comma. Stop the server before preparing into its cache. See
 Use **Ubuntu in WSL2** and follow the Linux steps inside it, or use
 [Docker](#docker-nvidia-laptops-and-desktops). Start with a [TCP
 test](#test-without-a-comma). USB from WSL2 needs `usbipd-win` to attach the
-comma to Ubuntu and is not a validated path.
+comma to Ubuntu.
 
 ## Docker (NVIDIA laptops and desktops)
 

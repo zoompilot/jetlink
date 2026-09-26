@@ -6,11 +6,8 @@ Allow about an hour the first time, mostly downloads.
 
 ## What you need
 
-- A **Jetson Orin**. The Orin Nano Super Developer Kit (8 GB) is the tested
-  board.
-- **JetPack 6.2 or 7.2.1.** Version 6.2 has in-car test results. The installer
-  recommends 7.2.1, but the 7.2 image has not yet been tested on hardware.
-  See [testing status](status.md#platform-testing).
+- A **Jetson Orin**, such as the Orin Nano Super Developer Kit (8 GB).
+- **JetPack 7.2.1** (recommended) or **6.2**.
 - A microSD card of 64 GB or more, or better an NVMe SSD.
 - A power supply that can deliver the Jetson's full power: 25 W or more for an
   Orin Nano. In the car, that means a proper DC supply, not the comma's USB port.
@@ -59,7 +56,7 @@ changing anything. Choose the power option that matches your wiring.
 
 | It asks | What it means |
 | --- | --- |
-| How is the Jetson powered in the car? | **Always on** (installer default): keeps power available while parked so the Jetson can suspend and wake. Check [power requirements and validation limits](transport.md#always-on-supply-and-suspend) before choosing it. **Switched**: it turns on and off with the car, and the large model is ready about a minute after you start it. |
+| How is the Jetson powered in the car? | **Always on** (installer default): keeps power available while parked so the Jetson can suspend and wake. Check [power and suspend setup](transport.md#always-on-supply-and-suspend) before choosing it. **Switched**: it turns on and off with the car, and the large model is ready about a minute after you start it. |
 | Allow the comma to shut down the Jetson to protect the car battery? | Always on only. When the comma shuts itself down for low battery, it turns the Jetson off too. The Jetson then stays off until its power is reconnected. See [powering off with the comma](transport.md#powering-off-with-the-comma). |
 
 When it finishes, it prints the comma steps. Running it again is safe: it

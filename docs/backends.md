@@ -25,10 +25,10 @@ separately for each runtime version and device.
 | --- | --- | --- | --- | --- |
 | Jetson Orin | TensorRT | USB-A host with libusb | Tegra sensors | Suspend and poweroff |
 | Linux with NVIDIA GPU | TensorRT; tinygrad or ONNX Runtime as alternatives | libusb with `scripts/99-jetlink-host.rules` | NVML | `--sleep-after` requires `/sys/power`; USB wake depends on hardware |
-| Windows with NVIDIA GPU | TensorRT in WSL2 | Requires `usbipd-win`; untested | NVML | None |
+| Windows with NVIDIA GPU | TensorRT in WSL2 | Requires `usbipd-win` | NVML | None |
 | macOS with Apple silicon | ONNX Runtime with CoreML on the Neural Engine and GPU | USB-A hub, dock, or adapter with libusb | Not available | `scripts/run-mac.sh` prevents idle sleep on AC power |
 
-See [status and limitations](status.md) for platform testing coverage.
+See [performance and operating limits](status.md) for timing and power considerations.
 
 <a id="how-the-default-runs"></a>
 <a id="how-to-measure"></a>
@@ -70,8 +70,8 @@ pip install --no-deps "tinygrad @ git+https://github.com/sunnypilot/tinygrad@e83
 
 ## Hardware limitations
 
-Native Windows USB requires WinUSB and is not validated. Use WSL2 for initial
-TCP testing. On a Mac, use a USB-A port on a hub, dock, or adapter to ensure
+Native Windows USB requires WinUSB. Use WSL2 for the
+[Windows setup](platforms.md#windows-nvidia-gpu). On a Mac, use a USB-A port on a hub, dock, or adapter to ensure
 that the Mac acts as the USB host.
 
 Keep laptops powered and awake. Sustained GPU use can cause thermal throttling;

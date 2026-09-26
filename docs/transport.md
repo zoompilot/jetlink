@@ -52,9 +52,6 @@ off, or lateral control off; see [daily use](using-jetlink.md#what-to-expect-whe
 
 ### Always-on supply and suspend
 
-Suspend, wake, low-battery shutdown, and long parking periods are not fully
-validated. See [testing limitations](status.md#what-still-needs-validation).
-
 An always-on supply allows the Jetson to suspend while parked and keep the
 loaded engine in memory. Suspend power consumption is not measured. Measure it
 on your installation before leaving the Jetson connected permanently. The

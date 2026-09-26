@@ -14,7 +14,7 @@ Install the server, set up the comma, and wait for its icon to turn green.
 | Choose a model or prepare it ahead of time | [Model management](models.md) |
 | Update or restore an earlier version | [Updates and rollback](releasing.md) |
 | Choose a cable or configure power and suspend | [Cables, networking, and power](transport.md) |
-| Check what has been tested and what remains uncertain | [Status and limitations](status.md) |
+| Check performance and operating limits | [Performance and limits](status.md) |
 
 If something fails, start with the [common checks](../README.md#if-something-is-wrong),
 then use troubleshooting in your platform guide.

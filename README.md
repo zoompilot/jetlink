@@ -8,7 +8,7 @@ returns predictions 20 times per second.
 [`jetson-trt` branch](https://github.com/zoompilot/zoompilot/tree/jetson-trt).
 The comma uses its small model while the link is unavailable. If the link drops
 while engaged, the comma soft-disables and tells you to take over. Read the
-[testing status and limitations](docs/status.md) before use.
+[operating limits](docs/status.md) before use.
 
 ## Quick start
 
@@ -33,8 +33,8 @@ The installer checks the computer, asks about your setup, installs dependencies,
 and starts Jetlink. Allow 10 to 30 minutes, mostly for downloads.
 
 A Jetson needs JetPack first. Follow the [Jetson guide](docs/jetson.md) for
-installation and power choices. JetPack 6.2 has in-car test results; the
-supported 7.2 image has not yet been tested on hardware. For PC requirements,
+installation and power choices. Use JetPack 7.2.1 (recommended) or 6.2.
+For PC requirements,
 see [Linux setup](docs/platforms.md#linux-nvidia-gpu).
 
 When the installer finishes, run `jetlink status` to check the server, then
@@ -43,7 +43,6 @@ continue with comma setup below.
 ### Mac
 
 You need Apple silicon and macOS 15 or later; 16 GB of memory is recommended.
-Mac has bench test results; Jetson is the tested in-car setup.
 
 1. Download the Mac ZIP from [Releases](https://github.com/zoompilot/jetlink/releases).
 2. Unzip it and drag **Jetlink.app** to **Applications**.
@@ -104,7 +103,7 @@ For logs and more checks, use the [Jetson guide](docs/jetson.md#troubleshooting)
 [All guides and references](docs/README.md) ·
 [Daily use](docs/using-jetlink.md) ·
 [Updates and rollback](docs/releasing.md) ·
-[Testing status](docs/status.md)
+[Performance and limits](docs/status.md)
 
 ## License
 

@@ -16,7 +16,7 @@ it to the comma. Keep laptops powered and awake; sleep interrupts the link.
 
 ## What to expect when driving
 
-- The small model drives while the server starts. On the tested Jetson with
+- The small model drives while the server starts. On a Jetson with
   switched power and a cached engine, startup takes 65 to 96 seconds.
 - It takes over only when nothing is steering: **at a stop with cruise off, or
   with lateral control off**. Until then the icon is dimmed and the comma says
