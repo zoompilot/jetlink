@@ -24,7 +24,22 @@ enum BackendChoice: String, CaseIterable, Codable, Sendable {
     }
   }
 
-  /// What the choice comes to on a Mac, before the server has said so itself.
+  /// The choice a running server's backend and device come to, or nil for one
+  /// the app does not offer, such as onnxruntime on the CPU.
+  init?(backend: String?, device: String?) {
+    let device = device ?? ""
+    if backend == "ane" || device.hasPrefix("ane") {
+      self = .auto
+    } else if backend == "ort", device.isEmpty || device.hasPrefix("coreml") {
+      self = .coreml
+    } else if backend == "tinygrad" {
+      self = .tinygrad
+    } else {
+      return nil
+    }
+  }
+
+  /// What the choice comes to on a Mac.
   var title: String {
     switch self {
     case .auto: return "CoreML with the Neural Engine"
@@ -33,6 +48,7 @@ enum BackendChoice: String, CaseIterable, Codable, Sendable {
     }
   }
 
+  /// The same in a word or two, for the toolbar.
   var shortTitle: String {
     switch self {
     case .auto: return "Neural Engine"

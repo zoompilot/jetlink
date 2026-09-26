@@ -646,7 +646,7 @@ def test_a_served_frame_reaches_the_stats_ticker(bench):
 
 def test_frame_stats_is_empty_until_a_frame_lands(bench):
   assert bench.host.frame_stats.summary(1.0) is None
-  bench.host.frame_stats.record(70_000, 1000)
+  bench.host.frame_stats.record(70_000, 1000, 0, 0)
   summary = bench.host.frame_stats.summary(60.0, frames_total=3)
   assert summary['frames'] == 3 and summary['slow'] == 1
   assert summary['total_ms'] == {'mean': 70.0, 'p99': 70.0, 'max': 70.0}

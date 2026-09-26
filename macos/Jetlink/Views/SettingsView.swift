@@ -99,9 +99,9 @@ struct ServerSettingsView: View {
       Section {
         VStack(alignment: .leading, spacing: 4) {
           Picker("Backend", selection: $settings.backend) {
-            Text("Automatic (CoreML with the Neural Engine)").tag(BackendChoice.auto)
-            Text("CoreML on the GPU").tag(BackendChoice.coreml)
-            Text("tinygrad on Metal").tag(BackendChoice.tinygrad)
+            Text("Automatic (\(BackendChoice.auto.title))").tag(BackendChoice.auto)
+            Text(BackendChoice.coreml.title).tag(BackendChoice.coreml)
+            Text(BackendChoice.tinygrad.title).tag(BackendChoice.tinygrad)
           }
           Text(ServerSettingsView.backendCaption(settings.backend))
             .font(.callout)

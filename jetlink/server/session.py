@@ -83,7 +83,7 @@ class FrameStats:
   def __init__(self, maxlen: int = 2000):
     self.samples = deque(maxlen=maxlen)
 
-  def record(self, total_us: int, gpu_us: int, queue_us: int = 0, send_us: int = 0) -> None:
+  def record(self, total_us: int, gpu_us: int, queue_us: int, send_us: int) -> None:
     self.samples.append((time.perf_counter(), total_us, gpu_us, queue_us, send_us))
 
   def window(self, seconds: float) -> list:

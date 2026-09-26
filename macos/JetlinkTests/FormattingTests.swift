@@ -181,20 +181,10 @@ struct FormattingTests {
     #expect(abs(FrameStageBar.domainMax(PreviewData.stats) - 55) < 1e-9)
     #expect(FrameStageBar.ticks(55) == [0, 10, 20, 30, 40, 50])
     let slow = StatsEvent(
-      frames: 1, fps: 20, totalMs: StatsEvent.Total(mean: 60, p99: 70, max: 80), gpuMs: StatsEvent.Gpu(mean: 55),
-      slow: 5, windowS: 1)
+      frames: 1, fps: 20, servedMs: StatsEvent.Total(mean: 60, p99: 70, max: 80),
+      stagesMs: StatsEvent.Stages(queue: 1, gpu: 55, other: 3, send: 1), slow: 5, windowS: 1)
     #expect(FrameStageBar.domainMax(slow) == 70 * 1.08)
     #expect(FrameStageBar.ticks(FrameStageBar.domainMax(slow)).last == 70)
-  }
-
-  @Test("A server without stages still fills the bar: the model and the rest")
-  func stagesFallBack() {
-    let old = StatsEvent(
-      frames: 1, fps: 20, totalMs: StatsEvent.Total(mean: 31.2, p99: 38, max: 41.5), gpuMs: StatsEvent.Gpu(mean: 21),
-      slow: 0, windowS: 1)
-    #expect(old.stages == StatsEvent.Stages(queue: 0, gpu: 21, other: 10.2, send: 0))
-    #expect(old.served == old.totalMs)
-    #expect(PreviewData.stats.served.mean == 31.6)
   }
 
   @Test("The chart's time axis counts back from now")

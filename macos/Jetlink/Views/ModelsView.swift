@@ -28,7 +28,6 @@ struct ModelsView: View {
   @State private var inspectorPresented = false
   @State private var importing = false
   @State private var confirmation: Confirmation?
-  @State private var actionError: String?
 
   enum Confirmation: Identifiable {
     case deleteDownload(ModelRow), deleteEngines(ModelRow), switchModel(ModelRow)
@@ -94,7 +93,7 @@ struct ModelsView: View {
       .fileImporter(isPresented: $importing, allowedContentTypes: [ModelsView.onnxType]) { result in
         switch result {
         case let .success(url): models.importModel(at: url)
-        case let .failure(error): actionError = error.localizedDescription
+        case let .failure(error): models.lastError = error.localizedDescription
         }
       }
       .alert(Text(confirmationTitle), isPresented: confirmationPresented, presenting: confirmation) { item in
@@ -102,11 +101,6 @@ struct ModelsView: View {
         Button("Cancel", role: .cancel) {}
       } message: { item in
         Text(confirmationMessage(item))
-      }
-      .alert("Couldn't complete the action", isPresented: errorPresented) {
-        Button("OK") { actionError = nil }
-      } message: {
-        Text(actionError ?? "")
       }
   }
 
@@ -287,10 +281,6 @@ struct ModelsView: View {
     Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } })
   }
 
-  private var errorPresented: Binding<Bool> {
-    Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } })
-  }
-
   private var confirmationTitle: String {
     switch confirmation {
     case .deleteDownload: "Delete the download?"
@@ -404,8 +394,6 @@ struct ModelListRow: View {
   let use: () -> Void
   let cancel: () -> Void
 
-  @Environment(\.backgroundProminence) private var prominence
-
   var body: some View {
     HStack(spacing: 12) {
       VStack(alignment: .leading, spacing: 2) {
@@ -436,15 +424,9 @@ struct ModelListRow: View {
   @ViewBuilder
   private var accessory: some View {
     switch row.status {
-    case .loaded:
-      Label {
-        Text("In Use")
-      } icon: {
-        Image(systemName: "checkmark.circle.fill")
-          .foregroundStyle(onSelection(.green))
-      }
-      .font(.callout.weight(.medium))
-      .help("Jetlink is using this model")
+    case .loaded, .unresolved:
+      ModelStatusLabel(row.status, isCheckingCatalog: isCheckingCatalog)
+        .font(.callout)
     case let .downloading(frac, rateBps):
       HStack(spacing: 8) {
         progress(frac: frac, caption: ModelListRow.downloadCaption(frac: frac, rateBps: rateBps))
@@ -463,21 +445,10 @@ struct ModelListRow: View {
         Image(systemName: "xmark.circle.fill")
           .hidden()
       }
-    case .unresolved:
-      Text(isCheckingCatalog ? "Checking…" : "Unavailable")
-        .font(.callout)
-        .foregroundStyle(.secondary)
-    case let .failed(detail):
+    case .failed:
       HStack(spacing: 10) {
-        Label {
-          Text("Failed")
-        } icon: {
-          Image(systemName: "exclamationmark.triangle.fill")
-            .foregroundStyle(onSelection(.orange))
-        }
-        .font(.callout)
-        .foregroundStyle(.secondary)
-        .help(detail)
+        ModelStatusLabel(row.status)
+          .font(.callout)
         useButton
       }
     case .notDownloaded, .downloaded, .prepared:
@@ -506,15 +477,9 @@ struct ModelListRow: View {
     }
   }
 
-  /// A status colour, or the selection's own text colour on a selected row,
-  /// where the colour would sit on the accent and vanish.
-  private func onSelection(_ color: Color) -> AnyShapeStyle {
-    prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(color)
-  }
-
   /// "Downloading 42%, 41 MB/s".
   static func downloadCaption(frac: Double, rateBps: Double) -> String {
-    let percent = "Downloading \(Int((min(max(frac, 0), 1) * 100).rounded()))%"
+    let percent = ModelStatusLabel.downloadingText(frac)
     return rateBps > 0 ? "\(percent), \(ByteCount.rate(rateBps))" : percent
   }
 }
@@ -524,7 +489,6 @@ struct ModelListRow: View {
 struct ModelTag: View {
   let text: String
   let tone: Color
-  @Environment(\.backgroundProminence) private var prominence
 
   init(_ text: String, tone: Color) {
     self.text = text
@@ -532,13 +496,12 @@ struct ModelTag: View {
   }
 
   var body: some View {
-    let selected = prominence == .increased
     Text(text)
       .font(.caption.weight(.medium))
       .padding(.horizontal, 6)
       .padding(.vertical, 1)
-      .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(tone))
-      .background(Capsule().fill(selected ? AnyShapeStyle(.white.opacity(0.2)) : AnyShapeStyle(tone.opacity(0.14))))
+      .foregroundStyle(SelectableTint(tone))
+      .background(Capsule().fill(SelectableTint(tone.opacity(0.14), selected: AnyShapeStyle(.white.opacity(0.2)))))
   }
 }
 

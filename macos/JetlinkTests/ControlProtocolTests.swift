@@ -96,10 +96,8 @@ struct ControlProtocolTests {
     }
     #expect(stats.frames == 1234)
     #expect(stats.fps == 19.9)
-    #expect(stats.totalMs.mean == 31.2)
-    #expect(stats.totalMs.p99 == 38.0)
-    #expect(stats.totalMs.max == 41.5)
-    #expect(stats.gpuMs.mean == 21.0)
+    #expect(stats.servedMs == StatsEvent.Total(mean: 31.6, p99: 38.4, max: 41.9))
+    #expect(stats.stagesMs == StatsEvent.Stages(queue: 0.6, gpu: 29.4, other: 1.2, send: 0.4))
     #expect(stats.slow == 0)
     #expect(stats.windowS == 1.0)
   }

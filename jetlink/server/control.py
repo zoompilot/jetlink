@@ -476,10 +476,7 @@ class ControlServer:
         raise ControlError(f'model {sha256[:16]} is not in the catalog')
     # 134 bytes when it is not already cached, and the reply has to carry the
     # sha, so this one resolve waits.
-    try:
-      pointer = self.registry.resolve(str(ref))
-    except Exception as e:
-      raise ControlError(f'could not resolve {ref}: {e}') from e
+    pointer = self._resolve(str(ref))
     sha256, total = pointer.oid, int(pointer.size)
     path = self.registry.model_path(sha256)
     if path.exists() and (not total or path.stat().st_size == total):
@@ -489,6 +486,12 @@ class ControlServer:
         raise ControlError(f'model {sha256[:16]} is already downloading')
       self._queue_download(sha256, str(ref) if ref else None, total)
     return {'sha256': sha256}
+
+  def _resolve(self, ref: str):
+    try:
+      return self.registry.resolve(ref)
+    except Exception as e:
+      raise ControlError(f'could not resolve {ref}: {e}') from e
 
   def _queue_download(self, sha256: str, ref: str | None, total: int) -> _Download:
     """Hold self._lock, and check self._active first."""
@@ -552,9 +555,7 @@ class ControlServer:
       log.info("downloaded %s; not preparing it over the model the comma is using", state.sha256[:16])
       return
     try:
-      model_path = self.cache.model_path(state.sha256)
-      self.host.request(Request(state.sha256, self._nbytes(state.sha256, self.cache.entry(state.sha256), model_path),
-                                state.prepare), None)
+      self._request_engine(state.sha256, state.prepare)
     except Exception:
       log.exception("preparing %s after its download failed", state.sha256[:16])
 
@@ -639,9 +640,13 @@ class ControlServer:
     model_path = self.cache.model_path(sha256)
     if not entry.exists and not model_path.is_file():
       return self._download_then_prepare(sha256, frame_skip)
-    # The comma's own path, with no comma: one piece of code loads an engine.
-    self.host.request(Request(sha256, self._nbytes(sha256, entry, model_path), frame_skip), None)
+    self._request_engine(sha256, frame_skip)
     return {'state': self.host.snapshot()['state']}
+
+  def _request_engine(self, sha256: str, frame_skip: int) -> None:
+    """The comma's own path, with no comma: one piece of code loads an engine."""
+    entry, model_path = self.cache.entry(sha256), self.cache.model_path(sha256)
+    self.host.request(Request(sha256, self._nbytes(sha256, entry, model_path), frame_skip), None)
 
   def _download_then_prepare(self, sha256: str, frame_skip: int) -> dict:
     """`prepare` for a model with nothing on disk: download it, prepare it after.
@@ -660,10 +665,7 @@ class ControlServer:
     ref = self._ref_for(sha256)
     if ref is None:
       raise ControlError(f'model {sha256[:16]} is not downloaded, and is not in the catalog')
-    try:
-      pointer = self.registry.resolve(ref)
-    except Exception as e:
-      raise ControlError(f'could not resolve {ref}: {e}') from e
+    pointer = self._resolve(ref)
     if pointer.oid != sha256:
       raise ControlError(f'{ref} points at {pointer.oid[:16]}, not {sha256[:16]}')
     with self._lock:

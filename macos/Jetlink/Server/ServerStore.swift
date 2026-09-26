@@ -62,9 +62,9 @@ final class ServerStore {
   private(set) var info: ServerInfo?
   private(set) var link: LinkEvent = .waiting
   private(set) var engine: EngineEvent = .none
-  private(set) var stats: StatsEvent?
-  /// The last two minutes of `stats`, oldest first, while the comma stays connected.
+  /// The last two minutes of `stats` events, oldest first, while the comma stays connected.
   private(set) var statsHistory: [StatsSample] = []
+  var stats: StatsEvent? { statsHistory.last?.stats }
   private(set) var startedAt: Date?
   var lastFailure: String?
 
@@ -278,14 +278,10 @@ final class ServerStore {
       if server.state == "stopping" { stopRequested = true }
     case .link(let value):
       link = value
-      if value.state != .connected {
-        stats = nil
-        statsHistory = []
-      }
+      if value.state != .connected { statsHistory = [] }
     case .engine(let value):
       engine = value
     case .stats(let value):
-      stats = value
       statsHistory.append(StatsSample(at: Date(), stats: value))
       if statsHistory.count > ServerStore.statsHistoryLength {
         statsHistory.removeFirst(statsHistory.count - ServerStore.statsHistoryLength)
@@ -394,7 +390,6 @@ final class ServerStore {
   private func resetLiveState() {
     link = .waiting
     engine = .none
-    stats = nil
     statsHistory = []
     startedAt = nil
   }
@@ -431,8 +426,8 @@ extension ServerStore {
     store.info = info
     store.link = link
     store.engine = engine
-    store.stats = stats
-    store.statsHistory = statsHistory
+    // One sample of `stats` unless a history is given, which ends with its own.
+    store.statsHistory = statsHistory.isEmpty ? stats.map { [StatsSample(at: Date(), stats: $0)] } ?? [] : statsHistory
     store.startedAt = Date(timeIntervalSinceNow: -3600)
     return store
   }

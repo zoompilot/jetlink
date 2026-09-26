@@ -339,38 +339,22 @@ struct StatusView: View {
     return hardware.isEmpty ? head : "\(head), \(hardware)"
   }
 
-  /// "Neural Engine", "CoreML GPU", "tinygrad": the backend in a word or two,
-  /// for the toolbar's activity view.
-  static func backendShortName(backend: String?, device: String?) -> String {
-    let device = device ?? ""
-    if device.hasPrefix("ane") || backend == "ane" { return "Neural Engine" }
-    switch backend {
-    case "ort": return device.hasPrefix("coreml") || device.isEmpty ? "CoreML GPU" : "onnxruntime"
-    case "tinygrad": return "tinygrad"
-    case let other?: return other
-    case nil: return "Unknown"
-    }
+  /// "CoreML with the Neural Engine", "CoreML on the GPU", "tinygrad on Metal",
+  /// or what the server reported when it is none of the app's choices.
+  static func backendDescription(backend: String?, device: String?) -> String {
+    BackendChoice(backend: backend, device: device)?.title ?? otherBackendName(backend, device: device)
   }
 
-  /// "CoreML on the GPU", "CoreML with the Neural Engine", "tinygrad on Metal",
-  /// or the raw backend name when the server reports something else.
-  static func backendDescription(backend: String?, device: String?) -> String {
-    let device = device ?? ""
-    if device.hasPrefix("ane") {
-      return "CoreML with the Neural Engine"
-    }
-    switch backend {
-    case "ort":
-      return device.hasPrefix("coreml") || device.isEmpty ? "CoreML on the GPU" : "onnxruntime on \(device)"
-    case "ane":
-      return "CoreML with the Neural Engine"
-    case "tinygrad":
-      return "tinygrad on Metal"
-    case let other?:
-      return other
-    case nil:
-      return "Unknown"
-    }
+  /// The same in a word or two, for the toolbar's activity view.
+  static func backendShortName(backend: String?, device: String?) -> String {
+    BackendChoice(backend: backend, device: device)?.shortTitle ?? otherBackendName(backend, device: nil)
+  }
+
+  /// "onnxruntime on cpu", or the raw backend name.
+  private static func otherBackendName(_ backend: String?, device: String?) -> String {
+    guard let backend else { return "Unknown" }
+    guard backend == "ort" else { return backend }
+    return device.map { "onnxruntime on \($0)" } ?? "onnxruntime"
   }
 
   static func uptimeText(from start: Date, to now: Date) -> String {
@@ -388,7 +372,7 @@ struct StatusView: View {
     .environment(
       ServerStore.preview(
         runState: .serving, info: PreviewData.serverInfo, link: PreviewData.linkConnected,
-        engine: PreviewData.engineReady, stats: PreviewData.stats, statsHistory: PreviewData.statsHistory)
+        engine: PreviewData.engineReady, statsHistory: PreviewData.statsHistory)
     )
     .environment(ModelStore.preview(catalog: PreviewData.catalog, inventory: PreviewData.inventory, engine: PreviewData.engineReady))
     .environment(AppSettings.preview())

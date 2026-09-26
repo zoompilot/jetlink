@@ -73,15 +73,13 @@ struct EngineEvent: Codable, Sendable, Equatable {
   static let none = EngineEvent(state: .none, sha256: nil, detail: "", stage: nil, frac: 0, msg: "", loadOnly: false)
 }
 
+/// One second of served frames. The server also sends `total_ms` and
+/// `gpu_ms`, which the app has no use for: `servedMs` and `stagesMs` hold both.
 struct StatsEvent: Codable, Sendable, Equatable {
   struct Total: Codable, Sendable, Equatable {
     let mean: Double
     let p99: Double
     let max: Double
-  }
-
-  struct Gpu: Codable, Sendable, Equatable {
-    let mean: Double
   }
 
   /// Means that add up to `servedMs.mean`: staging the inputs, the model run,
@@ -95,23 +93,11 @@ struct StatsEvent: Codable, Sendable, Equatable {
 
   let frames: Int
   let fps: Double
-  let totalMs: Total
-  let gpuMs: Gpu
+  /// From a frame's arrival to its reply leaving.
+  let servedMs: Total
+  let stagesMs: Stages
   let slow: Int
   let windowS: Double
-  /// Absent from a server older than the frame budget view.
-  var stagesMs: Stages? = nil
-  /// From a frame's arrival to its reply leaving: `totalMs` plus the send.
-  var servedMs: Total? = nil
-
-  /// The stages, or for an older server the model run and everything else.
-  var stages: Stages {
-    stagesMs ?? Stages(queue: 0, gpu: gpuMs.mean, other: max(0, totalMs.mean - gpuMs.mean), send: 0)
-  }
-
-  var served: Total {
-    servedMs ?? totalMs
-  }
 }
 
 struct InventoryModel: Codable, Sendable, Equatable, Identifiable {
