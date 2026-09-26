@@ -28,15 +28,20 @@ import numpy as np
 from jetlink.spec import ModelSpec
 
 
-# numpy has no vectorised float16 store on aarch64: uint8 -> float16 costs
-# 5.2 ns/element, 68% of the frame. Only 256 inputs exist, so a lookup gives the
-# same bits at memcpy speed. Viewed as uint16 so np.take can share the dtype.
+# numpy 1.x has no vectorised float16 store on aarch64: casting one 393 KB frame
+# of uint8 to float16 takes 2.25 ms on the Orin under 1.26, and a lookup of the
+# 256 possible values gives the same bits in 0.69 ms. numpy 2.x casts it in
+# 0.27 ms (2.5.3, same Orin) against the lookup's 0.62, and is faster still on
+# the Mac, so the lookup is kept only where numpy needs it: the JetPack 6 image.
+# Viewed as uint16 so np.take can share the dtype.
 _U8_TO_F16_BITS = np.arange(256, dtype=np.uint8).astype(np.float16).view(np.uint16)
+_LOOKUP = int(np.__version__.split('.')[0]) < 2
 
 
 def store(dest: np.ndarray, value: np.ndarray) -> None:
-  """Copy `value` into `dest`, casting; uint8 images into fp16 through the lookup."""
-  if dest.dtype == np.float16 and value.dtype == np.uint8:
+  """Copy `value` into `dest`, casting; uint8 images into fp16 through the lookup
+  on numpy 1.x."""
+  if _LOOKUP and dest.dtype == np.float16 and value.dtype == np.uint8:
     # take-with-out, not `dest[:] = lut[src]`: the latter builds a 393 KB
     # temporary, 2.4 ms against 1.4 ms on the Orin (the other way on x86, so
     # measure there). clip skips a bounds check a uint8 index cannot fail.
