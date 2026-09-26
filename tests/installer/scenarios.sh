@@ -43,6 +43,14 @@ expect_file() { check "missing file: $1" test -e "$1"; }
 expect_no_file() { refute "file should be gone: $1" test -e "$1"; }
 expect_in() { check "$1 lacks: $2" grep -qF -- "$2" "$1"; }
 expect_rc() { check "exit $RC, wanted $1" test "$RC" = "$1"; }
+first_line() { grep -nF -- "$1" "$FAKE_LOG" | head -n 1 | cut -d: -f1; }
+expect_before() {  # expect_before A B: the first run of A came before the first run of B
+  local a b
+  a="$(first_line "$1")" b="$(first_line "$2")"
+  check "never ran: $1" test -n "$a"
+  check "never ran: $2" test -n "$b"
+  if [ -n "$a" ] && [ -n "$b" ]; then check "$1 ran after $2" test "$a" -lt "$b"; fi
+}
 
 reset_box() {
   rm -rf /etc/jetlink /usr/local/lib/jetlink /usr/local/bin/jetlink /opt/jetlink /var/lib/jetlink /mnt/data \
@@ -57,7 +65,7 @@ reset_box() {
     ln -sf "$SRC/tests/installer/fake.sh" "$FAKE_BIN/$c"
   done
   unset FAKE_ARCH FAKE_SMI FAKE_GPU_OK FAKE_PUBLISHED FAKE_PM_REBOOT FAKE_NVIDIA_RUNTIME FAKE_NV_DOCKER_POLLS \
-    FAKE_PULL_FAILS FAKE_MANIFEST_HANGS
+    FAKE_PULL_FAILS FAKE_MANIFEST_HANGS FAKE_SERVER_BROKEN FAKE_RESTARTS
 }
 
 jetson() {  # jetson L4T_RELEASE REVISION
@@ -182,6 +190,12 @@ expect_no_out "A few questions"
 expect_no_out "Go ahead?"
 expect_out "Jetlink is installed and running"
 expect_ran "docker build --network host"
+# the running server is stopped before anything slow, and its settings kept
+expect_out "Stopping the running Jetlink server for the update"
+expect_before "systemctl stop jetlink-server" "apt-get -o DPkg::Lock::Timeout=900 -y update"
+expect_before "systemctl stop jetlink-server" "docker build --network host"
+expect_file /etc/jetlink/server.env.prev
+expect_no_out "The previous Jetlink server is running again."
 expect_in /etc/jetlink/install.conf "JETLINK_POWER=always"
 expect_in /etc/jetlink/server.env "JETLINK_SLEEP_AFTER=120"
 expect_not_ran "nvpmodel -m"
@@ -194,6 +208,30 @@ install 'y\n'
 expect_rc 0
 expect_out "Jetlink is already installed. Keep your current settings and update it?"
 expect_no_out "How is the Jetson powered in the car?"
+show_on_failure "$f"
+
+# ---------------------------------------------------------------------------
+scenario "a failed update puts the previous server back"
+: >"$FAKE_LOG"; f=$FAILED
+sed -i 's/^JETLINK_IMAGE=.*/JETLINK_IMAGE=sha256:previous/' /etc/jetlink/server.env
+# the new server never gets as far as waiting for the comma
+export FAKE_SERVER_BROKEN=1 FAKE_RESTARTS=3
+install '' --update
+expect_rc 1
+expect_out "The previous Jetlink server is running again."
+expect_in /etc/jetlink/server.env "JETLINK_IMAGE=sha256:previous"
+check "the previous server was not started again" test "$(grep -c "systemctl restart jetlink-server" "$FAKE_LOG")" -ge 2
+refute "the unit was left stopped" test -f "$FAKE_STATE/stopped-jetlink-server"
+unset FAKE_SERVER_BROKEN FAKE_RESTARTS
+show_on_failure "$f"
+
+# ---------------------------------------------------------------------------
+scenario "a fresh install has no server to stop"
+reset_box; jetson 39 2.1; with_docker; f=$FAILED
+install '' --yes
+expect_rc 0
+expect_not_ran "systemctl stop jetlink-server"
+expect_no_file /etc/jetlink/server.env.prev
 show_on_failure "$f"
 
 # ---------------------------------------------------------------------------

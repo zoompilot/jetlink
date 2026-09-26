@@ -75,6 +75,7 @@ die() {
   local line
   for line in "$@"; do printf '  %s\n' "$line"; done
   printf '\n'
+  restore_previous_server
   save_log
   exit 1
 }
@@ -99,6 +100,7 @@ on_error() {
   fi
   printf '\n  Running the installer again is safe. If it keeps failing, open an issue at\n'
   printf '  https://github.com/zoompilot/jetlink/issues with the log attached.\n\n'
+  restore_previous_server
   save_log
   exit "$rc"
 }
@@ -736,6 +738,36 @@ settle_docker() {
   detect_docker
 }
 
+# An update stops the running server before anything slow. Left running it can
+# suspend the computer part way through (an always-on Jetson sleeps two minutes
+# after the comma lets go), a Docker restart would kill it anyway, and it holds
+# GPU memory the new server's check needs. Its settings are kept as
+# server.env.prev: a failed update puts them back and starts it again
+# (restore_previous_server), and after a good one they are a way back by hand.
+SERVER_STOPPED=0
+ENV_PREV="$ETC_DIR/server.env.prev"
+
+stop_running_server() {
+  [ -f "$UNIT_DIR/$UNIT.service" ] || return 0
+  as_root systemctl is-active --quiet "$UNIT" || return 0
+  if [ -f "$ENV_FILE" ]; then as_root cp -p "$ENV_FILE" "$ENV_PREV"; fi
+  step "Stopping the running Jetlink server for the update" as_root systemctl stop "$UNIT"
+  SERVER_STOPPED=1
+}
+
+# After a failed update: the previous settings, and the previous server running.
+restore_previous_server() {
+  [ "$SERVER_STOPPED" = 1 ] || return 0
+  SERVER_STOPPED=0
+  if [ -f "$ENV_PREV" ]; then as_root cp -p "$ENV_PREV" "$ENV_FILE" >>"$LOG" 2>&1 || true; fi
+  as_root systemctl daemon-reload >>"$LOG" 2>&1 || true
+  if as_root systemctl restart "$UNIT" >>"$LOG" 2>&1; then
+    note "The previous Jetlink server is running again."
+  else
+    note "The previous Jetlink server did not start again; see: journalctl -u $UNIT"
+  fi
+}
+
 install_docker() {
   if [ "$HAVE_DOCKER" = 1 ]; then
     as_root systemctl is-active --quiet docker || step "Starting Docker" as_root systemctl enable --now docker
@@ -1038,6 +1070,7 @@ start_server() {
   since="$(date '+%Y-%m-%d %H:%M:%S')"
   as_root systemctl restart "$UNIT"
   step "Starting the Jetlink server" wait_ready "$since"
+  SERVER_STOPPED=0
 }
 
 # Up means the server chose its backend and is waiting for the comma (or
@@ -1249,7 +1282,12 @@ main() {
   fi
 
   get_root
+  # again with administrator rights: as the user, docker info usually fails,
+  # which read as "the GPU runtime is not set up" and restarted Docker, and
+  # every other container with it, on each update
+  detect_docker
   heading "Installing"
+  stop_running_server
   settle_docker
   install_base_packages
   prepare_source

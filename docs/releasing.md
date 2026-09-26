@@ -24,8 +24,10 @@ curl -fsSL https://raw.githubusercontent.com/zoompilot/jetlink/v0.4.0/install.sh
 2. Update the server using the method you installed:
 
    - Jetson or Linux PC with the installer: `jetlink update`. It keeps your
-     answers, fetches the newest `main` (or your `--ref`), and restarts the
-     server.
+     answers, stops the running server (so a Jetson cannot fall asleep part
+     way through), fetches the newest `main` (or your `--ref`), and starts the
+     new server. If anything fails before the new server is up, it puts the
+     previous one back and starts it again.
    - Mac app: quit Jetlink, replace it with the new release, and reopen it.
    - Source install: run `git pull` from the Jetlink checkout. For the Mac
      script, restart `scripts/run-mac.sh`; recreate `.venv` if dependencies
@@ -51,6 +53,9 @@ curl -fsSL https://raw.githubusercontent.com/zoompilot/jetlink/v0.4.0/install.sh
 Or put an earlier image back by hand: `sudo docker image ls` shows the images on
 the machine, and the one to run is `JETLINK_IMAGE` in `/etc/jetlink/server.env`
 (an image ID from `sudo docker image inspect --format '{{.Id}}' IMAGE`). Then
+`jetlink restart`. Each update keeps the settings it replaced as
+`/etc/jetlink/server.env.prev`, so going back one update is
+`sudo cp /etc/jetlink/server.env.prev /etc/jetlink/server.env` and
 `jetlink restart`.
 
 ## Publish a release (maintainers)

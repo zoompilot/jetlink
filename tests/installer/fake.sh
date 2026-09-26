@@ -30,7 +30,13 @@ case "$name" in
 
   systemctl)
     case "${1:-}" in
-      is-active) [ "${FAKE_DOCKER_DOWN:-0}" = 1 ] && [ "${*: -1}" = docker ] && exit 3; echo active ;;
+      is-active)
+        [ "${FAKE_DOCKER_DOWN:-0}" = 1 ] && [ "${*: -1}" = docker ] && exit 3
+        quiet=0; [[ " $* " == *" --quiet "* ]] && quiet=1
+        [ -f "$state/stopped-${*: -1}" ] && { [ "$quiet" = 1 ] || echo inactive; exit 3; }
+        [ "$quiet" = 1 ] || echo active ;;
+      stop) touch "$state/stopped-${*: -1}" ;;
+      start|restart) rm -f "$state/stopped-${*: -1}" ;;
       is-enabled) if [ -f "$state/masked-${*: -1}" ]; then echo masked; else echo enabled; fi ;;
       list-unit-files)
         for u in ${FAKE_UNITS:-systemd-networkd-wait-online.service}; do
@@ -56,8 +62,12 @@ case "$name" in
     esac ;;
 
   journalctl)
-    echo "backend trt 10.16.2.10 on Orin-sm87, cache /var/cache/jetlink"
-    echo "waiting for a jetlink gadget at 1209:0001" ;;
+    if [ "${FAKE_SERVER_BROKEN:-0}" = 1 ]; then
+      echo "ImportError: libnvinfer.so.10: cannot open shared object file"
+    else
+      echo "backend trt 10.16.2.10 on Orin-sm87, cache /var/cache/jetlink"
+      echo "waiting for a jetlink gadget at 1209:0001"
+    fi ;;
 
   docker)
     case "${1:-}" in
