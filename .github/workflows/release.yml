@@ -435,7 +435,21 @@ jobs:
             echo "error: nothing to release" >&2
             exit 1
           fi
-          ARGS=(--generate-notes --title "Jetlink $GITHUB_REF_NAME")
+          # The notes are the tag's section of CHANGELOG.md, less the heading
+          # the release title repeats and any trailing blank lines. A tag
+          # without a section gets GitHub's generated notes.
+          awk -v heading="Jetlink $GITHUB_REF_NAME" '
+            section && /^Jetlink v[0-9]/ { exit }
+            section && /^=+$/ { next }
+            section && /^$/ { if (started) blank = blank "\n"; next }
+            section { printf "%s%s\n", blank, $0; blank = ""; started = 1 }
+            $0 == heading { section = 1 }
+          ' CHANGELOG.md > changelog.md
+          if [ -s changelog.md ]; then
+            ARGS=(--notes-file changelog.md --title "Jetlink $GITHUB_REF_NAME")
+          else
+            ARGS=(--generate-notes --title "Jetlink $GITHUB_REF_NAME")
+          fi
           # Both spellings of a prerelease: a hyphenated semver tag, and the
           # PEP 440 suffixes, which carry no hyphen. pyproject.toml has to hold
           # the version verbatim (check-version.sh), so an alpha tagged the
@@ -446,7 +460,7 @@ jobs:
           esac
           gh release create "$GITHUB_REF_NAME" "${ARGS[@]}" "${FILES[@]}"
 
-          # Append the footer to the notes GitHub generated, rather than
+          # Append the footer to the notes, rather than
           # replacing them.
           NOTES="$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)"
           # The backticks below are Markdown, not command substitutions.
