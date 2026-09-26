@@ -65,7 +65,14 @@ case "$name" in
       info) if [ -f "$state/nvidia-runtime" ] || [ "${FAKE_NVIDIA_RUNTIME:-0}" = 1 ]; then
               echo '{"nvidia":{"path":"nvidia-container-runtime"},"runc":{"path":"runc"}}'
             else echo '{"runc":{"path":"runc"}}'; fi ;;
-      manifest) [ "${FAKE_PUBLISHED:-0}" = 1 ] || { echo "no such manifest" >&2; exit 1; } ;;
+      manifest)
+        # the first FAKE_MANIFEST_HANGS requests hang on a dead connection
+        left="$(cat "$state/manifest-hangs" 2>/dev/null || echo "${FAKE_MANIFEST_HANGS:-0}")"
+        if [ "$left" -gt 0 ]; then
+          echo $((left - 1)) >"$state/manifest-hangs"
+          sleep 30
+        fi
+        [ "${FAKE_PUBLISHED:-0}" = 1 ] || { echo "no such manifest" >&2; exit 1; } ;;
       pull)
         # the first FAKE_PULL_FAILS pulls are cut off part way
         left="$(cat "$state/pull-fails" 2>/dev/null || echo "${FAKE_PULL_FAILS:-0}")"

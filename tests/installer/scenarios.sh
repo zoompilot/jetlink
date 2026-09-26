@@ -57,7 +57,7 @@ reset_box() {
     ln -sf "$SRC/tests/installer/fake.sh" "$FAKE_BIN/$c"
   done
   unset FAKE_ARCH FAKE_SMI FAKE_GPU_OK FAKE_PUBLISHED FAKE_PM_REBOOT FAKE_NVIDIA_RUNTIME FAKE_NV_DOCKER_POLLS \
-    FAKE_PULL_FAILS
+    FAKE_PULL_FAILS FAKE_MANIFEST_HANGS
 }
 
 jetson() {  # jetson L4T_RELEASE REVISION
@@ -258,6 +258,20 @@ expect_out "Downloading the Jetlink server"
 expect_in /var/log/jetlink-install.log "the download was interrupted; trying again"
 expect_in /etc/jetlink/server.env "JETLINK_IMAGE_REF=ghcr.io/zoompilot/jetlink:edge-cuda"
 expect_not_ran "docker build"
+unset JETLINK_REPO_URL
+show_on_failure "$f"
+
+# ---------------------------------------------------------------------------
+scenario "a registry check that hangs is tried again, not taken as no image"
+reset_box; jetson 39 2.1; with_docker; f=$FAILED
+# a Wi-Fi roam left the first request on a dead connection
+export FAKE_PUBLISHED=1 FAKE_MANIFEST_HANGS=1 JETLINK_REPO_URL=file:///tmp/repo
+JETLINK_TEST_NET_TIMEOUT_S=1 bash </src/install.sh -s -- --yes >"$OUT" 2>&1; RC=$?
+expect_rc 0
+expect_in /var/log/jetlink-install.log "registry check 1 timed out after 1s"
+expect_ran "docker pull ghcr.io/zoompilot/jetlink:edge-cuda"
+expect_not_ran "docker build"
+expect_no_out "so it will be built here"
 unset JETLINK_REPO_URL
 show_on_failure "$f"
 

@@ -48,6 +48,8 @@ MEM_SLEEP="${JETLINK_TEST_MEM_SLEEP:-/sys/power/mem_sleep}"
 SWAPS="${JETLINK_TEST_SWAPS:-/proc/swaps}"
 # seconds between looks at something the installer waits on
 POLL_S="${JETLINK_TEST_POLL_S:-5}"
+# seconds a quick registry request may take before it is abandoned and tried again
+NET_TIMEOUT_S="${JETLINK_TEST_NET_TIMEOUT_S:-60}"
 
 OPT_YES=0 OPT_UPDATE=0 OPT_RECONFIGURE=0 OPT_BUILD=0 OPT_DRY_RUN=0 OPT_UNINSTALL=0
 OPT_IMAGE="" OPT_REF="${JETLINK_REF:-}"
@@ -827,9 +829,18 @@ get_image() {
 }
 
 try_pull() {
-  local ref=$1
-  # a missing tag fails in seconds; only then is it worth the spinner
-  as_root docker manifest inspect "$ref" >/dev/null 2>&1 || return 1
+  local ref=$1 attempt rc=0
+  # A missing tag fails in seconds; only then is it worth the spinner. The time
+  # limit is for a connection that died under the request, as when Wi-Fi hands
+  # the computer a new address: docker waits on it for a quarter of an hour.
+  # Only a timeout (124) is tried again; any other failure means no image.
+  for attempt in 1 2 3; do
+    rc=0
+    as_root timeout "$NET_TIMEOUT_S" docker manifest inspect "$ref" >/dev/null 2>&1 || rc=$?
+    [ "$rc" = 124 ] || break
+    printf '\n==> registry check %s timed out after %ss\n' "$attempt" "$NET_TIMEOUT_S" >>"$LOG"
+  done
+  [ "$rc" = 0 ] || return 1
   step "Downloading the Jetlink server (about 4 GB)" pull_image "$ref"
 }
 
