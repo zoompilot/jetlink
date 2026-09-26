@@ -54,4 +54,8 @@ PRODUCT="$MACOS_DIR/build/DerivedData/Build/Products/Release/Jetlink.app"
 
 rm -rf "$MACOS_DIR/build/Jetlink.app"
 ditto "$PRODUCT" "$MACOS_DIR/build/Jetlink.app"
+# ditto keeps the product's dates, and Xcode never updates the bundle folder's
+# own, so every build looked like the first one: the Dock went on showing the
+# icon that bundle had then.
+touch "$MACOS_DIR/build/Jetlink.app"
 echo "$MACOS_DIR/build/Jetlink.app"
