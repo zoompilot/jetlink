@@ -21,34 +21,6 @@ Use the Jetson devkit's USB-A ports. Its USB-C port selects the wrong USB role
 for this connection. A direct C-to-C cable on a Mac may also select the wrong
 role. The comma's USB-C port cannot serve Jetlink and chestnut at the same time.
 
-### Custom USB integrations
-
-The comma 3X with AGNOS kernel 4.9.103 includes FunctionFS and USB gadget
-support. The Jetson host uses libusb and does not need gadget kernel modules.
-Reversing these roles requires gadget modules that may be missing from the
-Jetson's L4T installation.
-
-For manual integration, run this from the Jetlink checkout on the comma once per
-boot:
-
-```bash
-sudo scripts/setup_gadget.sh
-```
-
-The script creates the gadget configuration. `jetlinkd` opens `ep0`, writes
-FunctionFS descriptors, and binds the USB device controller. The setup script
-cannot bind the controller before those descriptors exist.
-
-On the Jetson, the installer sets up the server as a service; for a manual run,
-from a checkout:
-
-```bash
-sudo docker/run.sh --transport usb
-```
-
-Jetlink uses the pid.codes test allocation `1209:0001`. Custom distributions
-need their own USB product ID.
-
 ## Ethernet (TCP)
 
 Use wired Ethernet for TCP. On the comma, use a USB-C gigabit Ethernet adapter
@@ -75,10 +47,13 @@ its 25 W power mode. The comma's USB port cannot power the Jetson.
 The supply must tolerate voltage drops when the engine starts. A voltage drop
 can reboot the Jetson and interrupt the link. With ignition-switched power,
 allow about 65 to 96 seconds from power-on until the model is ready. The comma
-uses its small model during startup and switches at the first stop with cruise
-off once the large model is ready.
+uses its small model during startup. Switching requires a stop with cruise
+off, or lateral control off; see [daily use](using-jetlink.md#what-to-expect-when-driving).
 
 ### Always-on supply and suspend
+
+Suspend, wake, low-battery shutdown, and long parking periods are not fully
+validated. See [testing limitations](status.md#what-still-needs-validation).
 
 An always-on supply allows the Jetson to suspend while parked and keep the
 loaded engine in memory. Suspend power consumption is not measured. Measure it
@@ -133,3 +108,31 @@ A powered-off Jetson stays off on an always-on supply. The installation needs a
 way to restart it, such as a low-voltage disconnect that restores power when the
 alternator runs, or an ignition-controlled connection to the J14 power-button
 input. The devkit starts automatically when DC power returns.
+
+## Custom USB integrations
+
+The comma 3X with AGNOS kernel 4.9.103 includes FunctionFS and USB gadget
+support. The Jetson host uses libusb and does not need gadget kernel modules.
+Reversing these roles requires gadget modules that may be missing from the
+Jetson's L4T installation.
+
+For manual integration, run this from the Jetlink checkout on the comma once per
+boot:
+
+```bash
+sudo scripts/setup_gadget.sh
+```
+
+The script creates the gadget configuration. `jetlinkd` opens `ep0`, writes
+FunctionFS descriptors, and binds the USB device controller. The setup script
+cannot bind the controller before those descriptors exist.
+
+On the Jetson, the installer sets up the server as a service; for a manual run,
+from a checkout:
+
+```bash
+sudo docker/run.sh --transport usb
+```
+
+Jetlink uses the pid.codes test allocation `1209:0001`. Custom distributions
+need their own USB product ID.

@@ -4,12 +4,7 @@ Jetlink for Mac runs the server without terminal commands. For the Jetson, see
 the [Jetson guide](jetson.md). For the command line on any platform, see
 [platform setup](platforms.md).
 
-## What it does
-
-Jetlink for Mac runs the inference server your comma connects to, and keeps it
-running while you drive. It downloads the models over your Mac's network,
-prepares them, and keeps the selected model loaded. You can also check model
-status and disk use in the app.
+<a id="what-it-does"></a>
 
 ## Requirements
 
@@ -55,7 +50,36 @@ xattr -d com.apple.quarantine /Applications/Jetlink.app
 
 Signed releases need none of this.
 
+## Plug in
+
+Complete [comma setup](../README.md#comma-setup-all-platforms), including the
+branch installation and **Accelerator Link** toggle. Then connect the
+**Mac's USB-A port to the comma's USB-C port**, using a USB-A port
+on a hub or dock, or a USB-C-to-A adapter. A plain C-to-C cable may not give the
+Mac the host role.
+
+The Status screen then shows:
+
+- **Connected over USB** on the Link row.
+- **Rate**, the frames per second the comma is sending. It should settle near
+  20 per second.
+- **Frame time**, in milliseconds: mean (average), p99 (99% of frames are at or below this time), and maximum. The budget is 50 ms.
+- **Slow frames**, the number of frames over 60 ms in the last second. This should stay at zero. A consistently higher count means the Mac is too slow, and the comma may drop back to its small model.
+
+On the comma, the home-button icon pulses while the model transfers and loads,
+then turns green. For driving behavior, see the
+[daily use guide](using-jetlink.md).
+
+## Everyday use
+
+Keep the Mac powered and awake. You can close the window; the server keeps
+running and the menu bar icon stays. Quitting Jetlink stops the server.
+The next launch loads the prepared engine again.
+
 ## Prepare a model before you drive
+
+This is optional. The comma can download and send the model automatically.
+Use these steps to prepare it on the Mac before connecting.
 
 Open **Models**. The list is the same one the comma shows under **Settings >
 Models > Big Model**, in the same order. Select the same model as your comma.
@@ -81,26 +105,15 @@ Preparing takes about 20 seconds the first time on an M1 Pro, and loading a
 prepared engine takes under a second when it was the last model loaded and up to about
 10 seconds otherwise.
 
-You can close the window. The server keeps running and the menu bar icon stays.
-Quitting Jetlink stops the server, and the next start loads the engine again.
+<details>
+<summary>App screenshots</summary>
 
-## Plug in
+These screenshots show an earlier app build.
 
-Connect the **Mac's USB-A port to the comma's USB-C port**, using a USB-A port
-on a hub or dock, or a USB-C-to-A adapter. A plain C-to-C cable may not give the
-Mac the host role.
+![Server status and model loading](images/mac-status.webp)
+![Available models and download status](images/mac-models.webp)
 
-The Status screen then shows:
-
-- **Connected over USB** on the Link row.
-- **Rate**, the frames per second the comma is sending. It should settle near
-  20 per second.
-- **Frame time**, in milliseconds: mean (average), p99 (99% of frames are at or below this time), and maximum. The budget is 50 ms.
-- **Slow frames**, the number of frames over 60 ms in the last second. This should stay at zero. A consistently higher count means the Mac is too slow, and the comma may drop back to its small model.
-
-On the comma, the home-button icon pulses while the model transfers and loads,
-then turns green. For driving behavior, see the
-[README](../README.md#what-to-expect-when-driving).
+</details>
 
 ## Settings
 
@@ -160,6 +173,15 @@ about 2 GB, a tinygrad engine is 777 MB.
 | The model list is empty | The Mac needs internet for the list. Open **Models** and choose **Refresh**. |
 | Frames are slow or the rate is below 20 | Check the cable and the USB port, then check whether another heavy application is using the GPU or the Neural Engine. If one is, choose **CoreML on the GPU** under Settings > Server. |
 
+<details>
+<summary>Example server error</summary>
+
+Open **Logs** for the full diagnostic output.
+
+![Server failure and diagnostic output](images/mac-error.webp)
+
+</details>
+
 ## Where things live
 
 | What | Where |
@@ -179,5 +201,4 @@ Building the app, the embedded Python runtime, signing and notarizing are
 covered in the [Mac developer guide](../macos/README.md).
 
 The same download, prepare and inventory work is available as a command line
-tool on every platform, and the running server has a control channel. Both are
-documented in [models and the model CLI](models.md).
+tool on every platform, and the running server has a control channel. See the [model CLI](model-cli.md) and [control protocol](control-protocol.md).

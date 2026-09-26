@@ -1,7 +1,10 @@
-# Jetlink for Mac
+<a id="jetlink-for-mac"></a>
 
-The macOS app that runs the Jetlink inference server, shows what the comma
-sees, and manages the large driving models.
+# Jetlink for Mac development
+
+To install and use the app, follow the [Mac user guide](../docs/macos-app.md).
+This page covers building, testing, and signing it from source.
+Run the commands from the repository root.
 
 ## Build
 
@@ -37,6 +40,8 @@ That opens `Jetlink.xcodeproj` with `JETLINK_PYTHON` pointing at the repo's
 without xcodegen installed.
 
 ## Sign, notarize, release
+
+For CI releases and signing secrets, see [publishing](../docs/publishing.md).
 
 ```
 SIGN_IDENTITY="Developer ID Application: Name (TEAMID)" DEVELOPMENT_TEAM=TEAMID make -C macos app

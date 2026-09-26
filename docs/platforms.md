@@ -4,8 +4,20 @@ Run Jetlink on a Mac, Linux PC, or Windows PC. Mac and Linux NVIDIA systems have
 hardware test results. Windows WSL2 is untested. Set up the comma with the steps
 in the [README](../README.md#quick-start).
 
-On Linux the [installer](#linux-nvidia-gpu) needs nothing else. For the
-terminal and Docker setups below, clone the repository first:
+Choose your setup:
+
+- [Mac app](macos-app.md) for installation without terminal commands.
+- [Linux installer](#linux-nvidia-gpu) for an NVIDIA PC.
+- [Windows WSL2](#windows-nvidia-gpu) for an unvalidated test setup.
+- [Docker](#docker-nvidia-laptops-and-desktops), [CPU](#cpu-only), or
+  [test without a comma](#test-without-a-comma) for development.
+
+For a Jetson, use the [Jetson guide](jetson.md).
+
+## Before running from source
+
+The installer and Mac app do not need a checkout. For the terminal and Docker
+examples below, clone the repository first:
 
 ```bash
 git clone https://github.com/zoompilot/jetlink.git
@@ -102,8 +114,9 @@ The udev rule grants USB access without root; unplug and replug the comma after
 installing it. In a new terminal, run `source .venv/bin/activate` before using
 `jetlink-server` again.
 
-Use `jetlink-models` to download and prepare a model on the server before
-connecting the comma. See [models and the model CLI](models.md).
+Optionally use `jetlink-models` to download and prepare a model before
+connecting the comma. Stop the server before preparing into its cache. See
+[model management](models.md).
 
 ## Windows (NVIDIA GPU)
 

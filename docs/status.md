@@ -6,15 +6,18 @@ temperature, or failure condition.
 
 ## Platform testing
 
+Support in the installer does not mean a platform has been tested in a vehicle.
+
 - **Jetson Orin Nano Super, 8 GB:** tested in a vehicle and in recorded-drive
   replay on JetPack 6.2 with TensorRT 10.3. JetPack 7.2 (TensorRT 10.16, the
   CUDA 13 image) is not yet tested on hardware: the image builds and its
   TensorRT loads, and the installer is tested against stand-ins.
 - **Apple silicon:** tested on a 16 GB M1 Pro. CoreML with the Neural
-  Engine and the GPU meets the 50 ms frame budget at 29 to 32 ms a frame, and the GPU
-  alone at 44 ms.
+  Engine and the GPU averages 29 to 32 ms a frame, and the GPU
+  alone averages 44 ms, against a 50 ms budget. Some runs had individual
+  frames over the deadline.
   tinygrad loads in a second but misses the budget on that machine. See
-  [measurements](backends.md#mac-measured).
+  [measurements and test conditions](mac-performance.md).
 - **Linux NVIDIA (CUDA laptop):** hardware-tested.
 - **Windows WSL2:** implemented, not yet tested on hardware.
 - **CPU:** functional testing only.

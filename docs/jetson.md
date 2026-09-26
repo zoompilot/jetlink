@@ -8,11 +8,13 @@ Allow about an hour the first time, mostly downloads.
 
 - A **Jetson Orin**. The Orin Nano Super Developer Kit (8 GB) is the tested
   board.
-- **JetPack 7.2.1** (recommended) or JetPack 6.2. The installer supports both.
+- **JetPack 6.2 or 7.2.1.** Version 6.2 has in-car test results. The installer
+  recommends 7.2.1, but the 7.2 image has not yet been tested on hardware.
+  See [testing status](status.md#platform-testing).
 - A microSD card of 64 GB or more, or better an NVMe SSD.
 - A power supply that can deliver the Jetson's full power: 25 W or more for an
   Orin Nano. In the car, that means a proper DC supply, not the comma's USB port.
-  An always-on feed is recommended; see the first question below.
+  Choose power behavior in the installer; see the options below.
 - Internet during setup, and a **USB 3 A-to-C data cable** for the comma.
 
 ## 1. Put JetPack on the Jetson
@@ -53,28 +55,12 @@ curl -fsSL https://raw.githubusercontent.com/zoompilot/jetlink/main/install.sh |
 ```
 
 It shows what it found, asks how the Jetson is powered, shows the plan, and asks before
-changing anything. Press Enter at each question for the recommended answer.
+changing anything. Choose the power option that matches your wiring.
 
 | It asks | What it means |
 | --- | --- |
-| How is the Jetson powered in the car? | **Always on** (recommended): the Jetson sleeps when the car is off to save battery and wakes when you start the car, so the large model is ready within seconds. **Switched**: it turns on and off with the car, and the large model is ready about a minute after you start it. |
+| How is the Jetson powered in the car? | **Always on** (installer default): keeps power available while parked so the Jetson can suspend and wake. Check [power requirements and validation limits](transport.md#always-on-supply-and-suspend) before choosing it. **Switched**: it turns on and off with the car, and the large model is ready about a minute after you start it. |
 | Allow the comma to shut down the Jetson to protect the car battery? | Always on only. When the comma shuts itself down for low battery, it turns the Jetson off too. The Jetson then stays off until its power is reconnected. See [powering off with the comma](transport.md#powering-off-with-the-comma). |
-
-The installer then:
-
-- installs Docker and NVIDIA's container toolkit if they are missing
-- downloads the Jetlink server, or builds it on the Jetson when there is no
-  ready-made one for its JetPack (the same 10 to 30 minutes)
-- checks that the server can use the GPU
-- switches the Jetson to its fastest power mode, MAXN SUPER, which the large
-  models need to keep up (the power supply has to deliver it; switching can
-  need one restart, and the installer says so at the end)
-- adds 8 GB of swap, which the 1.7 GB models need while they are prepared
-- sets up the `jetlink-server` service to start at every boot, and the
-  `jetlink` command
-- stops the Jetson waiting for a network at boot (the car has none, and waiting
-  cost about two minutes), and keeps the system log under 200 MB
-- keeps models and prepared engines in `/mnt/data/jetlink`
 
 When it finishes, it prints the comma steps. Running it again is safe: it
 offers to keep your answers and brings everything up to date.
@@ -83,8 +69,9 @@ offers to keep your answers and brings everything up to date.
 
 Follow [comma setup](../README.md#comma-setup-all-platforms) in the README:
 install the jetson-trt branch, turn on **Accelerator Link**, and connect the
-comma's USB-C port to one of the Jetson's **USB-A** ports. The first model takes
-about 3 minutes to prepare on the Jetson.
+comma's USB-C port to one of the Jetson's **USB-A** ports. After download and
+transfer, the default model takes about 3 minutes to prepare. Wait for the comma's home-button icon to turn green before leaving
+the setup. If it stays orange or never pulses, use the checks below.
 
 ## Everyday use
 
@@ -99,37 +86,21 @@ jetlink uninstall   # remove Jetlink; asks before deleting downloaded models
 
 The commands ask for your password when they need administrator rights.
 
-On switched power, allow 65 to 96 seconds from power to a prepared engine. The comma drives on the small model until then; its icon
-pulses, then dims until the first stop with cruise off, which is when the large
-model takes over.
+On switched power, allow 65 to 96 seconds from power-on until the model is
+ready. The comma uses its small model until it can switch. See
+[daily use](using-jetlink.md) for the switching conditions and icon meanings.
 
 ## Choosing a model
 
-Select a model under **Settings > Models > Big Model** on the comma while parked
-and connected to the internet. Wait for the download and preparation to finish.
-If you start driving during preparation, the comma uses the small model and
-switches at the first stop with cruise off after the large model is ready.
-
-The list uses sunnypilot's big-model catalog and updates without a software
-update. Use 766 MB models on the Jetson. Lebowski (1.7 GB) runs at 46 ms against
-a 50 ms frame budget, which leaves little margin, and needs the swap the
-installer adds. See [measured performance](status.md#measured-performance).
+Start with the default. To change it, open **Settings > Models > Big Model**
+on the comma while parked and online. Prefer the 766 MB models on Jetson;
+[larger models leave little timing margin](status.md#measured-performance).
 
 ### Downloading a model on the Jetson
 
-The Jetson can download a model itself instead of waiting for the comma to send
-it over the link, which is faster when the comma is on LTE. List the models and
-their refs, then fetch one by its ref:
-
-```bash
-jetlink models list
-jetlink models fetch <ref>
-```
-
-`jetlink models` runs the [model CLI](models.md#commands) inside the server
-image, with the same models folder. To prepare a model ahead of time, stop the
-server first (`jetlink stop`), run `jetlink models prepare <ref>`, then
-`jetlink start`: two processes preparing into one folder is not supported.
+You can use the Jetson's internet connection to download and prepare a model
+before connecting the comma. Follow [model management](models.md#on-a-jetson-or-an-installed-pc).
+This is optional; the comma normally sends the model automatically.
 
 ## Troubleshooting
 
@@ -143,7 +114,7 @@ server first (`jetlink stop`), run `jetlink models prepare <ref>`, then
 | Frame time exceeds 50 ms | Check USB 3 speed, the power mode (`sudo nvpmodel -q`), cooling, and model choice |
 | Jetson fails to wake | See [USB wake setup](transport.md#always-on-supply-and-suspend) |
 | Server refuses the comma after an update | Update both sides together, see [updates](releasing.md) |
-| “Speed Error: nan” or no path | Stop the test and collect logs |
+| "Speed Error: nan" or no path | Stop the test and collect logs |
 
 ### Reporting a problem
 
@@ -166,6 +137,24 @@ From a laptop with the matching private key, run the command below. Replace
 ```bash
 ssh comma@<comma-ip> 'tar czf - /data/log' > comma-log.tgz
 ```
+
+## What the installer changes
+
+The installer:
+
+- installs Docker and NVIDIA's container toolkit if they are missing
+- downloads the Jetlink server, or builds it on the Jetson when there is no
+  ready-made one for its JetPack (the same 10 to 30 minutes)
+- checks that the server can use the GPU
+- switches the Jetson to its fastest power mode, MAXN SUPER, which the large
+  models need to keep up (the power supply has to deliver it; switching can
+  need one restart, and the installer says so at the end)
+- adds 8 GB of swap, which the 1.7 GB models need while they are prepared
+- sets up the `jetlink-server` service to start at every boot, and the
+  `jetlink` command
+- stops the Jetson waiting for a network at boot (the car has none, and waiting
+  cost about two minutes), and keeps the system log under 200 MB
+- keeps models and prepared engines in `/mnt/data/jetlink`
 
 ## Installing by hand
 
