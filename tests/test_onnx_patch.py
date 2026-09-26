@@ -24,6 +24,7 @@ from jetlink.onnx_patch import (  # noqa: E402
   needs_patch,
   normalize_gather_indices,
   patch_uint8_inputs,
+  split_vision_policy,
   strip_tinygrad_ops,
   vision_nodes,
 )
@@ -375,6 +376,91 @@ class TestVisionNodes:
                           [helper.make_tensor_value_info('y', TensorProto.FLOAT16, [1])])
     with pytest.raises(ValueError, match='graph inputs'):
       vision_nodes(helper.make_model(g, opset_imports=[helper.make_opsetid('', 17)]))
+
+
+class TestSplitVisionPolicy:
+  """The cut `--device ane` runs as two sessions. The tiny models' nodes are
+  unnamed, as an exporter may leave them, so the cut cannot go by name."""
+
+  @staticmethod
+  def _io(model):
+    return [i.name for i in model.graph.input], [o.name for o in model.graph.output]
+
+  def test_the_trunk_hands_its_features_to_the_policy(self, tmp_path):
+    from tests import tiny_model
+    model = onnx.load(str(tiny_model.write(tmp_path / 'tiny.onnx', with_contiguous=False)))
+    vision, policy = split_vision_policy(model)
+    assert self._io(vision) == (['img', 'big_img'], ['img_mean'])
+    assert self._io(policy) == (['img_mean', 'desire_pulse', 'traffic_convention', 'action_t', 'features_buffer'],
+                                ['outputs'])
+    assert {n.op_type for n in vision.graph.node} == {'Cast', 'Concat', 'ReduceMean'}
+    assert 'MatMul' in {n.op_type for n in policy.graph.node}
+    # the hand-off needs a fixed shape to be a graph input
+    dims = [d.dim_value for d in policy.graph.input[0].type.tensor_type.shape.dim]
+    assert dims == [1, 24]
+    onnx.checker.check_model(vision)
+    onnx.checker.check_model(policy)
+
+  def test_a_stateful_graph_keeps_its_image_queue_in_the_trunk(self, tmp_path):
+    from tests import tiny_model
+    model = onnx.load(str(tiny_model.write_stateful(tmp_path / 'stateful.onnx')))
+    vision, policy = split_vision_policy(model)
+    assert self._io(vision) == (['new_img', 'state_img_q'], ['img_mean', 'next_state_img_q'])
+    assert self._io(policy)[1] == ['outputs', 'next_state_desire_q', 'next_state_feat_q']
+    assert 'state_img_q' not in self._io(policy)[0]
+
+  @staticmethod
+  def _heads(nodes):
+    """img and big_img [1, 12, 4, 4], a policy input x [1, 12], and `nodes`
+    between them and a [1, 36] out, opset 17."""
+    small = [1, 12, 4, 4]
+    g = helper.make_graph(nodes, 'g',
+                          [helper.make_tensor_value_info(n, TensorProto.FLOAT16, small) for n in ('img', 'big_img')]
+                          + [helper.make_tensor_value_info('x', TensorProto.FLOAT16, [1, 12])],
+                          [helper.make_tensor_value_info('out', TensorProto.FLOAT16, [1, 36])])
+    return helper.make_model(g, opset_imports=[helper.make_opsetid('', 17)])
+
+  def test_heads_after_the_trunk_go_with_the_policy(self):
+    """The Neural Engine gets only what runs before the trunk narrows to one
+    tensor; the image-only heads after it run where the policy does."""
+    model = self._heads([
+      helper.make_node('Concat', ['img', 'big_img'], ['cat'], axis=1),
+      helper.make_node('ReduceMean', ['cat'], ['trunk'], axes=[2, 3], keepdims=0),
+      helper.make_node('Relu', ['trunk'], ['head_a']),
+      helper.make_node('Sigmoid', ['trunk'], ['head_b']),
+      helper.make_node('Slice', ['head_b', 'zero', 'twelve', 'one'], ['head_b12']),
+      helper.make_node('Slice', ['head_a', 'zero', 'twelve', 'one'], ['head_a12']),
+      helper.make_node('Concat', ['head_a12', 'head_b12', 'x'], ['out'], axis=1),
+    ])
+    model.graph.initializer.extend([numpy_helper.from_array(np.array([v], np.int64), n)
+                                    for n, v in (('zero', 0), ('twelve', 12), ('one', 1))])
+    vision, policy = split_vision_policy(model)
+    assert self._io(vision) == (['img', 'big_img'], ['trunk'])
+    assert self._io(policy) == (['trunk', 'x'], ['out'])
+    assert {'Relu', 'Sigmoid'} <= {n.op_type for n in policy.graph.node}
+    assert {n.op_type for n in vision.graph.node} == {'Concat', 'ReduceMean'}
+
+  def test_without_one_trunk_tensor_the_whole_image_side_is_vision(self):
+    model = self._heads([
+      helper.make_node('ReduceMean', ['img'], ['road'], axes=[2, 3], keepdims=0),
+      helper.make_node('ReduceMean', ['big_img'], ['wide'], axes=[2, 3], keepdims=0),
+      helper.make_node('Concat', ['road', 'wide', 'x'], ['out'], axis=1),
+    ])
+    vision, policy = split_vision_policy(model)
+    assert self._io(vision) == (['img', 'big_img'], ['road', 'wide'])
+    assert self._io(policy) == (['road', 'wide', 'x'], ['out'])
+
+  def test_a_policy_that_reads_the_images_is_refused(self):
+    g = helper.make_graph([
+      helper.make_node('ReduceMean', ['img'], ['m'], axes=[2, 3], keepdims=0),
+      helper.make_node('Add', ['img', 'x'], ['mixed']),
+      helper.make_node('Identity', ['m'], ['out']),
+    ], 'g', [helper.make_tensor_value_info('img', TensorProto.FLOAT16, SHAPE),
+             helper.make_tensor_value_info('x', TensorProto.FLOAT16, SHAPE)],
+      [helper.make_tensor_value_info('out', TensorProto.FLOAT16, [1, 12]),
+       helper.make_tensor_value_info('mixed', TensorProto.FLOAT16, SHAPE)])
+    with pytest.raises(ValueError, match='reads the image inputs'):
+      split_vision_policy(helper.make_model(g, opset_imports=[helper.make_opsetid('', 17)]))
 
 
 class TestGemmWithTransposedWeight:

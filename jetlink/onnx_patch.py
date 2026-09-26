@@ -135,24 +135,109 @@ def normalize_gather_indices(model: onnx.ModelProto) -> int:
   return rewritten
 
 
-def vision_nodes(model: onnx.ModelProto) -> set[str]:
-  """Names of the nodes that depend on the image inputs alone: the vision
-  trunk and the heads that hang off it. Found by dataflow: a node is vision
-  when every tensor it reads is an image input, an initializer, or another
-  vision node's output. Nodes reading only initializers count as neither."""
+def _vision_mask(model: onnx.ModelProto) -> list[bool]:
+  """Per node, in graph order: whether it is vision (see `vision_nodes`).
+  By position, because an exporter need not name its nodes."""
   g = model.graph
   init = {t.name for t in g.initializer}
   image_inputs = {vi.name for vi in g.input if vi.name in IMG_INPUTS}
   if not image_inputs:
     raise ValueError(f"model has none of {IMG_INPUTS} as graph inputs")
   vision_tensors = set(image_inputs)
-  names: set[str] = set()
+  mask = []
   for node in g.node:
     data = [x for x in node.input if x and x not in init]
-    if data and all(x in vision_tensors for x in data):
-      names.add(node.name)
+    vision = bool(data) and all(x in vision_tensors for x in data)
+    if vision:
       vision_tensors.update(node.output)
-  return names
+    mask.append(vision)
+  return mask
+
+
+def vision_nodes(model: onnx.ModelProto) -> set[str]:
+  """Names of the nodes that depend on the image inputs alone: the vision
+  trunk and the heads that hang off it. Found by dataflow: a node is vision
+  when every tensor it reads is an image input, an initializer, or another
+  vision node's output. Nodes reading only initializers count as neither."""
+  return {n.name for n, vision in zip(model.graph.node, _vision_mask(model), strict=True) if vision}
+
+
+def _trunk_end(g, mask: list[bool], images: list[str], handed: list[str]) -> str | None:
+  """The latest vision tensor every one of `handed` is computed from and
+  nothing else of the images: where the trunk narrows to one tensor before
+  it fans out into heads. Never a graph output, which the worker has to
+  return rather than pass on. None if there is no such tensor."""
+  init = {t.name for t in g.initializer}
+  outputs = {o.name for o in g.output}
+  producer = {o: n for n, vision in zip(g.node, mask, strict=True) if vision for o in n.output}
+  order = {o: k for k, n in enumerate(g.node) for o in n.output}
+
+  def reaches_images_without(cut: str) -> bool:
+    seen, todo = set(), [h for h in handed if h != cut]
+    while todo:
+      t = todo.pop()
+      if t in seen or t in init or t == cut:
+        continue
+      seen.add(t)
+      if t in images:
+        return True
+      todo += [i for i in producer[t].input if i] if t in producer else []
+    return False
+
+  ancestors, todo = set(), list(handed)
+  while todo:
+    t = todo.pop()
+    if t in ancestors or t not in producer:
+      continue
+    ancestors.add(t)
+    todo += [i for i in producer[t].input if i and i not in init]
+  for t in sorted(ancestors - outputs, key=order.__getitem__, reverse=True):
+    if not reaches_images_without(t):
+      return t
+  return None
+
+
+def split_vision_policy(model: onnx.ModelProto) -> tuple[onnx.ModelProto, onnx.ModelProto]:
+  """The graph cut where the image-only trunk ends, as (vision, policy).
+
+  vision takes the image inputs and returns the trunk's output, plus any
+  graph output made from the images alone (a stateful graph's
+  next_state_img_q). policy takes that and the other graph inputs and returns
+  the remaining graph outputs. Run as a chain, feeding by name
+  (backends/ort/worker.py), the two compute what the whole graph does.
+
+  The cut is where the trunk narrows to one tensor before fanning out into
+  heads: on the driving models the last conv's output, 32 KB a frame, so the
+  hand-off costs nothing. Everything after it goes with the policy, including
+  the image-only heads `vision_nodes` counts as vision: they are a residual
+  MLP whose LayerNormalizations lose too much in the Neural Engine's fp16
+  (Cinque Terre V3's road_transform at corr 0.9988 over 32 frames with them
+  on it, under the parity gate's 0.999). A graph without such a tensor is cut
+  at `vision_nodes`' whole boundary instead.
+  """
+  from onnx.shape_inference import infer_shapes
+  from onnx.utils import Extractor
+
+  g = model.graph
+  mask = _vision_mask(model)
+  made = {o for n, vision in zip(g.node, mask, strict=True) if vision for o in n.output}
+  policy_nodes = [n for n, vision in zip(g.node, mask, strict=True) if not vision]
+  images = [i.name for i in g.input if i.name in IMG_INPUTS]
+  others = [i.name for i in g.input if i.name not in IMG_INPUTS]
+  if any(i in images for n in policy_nodes for i in n.input):
+    raise ValueError("a policy node reads the image inputs directly; the graph has no clean vision trunk")
+  handed = sorted({i for n in policy_nodes for i in n.input if i in made})
+  if not handed:
+    raise ValueError("nothing crosses from the vision trunk to the policy")
+  cut = _trunk_end(g, mask, images, handed)
+  ends = [cut] if cut is not None else handed
+  outputs = [o.name for o in g.output]
+  # The hand-off tensors become graph inputs and outputs, which need a type
+  # and a fixed shape; the exporter records none for intermediates.
+  extractor = Extractor(infer_shapes(model))
+  vision_model = extractor.extract_model(images, ends + [o for o in outputs if o in made])
+  policy_model = extractor.extract_model(ends + others, [o for o in outputs if o not in made])
+  return vision_model, policy_model
 
 
 def layernorm_in_fp32(model: onnx.ModelProto, only: set[str] | None = None) -> int:
