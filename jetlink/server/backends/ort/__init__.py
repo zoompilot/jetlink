@@ -8,31 +8,36 @@ onnxruntime: CoreML on a Mac, CUDA or plain CPU anywhere else.
 
 On Apple silicon the model runs in one CoreML session on the GPU
 (`--device coreml`, the default there): 43 ms round trip at 20 Hz on an
-M1 Pro, p99 44, parity gate passed. `--device ane` allows every unit and
-splits the model: the vision trunk on the Neural Engine, the policy on the
-GPU. The rewrites that make that correct and whole (jetlink.onnx_patch):
-a Gather with a negative index gathers garbage on the Neural Engine, so
-`normalize_gather_indices` writes every such index from the front; its fp16
-LayerNormalization overflows on the policy's residual stream, so
-`layernorm_in_fp32` runs the policy's LayerNormalizations in fp32, which is
-what puts the policy on the GPU; and `expand_to_tile` rewrites two Expands
-CoreML will not take, which otherwise split the model into two CoreML
-programs with a CPU step between them. The session asks for Apple's
-FastPrediction specialization.
+M1 Pro, p99 44, parity gate passed.
 
-At 20 Hz, a frame every 50 ms with the units idle in between, every CoreML
-unit pays a cost on the first request after the gap; that is what made this
-device miss the budget at 20 Hz (44.0 ms, p99 55.9, 11.5% of frames over
-50 ms on an M1 Pro) though it was faster back to back. Two helpers in the worker pay it down: the Metal
-keep-alive (metal.py) for the GPU's half, and one CPU core kept busy
-(cpuwarm.py). Both run only while frames arrive. On an M1 Pro through
-`scripts/bench_link.py --rate 20` it measured 27.7 ms mean and 29.6 p99, no
-frame of 1,190 over 50 ms, parity gate passed; `coreml` measured 46.9 and
-49.5 in the same session (docs/backends.md, 2026-09-25). It is not
-the default: `coreml` is what other Macs were measured on, so compare the
-two with bench_link.py --rate 20 before choosing (docs/platforms.md).
-Every session costs minutes of compile that onnxruntime's cache directory
-did not shorten.
+`--device ane` cuts the graph where the vision trunk ends
+(`onnx_patch.split_vision_policy`) and runs it as a chain of two sessions:
+the conv trunk on the Neural Engine, everything after it (the heads, the
+policy, a stateful graph's feature and desire queues) on the GPU. Measured
+2026-09-25 on an M1 Pro through the server at 20 Hz, interleaved with the
+GPU path: Cinque Terre V3 36.2 to 37.0 ms mean, p99 40 to 41, against 43.2
+to 43.4 and p99 44; V1 35.3 to 35.7, p99 39 to 39.5, against 41.8 to 42.0
+and p99 43. The parity gate passes over 32 frames (worst column 0.99957, the
+GPU path's figure), the link returns the engine's output bit for bit, the
+build takes 16 s and a later load 0.6 s. The hand-off is 32 KB.
+
+Why this shape. The Neural Engine runs the trunk in about 20 ms where the
+GPU takes 31, but it cannot run V3's stateful policy (83 ms there), and one
+session with every unit allowed ran V1 in 45 ms with 55 frames in 300 over
+budget and V3 in 107 ms. Its fp16 LayerNormalization is not precise enough
+for the residual MLP after the trunk (road_transform at 0.9988 over 32
+frames with it there), which is why the cut is at the trunk's output and not
+at the end of everything image-only. The Metal keep-alive (metal.py) runs
+for the GPU half: without it the split measured 46.4 ms, p99 53. And a
+negative Gather index gathers garbage on the Neural Engine, so
+`normalize_gather_indices` writes every index from the front.
+
+It is the opt-in and not the default because the Neural Engine is shared:
+with another process running a model on it back to back (Photos'
+mediaanalysisd can, on an idle Mac), the split measured 52.5 ms mean, p99
+65, 28 % of frames over budget, while the GPU path stayed at 43.5 and 45. A
+Mac with its CPU saturated misses the budget either way (49 to 51 ms both,
+p99 60 to 65).
 
 Elsewhere it is one session with the plain graph. The ONNX gets the same
 surgery TensorRT's build does: the `org.tinygrad` layout op stripped,
@@ -82,14 +87,20 @@ PROVIDERS = {
   'cpu': 'CPUExecutionProvider',
 }
 
-# CoreML compute units per device name. `ane` is correct only with the
-# rewrites in the module docstring, which the build applies for it.
+# CoreML compute units per device name, for a one-session build. `ane` is
+# built as ANE_SPLIT instead; see the module docstring.
 COREML_UNITS = {'coreml': 'CPUAndGPU', 'ane': 'ALL'}
+
+# `--device ane`: the vision trunk on the Neural Engine, the policy on the GPU,
+# in that order, as (session name, compute units). The name is the model file's
+# stem and so the part of its COREML_CACHE_KEY.
+ANE_SPLIT = (('vision', 'CPUAndNeuralEngine'), ('policy', 'CPUAndGPU'))
 
 # What a device's preparation is at, recorded in the sidecar. A load of an
 # artifact prepared under another version is refused as invalid, and the host
-# rebuilds it from the ONNX. `ane` 2: Expand rewritten as Tile.
-PREPARE_VERSIONS = {'ane': 2}
+# rebuilds it from the ONNX. `ane` 2: one session, Expand rewritten as Tile
+# (#8); 3: the vision/policy split.
+PREPARE_VERSIONS = {'ane': 3}
 
 # The last resort for the compile stage's fraction: only a first build of a
 # model, whose sidecar records nothing yet, and only if the compile writes
@@ -184,31 +195,17 @@ def _cache_key(out_path: Path, part: str) -> str:
   return re.sub(r'[^A-Za-z0-9]', '', out_path.stem + part)[:63]
 
 
-def keeps_history(onnx_path: Path) -> bool:
-  """Whether the graph carries its own history queues (openpilot #38916),
-  read from its inputs without loading the weights."""
-  from jetlink.onnx_meta import parse_file
-  from jetlink.spec import STATEFUL_FRAME
-  try:
-    return STATEFUL_FRAME in parse_file(str(onnx_path)).inputs
-  except Exception as e:
-    log.warning("could not read %s's inputs: %s", Path(onnx_path).name, e)
-    return False
-
-
-def _prepared_model(onnx_path: Path, for_ane: bool, for_coreml: bool = False):
+def _prepared_model(onnx_path: Path, for_coreml: bool = False, tile: bool = False):
   """The ONNX as onnxruntime will see it, in memory."""
   import onnx
 
   from jetlink.onnx_patch import (
     expand_to_tile,
     gemm_with_transposed_weight,
-    layernorm_in_fp32,
     needs_patch,
     normalize_gather_indices,
     patch_uint8_inputs,
     strip_tinygrad_ops,
-    vision_nodes,
   )
   model = onnx.load(str(onnx_path))
   stripped = strip_tinygrad_ops(model)
@@ -216,21 +213,17 @@ def _prepared_model(onnx_path: Path, for_ane: bool, for_coreml: bool = False):
   if patched:
     patch_uint8_inputs(model)
   gathers = normalize_gather_indices(model)
-  norms = 0
-  if for_ane:
-    policy = {n.name for n in model.graph.node} - vision_nodes(model)
-    norms = layernorm_in_fp32(model, only=policy)
   # Only for CoreML: it is what puts the weights in the weight file instead of
   # the MIL text. The CUDA and CPU providers are happy with the transB=0 Gemm
   # onnxruntime's own fusion makes, and gain nothing from the rewrite.
   gemms = gemm_with_transposed_weight(model) if for_coreml else 0
-  # Two Expands CoreML will not take would otherwise split the Neural Engine
-  # build into two CoreML programs with a CPU step between them.
-  tiles = expand_to_tile(model) if for_ane else 0
+  # Two Expands in the policy CoreML will not take would otherwise split it
+  # into two CoreML programs with a CPU step between them (#8).
+  tiles = expand_to_tile(model) if tile else 0
   log.info("prepared %s: stripped %d tinygrad op(s), %s, %d negative Gather index(es) normalized, "
-           "%d LayerNormalization(s) in fp32, %d MatMul+Add rewritten as Gemm(transB=1), %d Expand(s) as Tile",
+           "%d MatMul+Add rewritten as Gemm(transB=1), %d Expand(s) as Tile",
            onnx_path.name, stripped,
-           'images retyped to fp16' if patched else 'inputs left as declared', gathers, norms, gemms, tiles)
+           'images retyped to fp16' if patched else 'inputs left as declared', gathers, gemms, tiles)
   return model
 
 
@@ -489,7 +482,8 @@ class OrtBackend:
   def _providers(self, units: str | None, compiled_dir: Path | None) -> list:
     if self._on_coreml:
       opts = {'ModelFormat': 'MLProgram', 'MLComputeUnits': units or COREML_UNITS[self.device]}
-      if self.device == 'ane':
+      fast = os.environ.get('JETLINK_TEST_FASTPRED', '')
+      if (self.device == 'ane' and fast != '0') or fast == 'all':
         # Apple's hint for a model that is predicted many times
         opts['SpecializationStrategy'] = 'FastPrediction'
       if compiled_dir is not None:
@@ -515,35 +509,48 @@ class OrtBackend:
   # -- build ------------------------------------------------------------------
 
   def _stage(self, onnx_path: Path, staged: Path, out_path: Path) -> list[dict]:
-    """Write the prepared model into `staged` and return the manifest.
-
-    The manifest is a list because the worker runs sessions as a chain and
-    a split graph was measured through it; one session is what ships.
-    """
+    """Write the prepared model into `staged` and return the manifest: one
+    session, or on `ane` the vision and policy sessions the worker chains."""
     import onnx
 
     coreml = self._on_coreml
-    for_ane = self.device == 'ane'
-    units = COREML_UNITS[self.device] if coreml else None
-    if for_ane and keeps_history(onnx_path):
-      # Measured 2026-09-25 on an M1 Pro with Cinque Terre V3: Apple's Neural
-      # Engine compiler rejects the program (ANECCompile() FAILED) and CoreML
-      # runs the frame in 107 ms, against 43 ms on the GPU. The same Mac
-      # compiles Cinque Terre V1 for it and runs 42 ms, so it is the graph's
-      # own history queues. The GPU keeps the model inside the budget.
-      log.warning("the Neural Engine cannot compile a model that keeps its own history; "
-                  "preparing it for the GPU instead")
-      for_ane, units = False, COREML_UNITS['coreml']
-    model = _prepared_model(onnx_path, for_ane=for_ane, for_coreml=coreml)
+    if self.device == 'ane':
+      return self._stage_split(onnx_path, staged, out_path)
+    model = _prepared_model(onnx_path, for_coreml=coreml,
+                            tile=coreml and os.environ.get('JETLINK_TEST_COREML_TILE') == '1')
     # What the convert stage is working towards: onnxruntime writes the
     # initializers out as the MLProgram's weight file, so their size is the
     # total the bytes on disk can honestly be reported against.
     self._weights_bytes = sum(len(t.raw_data) for t in model.graph.initializer)
     onnx.save(_with_cache_key(model, _cache_key(out_path, 'model')), str(staged / 'model.onnx'))
-    manifest = [{'model': 'model.onnx', 'units': units, 'cache': 'coreml' if coreml else None}]
+    manifest = [{'model': 'model.onnx', 'units': COREML_UNITS[self.device] if coreml else None,
+                 'cache': 'coreml' if coreml else None}]
     for entry in manifest:
       if entry['cache']:
         (staged / entry['cache']).mkdir()
+    (staged / MANIFEST).write_text(json.dumps(manifest, indent=2))
+    return manifest
+
+  def _stage_split(self, onnx_path: Path, staged: Path, out_path: Path) -> list[dict]:
+    """`--device ane`: the trunk on the Neural Engine, the policy on the GPU.
+
+    No LayerNormalization goes to fp32: the Neural Engine's fp16 one
+    overflowed on the policy's residual stream (2026-09-08), and the policy
+    no longer runs there. The trunk's were precise enough on it.
+    """
+    import onnx
+
+    from jetlink.onnx_patch import split_vision_policy
+    model = _prepared_model(onnx_path, for_coreml=True, tile=True)
+    parts = split_vision_policy(model)
+    del model
+    self._weights_bytes = sum(len(t.raw_data) for part in parts for t in part.graph.initializer)
+    manifest = []
+    for (name, units), part in zip(ANE_SPLIT, parts, strict=True):
+      onnx.save(_with_cache_key(part, _cache_key(out_path, name)), str(staged / f'{name}.onnx'))
+      manifest.append({'model': f'{name}.onnx', 'units': units, 'cache': f'coreml-{name}'})
+    for entry in manifest:
+      (staged / entry['cache']).mkdir()
     (staged / MANIFEST).write_text(json.dumps(manifest, indent=2))
     return manifest
 

@@ -222,15 +222,17 @@ class MetalKeepAlive:
 def create_keepalive(sessions: list[tuple[str, list]]) -> MetalKeepAlive | None:
   if sys.platform != 'darwin' or os.environ.get('JETLINK_METAL_KEEPALIVE', '1') == '0':
     return None
-  # The GPU path (CPUAndGPU), and the `ane` device (ALL), whose policy runs
-  # on the GPU. On an M1 Pro at 20 Hz the `ane` session measured 44.3 ms mean
-  # and 55.4 p99 without it, 33.8 and 41.6 with it, and 27.3 and 28.7 with it
-  # and the CPU keep-warm (cpuwarm.py); 1,200 frames each, 2026-09-25. A
-  # session on the CPU or the Neural Engine alone has no GPU work to keep warm.
+  # Whenever a session runs on the GPU: CPUAndGPU, the ANE split's policy
+  # half, and a session with every unit allowed (#8, whose policy CoreML puts
+  # on the GPU). On an M1 Pro at 20 Hz (2026-09-25) Cinque Terre V3 split
+  # between the Neural Engine and the GPU ran 35.6 to 35.9 ms mean, p99 40 to
+  # 40.5 with it, and 46.3 to 46.5, p99 53.5, 13 % over budget, without; #8's
+  # one session measured 44.3 ms mean and 55.4 p99 without it, 33.8 and 41.6
+  # with it. A session on the CPU or the Neural Engine alone has no GPU work.
   units = [p[1].get('MLComputeUnits') if isinstance(p, tuple) else None
            for _, providers in sessions for p in providers
            if (p[0] if isinstance(p, tuple) else p) == 'CoreMLExecutionProvider']
-  if not units or any(unit not in ('CPUAndGPU', 'ALL') for unit in units):
+  if not any(unit in ('CPUAndGPU', 'ALL') for unit in units):
     return None
   try:
     return MetalKeepAlive()

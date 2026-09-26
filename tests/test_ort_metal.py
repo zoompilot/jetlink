@@ -154,6 +154,6 @@ def test_ane_trunk_with_gpu_policy_enables_keepalive(monkeypatch):
   sentinel = object()
   monkeypatch.setattr(metal, 'MetalKeepAlive', lambda: sentinel)
   assert metal.create_keepalive([
-    ('trunk.onnx', [('CoreMLExecutionProvider', {'MLComputeUnits': 'ALL'})]),
+    ('vision.onnx', [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndNeuralEngine'})]),
     ('policy.onnx', [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndGPU'})]),
   ]) is sentinel

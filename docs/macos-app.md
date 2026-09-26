@@ -140,7 +140,7 @@ measurements](backends.md#mac-measured).
 | --- | --- | --- | --- |
 | Automatic (recommended) | 43 ms | About 10 seconds to prepare, about 2 seconds each later load | Use this by default. |
 | CoreML on the GPU | 43 ms, no frame over budget in 390 | About 10 seconds to prepare, about 2 seconds each later load | Select CoreML explicitly. |
-| CoreML with the Neural Engine | 28 ms at 20 Hz, no frame over budget in 1,190 | About 16 seconds to prepare | The fastest on an M1 Pro; compare it with CoreML on the GPU on your Mac. |
+| CoreML with the Neural Engine | 36 ms, no frame over budget in 1,740 | About 16 seconds to prepare, under a second each later load | Use it for the lower frame time when nothing else on the Mac uses the Neural Engine. |
 | tinygrad on Metal | 66 ms, over the 50 ms budget every frame | About 15 seconds to prepare, about a second to load | Test tinygrad; it exceeds the driving frame budget on this Mac. |
 
 Disk use depends on the backend: a CoreML engine is about 2.3 GB, a tinygrad

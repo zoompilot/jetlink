@@ -16,10 +16,11 @@ over a pipe with the model's inputs and outputs in shared memory: the queues
 gather straight into the shared block, the child runs, and the reply is a
 few bytes. Tens of microseconds a frame on top of the model.
 
-A frame may be a chain of sessions: on Apple silicon the vision trunk runs
-with the Neural Engine allowed and the policy on the GPU (see the backend),
-and the trunk's outputs feed the policy by name. One session is a chain of
-one.
+A frame may be a chain of sessions: `--device ane` runs the vision trunk on
+the Neural Engine and the policy on the GPU (see the backend), and the
+trunk's outputs feed the policy by name. The frame's outputs are whatever no
+later session reads, from any session: a stateful graph's image queue comes
+out of the trunk. One session is a chain of one.
 
 Spawned, never forked: a fork would carry the parent's GPU state into a
 process that must not touch it. A spawn re-imports the parent's __main__, so
@@ -97,7 +98,7 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
       return out
 
     # What the parent stages: every session's inputs that no earlier session
-    # produces. What it reads: the last session's outputs.
+    # produces. What it reads: every session's outputs that no later one does.
     produced: set[str] = set()
     inputs: list = []
     for s in chain:
@@ -105,7 +106,10 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
         if entry[0] not in produced and all(entry[0] != e[0] for e in inputs):
           inputs.append(entry)
       produced.update(o.name for o in s.get_outputs())
-    outputs = describe(chain[-1].get_outputs())
+    outputs: list = []
+    for k, s in enumerate(chain):
+      read_later = {i.name for later in chain[k + 1:] for i in later.get_inputs()}
+      outputs += [e for e in describe(s.get_outputs()) if e[0] not in read_later]
     conn.send(('io', inputs, outputs))
 
     msg = conn.recv()
@@ -134,13 +138,11 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
           cpuwarm.pulse()
         t0 = time.perf_counter()
         between: dict[str, np.ndarray] = {}
-        results = None
         for s, (in_names, out_names) in zip(chain, plan, strict=True):
           feed = {n: between[n] if n in between else feeds[n] for n in in_names}
-          results = s.run(out_names, feed)
-          between.update(zip(out_names, results, strict=True))
-        for name, value in zip(plan[-1][1], results, strict=True):
-          np.copyto(sinks[name], np.asarray(value).reshape(sinks[name].shape), casting='unsafe')
+          between.update(zip(out_names, s.run(out_names, feed), strict=True))
+        for name, sink in sinks.items():
+          np.copyto(sink, np.asarray(between[name]).reshape(sink.shape), casting='unsafe')
         conn.send(('ok', int((time.perf_counter() - t0) * 1e6)))
       except Exception as e:
         if keepalive is not None:

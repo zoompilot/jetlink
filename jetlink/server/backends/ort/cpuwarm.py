@@ -81,12 +81,15 @@ class CpuKeepWarm:
 def create_cpu_keepwarm(sessions: list[tuple[str, list]]) -> CpuKeepWarm | None:
   """A keep-warm for a CoreML session with every compute unit allowed (the
   `ane` device), on a Mac; None otherwise, or with JETLINK_CPU_KEEPWARM=0."""
-  if sys.platform != 'darwin' or os.environ.get('JETLINK_CPU_KEEPWARM', '1') == '0':
+  mode = os.environ.get('JETLINK_CPU_KEEPWARM', '1')
+  if sys.platform != 'darwin' or mode == '0':
     return None
   units = [p[1].get('MLComputeUnits') if isinstance(p, tuple) else None
            for _, providers in sessions for p in providers
            if (p[0] if isinstance(p, tuple) else p) == 'CoreMLExecutionProvider']
-  if not units or any(unit != 'ALL' for unit in units):
+  if not units:
+    return None
+  if mode != 'always' and not any(unit in ('ALL', 'CPUAndNeuralEngine') for unit in units):
     return None
   try:
     return CpuKeepWarm()
