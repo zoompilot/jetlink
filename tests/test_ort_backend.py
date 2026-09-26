@@ -219,6 +219,30 @@ def test_a_coreml_artifact_from_before_the_weight_rewrite_is_artifact_invalid(tm
     coreml.load(d)
 
 
+def test_an_ane_artifact_prepared_before_the_tile_rewrite_is_artifact_invalid(tmp_path):
+  """The preparation changed under it; the host rebuilds an invalid artifact
+  from the ONNX rather than serving the old graph."""
+  ane = OrtBackend('ane', providers=['CoreMLExecutionProvider', 'CPUExecutionProvider'])
+  d = tmp_path / 'old.ortcache'
+  d.mkdir()
+  (d / MANIFEST).write_text(json.dumps([{'model': 'model.onnx', 'units': 'ALL', 'cache': 'coreml'}]))
+  sidecar = {'backend': 'ort', 'compile_bytes': 1}
+  d.with_suffix('.json').write_text(json.dumps(sidecar))
+  with pytest.raises(ArtifactInvalid, match='prepared as version 1'):
+    ane.load(d)
+  # at the current version it gets past that, to the next thing it lacks
+  d.with_suffix('.json').write_text(json.dumps({**sidecar, 'prepare': 2}))
+  with pytest.raises(ArtifactInvalid, match='model.onnx'):
+    ane.load(d)
+
+
+def test_the_ane_session_asks_for_fast_prediction():
+  ane = OrtBackend('ane', providers=['CoreMLExecutionProvider', 'CPUExecutionProvider'])
+  coreml = OrtBackend('coreml', providers=['CoreMLExecutionProvider', 'CPUExecutionProvider'])
+  assert ane._providers(None, None)[0][1]['SpecializationStrategy'] == 'FastPrediction'
+  assert 'SpecializationStrategy' not in coreml._providers(None, None)[0][1]
+
+
 def test_an_empty_coreml_cache_is_artifact_invalid(backend, built):
   """Otherwise onnxruntime recompiles for minutes under 'loading engine'."""
   out = built[0]

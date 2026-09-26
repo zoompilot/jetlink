@@ -162,7 +162,7 @@ struct ServerSettingsView: View {
     case .coreml:
       "About 43 ms a frame on an M1 Pro. Preparing takes about 10 seconds the first time and a couple of seconds for each later load."
     case .ane:
-      "Faster back to back, slower at the comma's 20 Hz on an M1 Pro. Measure before using it in the car."
+      "Vision on the Neural Engine, the policy on the GPU, both kept ready between frames: about 28 ms a frame at the comma's 20 Hz on an M1 Pro, the fastest there. Preparing takes about 16 seconds the first time. Compare it with CoreML on the GPU on your Mac."
     case .tinygrad:
       "Loads in a second. About 66 ms a frame on an M1 Pro, over the 50 ms budget; a newer Mac may be under it."
     }

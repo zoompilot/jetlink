@@ -8,20 +8,29 @@ onnxruntime: CoreML on a Mac, CUDA or plain CPU anywhere else.
 
 On Apple silicon the model runs in one CoreML session on the GPU
 (`--device coreml`, the default there): 43 ms round trip at 20 Hz on an
-M1 Pro, p99 44, parity gate passed. `--device ane` allows every unit, the
-Neural Engine included, and carries the two rewrites that make the Neural
-Engine correct (jetlink.onnx_patch, measured 2026-09-08): a Gather with a
-negative index gathers garbage there, so `normalize_gather_indices` writes
-every such index from the front; and its fp16 LayerNormalization overflows
-on this model's residual stream, so `layernorm_in_fp32` runs the policy's
-LayerNormalizations in fp32, which CoreML places off the Neural Engine. With
-both, the gate passes with the GPU path's precision and the round trip is
-33 ms back to back. It is not the default because at 20 Hz, a frame every
-50 ms with the units idle in between, the same session measured 45 ms with
-a p99 of 59 on the M1 Pro against the GPU's 43 and 44: every CoreML unit
-pays a cost on the first request after an idle gap, and the Neural Engine
-pays more of it. A faster Mac may not; measure it with
-scripts/bench_link.py --rate 20 before choosing (docs/platforms.md).
+M1 Pro, p99 44, parity gate passed. `--device ane` allows every unit and
+splits the model: the vision trunk on the Neural Engine, the policy on the
+GPU. The rewrites that make that correct and whole (jetlink.onnx_patch):
+a Gather with a negative index gathers garbage on the Neural Engine, so
+`normalize_gather_indices` writes every such index from the front; its fp16
+LayerNormalization overflows on the policy's residual stream, so
+`layernorm_in_fp32` runs the policy's LayerNormalizations in fp32, which is
+what puts the policy on the GPU; and `expand_to_tile` rewrites two Expands
+CoreML will not take, which otherwise split the model into two CoreML
+programs with a CPU step between them. The session asks for Apple's
+FastPrediction specialization.
+
+At 20 Hz, a frame every 50 ms with the units idle in between, every CoreML
+unit pays a cost on the first request after the gap; that is what made this
+device miss the budget at 20 Hz (44.0 ms, p99 55.9, 11.5% of frames over
+50 ms on an M1 Pro) though it was faster back to back. Two helpers in the worker pay it down: the Metal
+keep-alive (metal.py) for the GPU's half, and one CPU core kept busy
+(cpuwarm.py). Both run only while frames arrive. On an M1 Pro through
+`scripts/bench_link.py --rate 20` it measured 27.7 ms mean and 29.6 p99, no
+frame of 1,190 over 50 ms, parity gate passed; `coreml` measured 46.9 and
+49.5 in the same session (docs/backends.md, 2026-09-25). It is not
+the default: `coreml` is what other Macs were measured on, so compare the
+two with bench_link.py --rate 20 before choosing (docs/platforms.md).
 Every session costs minutes of compile that onnxruntime's cache directory
 did not shorten.
 
@@ -73,9 +82,14 @@ PROVIDERS = {
   'cpu': 'CPUExecutionProvider',
 }
 
-# CoreML compute units per device name. `ane` is correct only with the two
+# CoreML compute units per device name. `ane` is correct only with the
 # rewrites in the module docstring, which the build applies for it.
 COREML_UNITS = {'coreml': 'CPUAndGPU', 'ane': 'ALL'}
+
+# What a device's preparation is at, recorded in the sidecar. A load of an
+# artifact prepared under another version is refused as invalid, and the host
+# rebuilds it from the ONNX. `ane` 2: Expand rewritten as Tile.
+PREPARE_VERSIONS = {'ane': 2}
 
 # The last resort for the compile stage's fraction: only a first build of a
 # model, whose sidecar records nothing yet, and only if the compile writes
@@ -187,6 +201,7 @@ def _prepared_model(onnx_path: Path, for_ane: bool, for_coreml: bool = False):
   import onnx
 
   from jetlink.onnx_patch import (
+    expand_to_tile,
     gemm_with_transposed_weight,
     layernorm_in_fp32,
     needs_patch,
@@ -209,10 +224,13 @@ def _prepared_model(onnx_path: Path, for_ane: bool, for_coreml: bool = False):
   # the MIL text. The CUDA and CPU providers are happy with the transB=0 Gemm
   # onnxruntime's own fusion makes, and gain nothing from the rewrite.
   gemms = gemm_with_transposed_weight(model) if for_coreml else 0
+  # Two Expands CoreML will not take would otherwise split the Neural Engine
+  # build into two CoreML programs with a CPU step between them.
+  tiles = expand_to_tile(model) if for_ane else 0
   log.info("prepared %s: stripped %d tinygrad op(s), %s, %d negative Gather index(es) normalized, "
-           "%d LayerNormalization(s) in fp32, %d MatMul+Add rewritten as Gemm(transB=1)",
+           "%d LayerNormalization(s) in fp32, %d MatMul+Add rewritten as Gemm(transB=1), %d Expand(s) as Tile",
            onnx_path.name, stripped,
-           'images retyped to fp16' if patched else 'inputs left as declared', gathers, norms, gemms)
+           'images retyped to fp16' if patched else 'inputs left as declared', gathers, norms, gemms, tiles)
   return model
 
 
@@ -471,6 +489,9 @@ class OrtBackend:
   def _providers(self, units: str | None, compiled_dir: Path | None) -> list:
     if self._on_coreml:
       opts = {'ModelFormat': 'MLProgram', 'MLComputeUnits': units or COREML_UNITS[self.device]}
+      if self.device == 'ane':
+        # Apple's hint for a model that is predicted many times
+        opts['SpecializationStrategy'] = 'FastPrediction'
       if compiled_dir is not None:
         opts['ModelCacheDirectory'] = str(compiled_dir)
       return [(PROVIDERS['coreml'], opts), PROVIDERS['cpu']]
@@ -594,6 +615,7 @@ class OrtBackend:
       'providers': providers,
       'build_seconds': round(time.time() - t0, 1),
       'onnx': onnx_path.name,
+      'prepare': PREPARE_VERSIONS.get(self.device, 1),
       'built_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
       **stages,
       **(meta_extra or {}),
@@ -619,6 +641,10 @@ class OrtBackend:
       # on an M1 Pro against 1.8 s for the same model built since. The host
       # replaces an invalid artifact from the ONNX, and that build is 5 s.
       raise ArtifactInvalid(f"{artifact}: built before the weight rewrite; loads took minutes, a rebuild takes seconds")
+    want = PREPARE_VERSIONS.get(self.device, 1)
+    if sidecar.get('prepare', 1) != want:
+      raise ArtifactInvalid(f"{artifact}: prepared as version {sidecar.get('prepare', 1)} for {self.device}, "
+                            f"which is now at {want}; rebuilding")
     for entry in manifest:
       if not (artifact / entry['model']).is_file():
         raise ArtifactInvalid(f"{artifact}: no {entry['model']} inside")

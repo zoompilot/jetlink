@@ -116,12 +116,13 @@ def test_gpu_error_stops_optional_work_and_releases_resources(work, monkeypatch,
   ('darwin', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndGPU'})], True),
   ('darwin', True, [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndGPU'})], False),
   ('linux', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndGPU'})], False),
-  ('darwin', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'ALL'})], False),
+  # the `ane` device: its policy runs on the GPU, and paced it needs the GPU awake
+  ('darwin', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'ALL'})], True),
   ('darwin', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndNeuralEngine'})], False),
   ('darwin', False, ['CPUExecutionProvider'], False),
   ('darwin', False, ['CoreMLExecutionProvider'], False),
 ])
-def test_only_coreml_gpu_sessions_enable_keepalive(monkeypatch, platform, disabled, providers, enabled):
+def test_only_sessions_with_gpu_work_enable_keepalive(monkeypatch, platform, disabled, providers, enabled):
   monkeypatch.setattr(metal.sys, 'platform', platform)
   monkeypatch.delenv('JETLINK_METAL_KEEPALIVE', raising=False)
   if disabled:
@@ -145,15 +146,14 @@ def test_initialization_failure_is_optional(monkeypatch, caplog):
   assert not any(t.name == 'jetlink-metal-keepalive' for t in threading.enumerate())
 
 
-def test_ane_trunk_with_gpu_policy_does_not_enable_keepalive(monkeypatch):
+def test_ane_trunk_with_gpu_policy_enables_keepalive(monkeypatch):
+  # On an M1 Pro at 20 Hz the split measured 44.3 ms mean without the
+  # keep-alive and 33.8 with it (27.3 with the CPU keep-warm too), 2026-09-25.
   monkeypatch.setattr(metal.sys, 'platform', 'darwin')
   monkeypatch.delenv('JETLINK_METAL_KEEPALIVE', raising=False)
-
-  def unexpected():
-    pytest.fail('the mixed ANE/GPU chain must not start a keep-alive')
-
-  monkeypatch.setattr(metal, 'MetalKeepAlive', unexpected)
+  sentinel = object()
+  monkeypatch.setattr(metal, 'MetalKeepAlive', lambda: sentinel)
   assert metal.create_keepalive([
     ('trunk.onnx', [('CoreMLExecutionProvider', {'MLComputeUnits': 'ALL'})]),
     ('policy.onnx', [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndGPU'})]),
-  ]) is None
+  ]) is sentinel

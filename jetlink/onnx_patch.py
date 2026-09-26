@@ -215,6 +215,48 @@ def layernorm_in_fp32(model: onnx.ModelProto, only: set[str] | None = None) -> i
   return done
 
 
+def expand_to_tile(model: onnx.ModelProto) -> int:
+  """Rewrite an Expand with a constant shape of the input's rank, which only
+  repeats size-1 axes, as the equivalent Tile. In place; returns how many.
+
+  onnxruntime's CoreML provider does not take Expand, and the policy has two
+  (a [1, 9, 1, 512] input expanded to [1, 9, 32, 512]). Each one it refuses
+  splits the graph: on an M1 Pro with `--device ane` the model ran as two
+  CoreML programs with the Expands on the CPU between them. As Tiles, which it
+  does take, the model is one program again, and a 20 Hz paced frame went
+  from 29.5 ms mean and 31.1 p99 to 27.3 and 28.7 (1,200 frames, 2026-09-25).
+  An Expand that broadcasts a lower-rank input, or whose shape is not a
+  constant, is left alone."""
+  g = model.graph
+  init = {t.name: t for t in g.initializer}
+  dims, _ = _static_info(model, {n.input[0] for n in g.node if n.op_type == 'Expand'})
+  done = 0
+  for n in g.node:
+    if n.op_type != 'Expand' or len(n.input) != 2 or n.input[1] not in init:
+      continue
+    shape = dims.get(n.input[0])
+    target = [int(v) for v in numpy_helper.to_array(init[n.input[1]]).reshape(-1)]
+    if shape is None or len(shape) != len(target) or any(d <= 0 for d in shape):
+      continue
+    repeats = []
+    for have, want in zip(shape, target, strict=True):
+      if want in (1, have):
+        repeats.append(1)
+      elif have == 1:
+        repeats.append(want)
+      else:
+        repeats = None
+        break
+    if repeats is None:
+      continue
+    name = f"{n.output[0]}__repeats"
+    g.initializer.append(numpy_helper.from_array(np.array(repeats, np.int64), name))
+    n.op_type = 'Tile'
+    n.input[1] = name
+    done += 1
+  return done
+
+
 def _static_info(model: onnx.ModelProto, wanted: set[str]) -> tuple[dict[str, tuple[int, ...]], dict[str, int]]:
   """Static shapes and element types of the graph's tensors, from what the
   file carries; the shape inferrer only when one of `wanted` is missing.

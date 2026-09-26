@@ -34,8 +34,10 @@ Macs may differ.
 
 The frame budget is 50 ms at 20 frames per second (20 Hz). CoreML on the GPU is
 the default because it meets this budget on the M1 Pro. tinygrad exceeds the
-budget. The Neural Engine option (`--device ane`) has more frames over budget at
-20 Hz, even though it is faster with no pause between requests.
+budget. The table's Neural Engine column (`--device ane`) is the option as it
+was first measured, when it had more frames over budget at 20 Hz than the GPU;
+it has since been rebuilt and is now the fastest on the M1 Pro, see
+[the Neural Engine split](#the-neural-engine-split).
 
 | | tinygrad METAL | CoreML, GPU (`--device coreml`, default) | CoreML, all compute units (`--device ane`) |
 | --- | ---: | ---: | ---: |
@@ -55,6 +57,50 @@ the current model preparation code.
 
 The mean is the average frame time. The p99 is the time at or below which 99% of
 frames complete. The maximum is the slowest frame.
+
+### The Neural Engine split
+
+`--device ane` runs the vision trunk on the Neural Engine and the policy on
+the GPU: the policy's LayerNormalizations run in fp32, which the Neural Engine
+cannot do. At 20 Hz each unit is idle for most of every 50 ms and pays for it
+on the next frame, which is what made this option miss the budget. It now
+keeps both awake while frames arrive: the Metal keep-alive (below) for the
+GPU's half, and one CPU core kept busy for CoreML's share of each prediction.
+It also rewrites two Expands CoreML will not take as the equivalent Tiles,
+which kept the model from splitting into two CoreML programs with a CPU step
+between them, and asks for Apple's FastPrediction specialization.
+
+On the same M1 Pro with model `09d080f36965bb2a`, 2026-09-25,
+`bench_link.py --rate 20` over TCP loopback in one session, 1,190 frames after
+a warm-up run:
+
+| | CoreML, GPU (`--device coreml`, default) | `--device ane` before | `--device ane` now |
+| --- | ---: | ---: | ---: |
+| round trip at 20 Hz, mean / p99 / max | 46.9 / 49.5 / 50.7 ms | 44.0 / 55.9 / 59.9 ms | 27.7 / 29.6 / 47.4 ms |
+| frames over the 50 ms budget | 6 (0.5%) | 137 (11.5%) | 0 |
+| server side: model / queues | 45.2 / 1.1 ms | 41.4 / 1.7 ms | 26.1 / 1.1 ms |
+| build in a fresh process | | 12.7 s | 16.0 s |
+
+The parity gate passes with the new preparation: worst column 0.99957, mean
+error on `plan` / `lead_prob` 0.0054 / 0.0141.
+
+What each part is worth, measured on the model alone through one onnxruntime
+session paced at 20 Hz, 1,200 frames each:
+
+| `--device ane` | mean / p99 | frames over 50 ms |
+| --- | ---: | ---: |
+| new preparation, no helpers | 44.3 / 55.4 ms | 73 |
+| with the Metal keep-alive | 33.8 / 41.6 ms | 0 |
+| with the Metal keep-alive and the CPU keep-warm | 27.3 / 28.7 ms | 0 |
+| both helpers, without the Tile rewrite | 29.5 / 31.1 ms | 0 |
+
+Set `JETLINK_CPU_KEEPWARM=0` or `JETLINK_METAL_KEEPALIVE=0` to turn either
+helper off. Both stop within a second of the last frame. The keep-warm is a
+separate process, so a busy loop never holds the server worker's GIL; it
+blocks in `select()` while no frames arrive and exits with the worker.
+
+An artifact built with the earlier preparation is refused on load and rebuilt
+from the ONNX, as an artifact from before the weight rewrite is.
 
 ### How to measure
 
@@ -96,7 +142,8 @@ The helper uses a separate 128-byte buffer, with one finite command in flight
 at a time on its own thread. It does not change model inputs, hidden state,
 precision, or CoreML compute units. It stops submitting work after one second
 without an inference request, on inference errors, or when the worker exits.
-CPU and Neural Engine sessions do not start it. If Metal initialization or a
+CPU-only sessions and CoreML sessions limited to the CPU and Neural Engine do
+not start it; `--device ane`, whose policy runs on the GPU, does. If Metal initialization or a
 helper command fails, inference continues without the helper and logs a warning.
 
 This trades additional GPU activity and power consumption for lower latency;
@@ -120,9 +167,10 @@ takes about 8 seconds to build, and loads in about 2 seconds on the M1 Pro. If a
 cached model takes minutes to load, remove its prepared engine and prepare it
 again.
 
-For the Neural Engine option, Jetlink normalizes negative Gather indices and
-runs the policy's LayerNormalization operations in fp32 for accuracy. The trunk
-uses fp16.
+For the Neural Engine option, Jetlink normalizes negative Gather indices,
+runs the policy's LayerNormalization operations in fp32 for accuracy, which
+places the policy on the GPU, and rewrites the policy's two Expands as Tiles.
+The trunk uses fp16 on the Neural Engine.
 
 ## Runtime requirements
 

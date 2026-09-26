@@ -19,6 +19,7 @@ from onnx import TensorProto, helper, numpy_helper  # noqa: E402
 
 from jetlink.onnx_patch import (  # noqa: E402
   TINYGRAD_DOMAIN,
+  expand_to_tile,
   gemm_with_transposed_weight,
   layernorm_in_fp32,
   needs_patch,
@@ -482,3 +483,44 @@ class TestGemmWithTransposedWeight:
     assert sum(1 for t in g.initializer if t.name.endswith('__wt')) == 2
     assert 'W' not in {t.name for t in g.initializer}
     onnx.checker.check_model(m)
+
+
+# -- expand_to_tile: the Expands onnxruntime's CoreML provider refuses ----------
+
+def _expand(x_shape, target, constant=True):
+  """x -> Expand(x, target) -> y, with x's shape recorded as the exporter does."""
+  inputs = [helper.make_tensor_value_info('x', TensorProto.FLOAT, x_shape)]
+  inits = []
+  if constant:
+    inits.append(numpy_helper.from_array(np.array(target, np.int64), 'target'))
+  else:
+    inputs.append(helper.make_tensor_value_info('target', TensorProto.INT64, [len(target)]))
+  out = list(np.broadcast_shapes(tuple(x_shape), tuple(target)))
+  graph = helper.make_graph([helper.make_node('Expand', ['x', 'target'], ['y'], name='expand')], 'expand', inputs,
+                            [helper.make_tensor_value_info('y', TensorProto.FLOAT, out)], initializer=inits)
+  return helper.make_model(graph, opset_imports=[helper.make_opsetid('', 20)])
+
+
+def test_an_expand_that_repeats_size_one_axes_becomes_an_equal_tile():
+  # the policy's shape: [1, 9, 1, 512] expanded to [1, 9, 32, 512]
+  from onnx.reference import ReferenceEvaluator
+  model = _expand([1, 9, 1, 512], [1, 1, 32, 1])
+  x = np.random.default_rng(0).standard_normal((1, 9, 1, 512)).astype(np.float32)
+  want = ReferenceEvaluator(model).run(None, {'x': x})[0]
+  assert expand_to_tile(model) == 1
+  assert [n.op_type for n in model.graph.node] == ['Tile']
+  onnx.checker.check_model(model)
+  got = ReferenceEvaluator(model).run(None, {'x': x})[0]
+  assert got.shape == (1, 9, 32, 512)
+  np.testing.assert_array_equal(got, want)
+
+
+@pytest.mark.parametrize(('x_shape', 'target', 'constant'), [
+  ([9, 1, 512], [1, 9, 32, 512], True),   # broadcasts up a rank: not a Tile
+  ([1, 9, 1, 512], [1, 1, 32, 1], False),  # a shape known only at run time
+])
+def test_an_expand_that_is_not_a_plain_repeat_is_left_alone(x_shape, target, constant):
+  model = _expand(x_shape, target, constant)
+  assert expand_to_tile(model) == 0
+  assert [n.op_type for n in model.graph.node] == ['Expand']
+
