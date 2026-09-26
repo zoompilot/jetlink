@@ -117,6 +117,11 @@ jobs:
               exit 1
             fi
             echo "every TensorRT dependency resolves"
+            # the container toolkit crashes reading these before the server starts
+            if ls /usr/local/cuda*/compat*/libcuda.so* >/dev/null 2>&1; then
+              echo "CUDA forward-compatibility libraries are back in the image"
+              exit 1
+            fi
             python -c "import jetlink, onnx, usb1; from jetlink.server.backends.trt import cudart"
             jetlink-server --help > /dev/null
             echo "the server imports and starts"

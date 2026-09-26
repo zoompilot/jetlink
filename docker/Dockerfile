@@ -41,8 +41,19 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # library. Without it the server logs "could not open the gadget" forever,
 # which reads as a cable fault. --system-site-packages because on arm64
 # TensorRT's Python bindings are an apt package in the system interpreter.
+#
+# The base image's CUDA forward-compatibility libraries (cuda-compat, and
+# cuda-compat-orin on arm64) go: nothing here uses them, since JetPack 7.2's
+# driver already speaks CUDA 13.2 and a PC's driver 580 runs 13.2 by minor
+# version compatibility. Worse, NVIDIA's container toolkit 1.19 and 1.20
+# read the version note in their libcuda before every GPU container starts
+# and crash on this one ("slice bounds out of range [:73] with capacity 71"),
+# so with them in place the server cannot start at all.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-venv ca-certificates curl gnupg libusb-1.0-0 \
+    && compat="$(dpkg-query -W -f '${Package} ' 'cuda-compat*' 2>/dev/null || true)" \
+    && if [ -n "$compat" ]; then apt-get purge -y $compat; fi \
+    && rm -rf /usr/local/cuda-*/compat /usr/local/cuda-*/compat_orin \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -m venv --system-site-packages /opt/venv
 
