@@ -321,7 +321,8 @@ struct ModelsView: View {
       return "Deletes the \(size)model file for \(row.displayName). The prepared engine stays, so the comma can still use this model."
     case let .deleteEngines(row):
       let bytes = row.preparedFor.reduce(Int64(0)) { $0 + $1.bytes }
-      var text = "Deletes every prepared engine for \(row.displayName), \(ByteCount.string(bytes)) in all. Using it again prepares it again, which takes as long as the first time."
+      var text =
+        "Deletes every prepared engine for \(row.displayName), \(ByteCount.string(bytes)) in all. Using it again prepares it again, which takes as long as the first time."
       if row.isLoaded {
         text += " Jetlink stops using it first."
       }

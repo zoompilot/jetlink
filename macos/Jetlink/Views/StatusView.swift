@@ -141,9 +141,11 @@ struct StatusView: View {
       } header: {
         Text("Frame Budget")
       } footer: {
-        Text("Measured on this Mac, from a frame's arrival to its reply leaving. The comma's own work and the transfer to the Mac use the same 50 ms, so leave room.")
-          .font(.callout)
-          .foregroundStyle(.secondary)
+        Text(
+          "Measured on this Mac, from a frame's arrival to its reply leaving. The comma's own work and the transfer to the Mac use the same 50 ms, so leave room."
+        )
+        .font(.callout)
+        .foregroundStyle(.secondary)
       }
     }
   }
@@ -191,10 +193,12 @@ struct StatusView: View {
         VStack(alignment: .leading, spacing: 8) {
           Label("No model in use", systemImage: "shippingbox")
             .font(.headline)
-          Text("Use the model your comma drives with, and leave Jetlink running. Otherwise the comma sends its model when it connects, and drives on its small model until the Mac is ready.")
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+          Text(
+            "Use the model your comma drives with, and leave Jetlink running. Otherwise the comma sends its model when it connects, and drives on its small model until the Mac is ready."
+          )
+          .font(.callout)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
           emptyStateAction
         }
         .frame(maxWidth: .infinity, alignment: .leading)
