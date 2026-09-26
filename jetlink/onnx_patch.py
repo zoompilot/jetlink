@@ -114,7 +114,7 @@ def normalize_gather_indices(model: onnx.ModelProto) -> int:
   g = model.graph
   init = {t.name: t for t in g.initializer}
   gathers = [n for n in g.node if n.op_type == 'Gather' and len(n.input) > 1 and n.input[1] in init]
-  dims, _ = _static_info(model, {n.input[0] for n in gathers})
+  dims = _static_dims(model, {n.input[0] for n in gathers})
   rewritten = 0
   for node in gathers:
     index = numpy_helper.to_array(init[node.input[1]])
@@ -161,34 +161,20 @@ def _trunk_end(g, mask: list[bool], images: list[str], handed: list[str]) -> str
   """The latest vision tensor every one of `handed` is computed from and
   nothing else of the images: where the trunk narrows to one tensor before
   it fans out into heads. Never a graph output, which the worker has to
-  return rather than pass on. None if there is no such tensor."""
+  return rather than pass on. None if there is no such tensor.
+
+  Walks the vision nodes backwards, replacing each needed tensor by what its
+  node reads: at every step the needed set separates the images from
+  `handed`, so a step where it is one tensor has found a place to cut."""
   init = {t.name for t in g.initializer}
-  outputs = {o.name for o in g.output}
-  producer = {o: n for n, vision in zip(g.node, mask, strict=True) if vision for o in n.output}
-  order = {o: k for k, n in enumerate(g.node) for o in n.output}
-
-  def reaches_images_without(cut: str) -> bool:
-    seen, todo = set(), [h for h in handed if h != cut]
-    while todo:
-      t = todo.pop()
-      if t in seen or t in init or t == cut:
-        continue
-      seen.add(t)
-      if t in images:
-        return True
-      todo += [i for i in producer[t].input if i] if t in producer else []
-    return False
-
-  ancestors, todo = set(), list(handed)
-  while todo:
-    t = todo.pop()
-    if t in ancestors or t not in producer:
-      continue
-    ancestors.add(t)
-    todo += [i for i in producer[t].input if i and i not in init]
-  for t in sorted(ancestors - outputs, key=order.__getitem__, reverse=True):
-    if not reaches_images_without(t):
-      return t
+  never = {o.name for o in g.output} | set(images)
+  live = set(handed)
+  for node, vision in zip(reversed(g.node), reversed(mask), strict=True):
+    if len(live) == 1 and not live & never:
+      return next(iter(live))
+    if vision and live.intersection(node.output):
+      live.difference_update(node.output)
+      live.update(i for i in node.input if i and i not in init)
   return None
 
 
@@ -228,8 +214,10 @@ def split_vision_policy(model: onnx.ModelProto) -> tuple[onnx.ModelProto, onnx.M
   ends = [cut] if cut is not None else handed
   outputs = [o.name for o in g.output]
   # The hand-off tensors become graph inputs and outputs, which need a type
-  # and a fixed shape; the exporter records none for intermediates.
-  extractor = Extractor(infer_shapes(model))
+  # and a fixed shape. The driving models' exports record them; the shape
+  # inferrer, 1.3 s and a second copy of the weights, only for one that does not.
+  typed = {vi.name for vi in (*g.input, *g.value_info, *g.output) if vi.type.tensor_type.HasField('shape')}
+  extractor = Extractor(model if set(ends) <= typed else infer_shapes(model))
   vision_model = extractor.extract_model(images, ends + [o for o in outputs if o in made])
   policy_model = extractor.extract_model(ends + others, [o for o in outputs if o not in made])
   return vision_model, policy_model
@@ -249,7 +237,7 @@ def expand_to_tile(model: onnx.ModelProto) -> int:
   constant, is left alone."""
   g = model.graph
   init = {t.name: t for t in g.initializer}
-  dims, _ = _static_info(model, {n.input[0] for n in g.node if n.op_type == 'Expand'})
+  dims = _static_dims(model, {n.input[0] for n in g.node if n.op_type == 'Expand'})
   done = 0
   for n in g.node:
     if n.op_type != 'Expand' or len(n.input) != 2 or n.input[1] not in init:
@@ -277,31 +265,28 @@ def expand_to_tile(model: onnx.ModelProto) -> int:
   return done
 
 
-def _static_info(model: onnx.ModelProto, wanted: set[str]) -> tuple[dict[str, tuple[int, ...]], dict[str, int]]:
-  """Static shapes and element types of the graph's tensors, from what the
-  file carries; the shape inferrer only when one of `wanted` is missing.
-  Fails open: a tensor still unknown afterwards is simply absent, and the
-  caller decides what it cannot do without it."""
+def _static_dims(model: onnx.ModelProto, wanted: set[str]) -> dict[str, tuple[int, ...]]:
+  """Static shapes of the graph's tensors, from what the file carries; the
+  shape inferrer only when one of `wanted` is missing. Fails open: a tensor
+  still unknown afterwards is simply absent, and the caller decides what it
+  cannot do without it."""
   g = model.graph
   dims: dict[str, tuple[int, ...]] = {}
-  dtypes: dict[str, int] = {}
 
   def take(values):
     for vi in values:
       tt = vi.type.tensor_type
-      if tt.elem_type:
-        dtypes[vi.name] = tt.elem_type
       if tt.HasField('shape'):
         dims[vi.name] = tuple(d.dim_value if d.HasField('dim_value') else -1 for d in tt.shape.dim)
   take(g.input)
   take(g.value_info)
   take(g.output)
-  if wanted - {n for n in dims if n in dtypes}:
+  if wanted - dims.keys():
     try:
       take(onnx.shape_inference.infer_shapes(model).graph.value_info)
     except Exception:
       pass
-  return dims, dtypes
+  return dims
 
 
 def patch_uint8_inputs(model: onnx.ModelProto) -> onnx.ModelProto:
@@ -415,7 +400,7 @@ def gemm_with_transposed_weight(model: onnx.ModelProto) -> int:
 
   candidates = [n for n in g.node if n.op_type == 'MatMul' and len(n.input) == 2
                 and n.input[1] in init and n.output[0] not in outputs]
-  dims, _ = _static_info(model, {n.input[0] for n in candidates})
+  dims = _static_dims(model, {n.input[0] for n in candidates})
 
   replacements: dict[int, list] = {}
   drop: set[int] = set()
