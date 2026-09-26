@@ -1,8 +1,14 @@
-# Jetlink
+<p align="center">
+  <img src="macos/Resources/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="128" height="128" alt="Jetlink icon">
+</p>
 
-Run openpilot's large driving models on a computer connected to your comma.
-The comma handles cameras and vehicle control; Jetlink runs the model and
-returns predictions 20 times per second.
+<h1 align="center">Jetlink</h1>
+
+<p align="center">
+  Run openpilot's large driving models on a computer connected to your comma.<br>
+  The comma handles cameras and vehicle control; Jetlink runs the model and
+  returns predictions 20 times per second.
+</p>
 
 **Jetlink is experimental.** It requires zoompilot's
 [`jetson-trt` branch](https://github.com/zoompilot/zoompilot/tree/jetson-trt).
