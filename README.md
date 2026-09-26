@@ -54,10 +54,13 @@ The app includes its dependencies. If macOS blocks an unsigned build, follow
 
 ## Comma setup (all platforms)
 
-1. **Install the branch.** On a comma running zoompilot, open
+1. **Install zoompilot with Jetlink.** After resetting the comma, enter
+   **`zoompilot/jetson-trt`** when setup asks for the install URL. This works
+   whether you previously used openpilot, sunnypilot, or another fork. Let
+   installation finish, including any reboot and build.
+   If you already use zoompilot, you can instead open
    **Settings > Software > Target Branch > Non-Prebuilt Branches** and select
-   **jetson-trt**. Let it update, reboot, and finish building. Coming from another
-   fork? Follow [zoompilot's installation instructions](https://github.com/zoompilot/zoompilot/tree/jetson-trt).
+   **jetson-trt**, then let it update, reboot, and finish building.
 2. **Enable Jetlink.** Open **Settings > Models** and turn on
    **Accelerator Link**. Leave **Big Model** on its default for the first run.
 3. **Connect USB.** Connect the computer's **USB-A port** to the comma's

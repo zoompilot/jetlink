@@ -65,8 +65,10 @@ offers to keep your answers and brings everything up to date.
 ## 3. Set up the comma
 
 Follow [comma setup](../README.md#comma-setup-all-platforms) in the README:
-install the jetson-trt branch, turn on **Accelerator Link**, and connect the
-comma's USB-C port to one of the Jetson's **USB-A** ports. After download and
+after resetting the comma, enter **`zoompilot/jetson-trt`** as the install URL.
+If you already use zoompilot, you can select **jetson-trt** in its branch settings
+instead. Turn on **Accelerator Link**, then connect the comma's USB-C port to
+one of the Jetson's **USB-A** ports. After download and
 transfer, the default model takes about 3 minutes to prepare. Wait for the comma's home-button icon to turn green before leaving
 the setup. If it stays orange or never pulses, use the checks below.
 
