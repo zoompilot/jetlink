@@ -409,3 +409,14 @@ class TestBenchTools:
     bad[0] += 1
     np.save(tmp_path / 'out_link_3.npy', bad)
     assert ve.replay_capture(NumpyEngine(), tmp_path) == 2
+
+
+@pytest.mark.parametrize('lookup', [True, False])
+def test_both_uint8_stores_give_numpys_fp16_bits(monkeypatch, lookup):
+  """The numpy 1.x lookup and numpy's own cast write the same bits."""
+  from jetlink import queues
+  monkeypatch.setattr(queues, '_LOOKUP', lookup)
+  src = np.arange(256, dtype=np.uint8).repeat(3).reshape(3, 256)
+  dest = np.empty(src.shape, np.float16)
+  queues.store(dest, src)
+  np.testing.assert_array_equal(dest.view(np.uint16), src.astype(np.float16).view(np.uint16))

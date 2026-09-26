@@ -223,17 +223,21 @@ class TestNewerCatalogs:
     return CATALOG_URL_TEMPLATE.format(version=v)
 
   def test_versions_are_probed_up_to_the_first_missing_one(self):
-    from jetlink.registry.catalog import CATALOG_VERSION, newer_catalogs
+    from jetlink.registry.catalog import CATALOG_VERSION, fetch_catalogs
     v = CATALOG_VERSION
-    opener = FakeOpener({self.url(v + 1): {'bundles': []}, self.url(v + 2): {'bundles': []},
+    fresh = 'e' * 40
+    opener = FakeOpener({self.url(v): {'bundles': []}, self.url(v + 1): {'bundles': []},
+                         self.url(v + 2): {'bundles': [_bundle(fresh, 99, '20')]},
                          self.url(v + 3): not_found(self.url(v + 3))})
-    assert len(newer_catalogs(opener=opener)) == 2
-    assert opener.calls == [self.url(v + 1), self.url(v + 2), self.url(v + 3)]
+    assert [b['ref'] for b in fetch_catalogs(opener=opener)['bundles']] == [fresh]
+    assert opener.calls == [self.url(v), self.url(v + 1), self.url(v + 2), self.url(v + 3)]
 
   def test_an_outage_past_the_pin_keeps_what_was_found(self):
-    from jetlink.registry.catalog import CATALOG_VERSION, newer_catalogs
-    opener = FakeOpener({self.url(CATALOG_VERSION + 1): {'bundles': []}})
-    assert len(newer_catalogs(opener=opener)) == 1
+    from jetlink.registry.catalog import CATALOG_VERSION, fetch_catalogs
+    fresh = 'e' * 40
+    opener = FakeOpener({self.url(CATALOG_VERSION): {'bundles': []},
+                         self.url(CATALOG_VERSION + 1): {'bundles': [_bundle(fresh, 99, '20')]}})
+    assert [b['ref'] for b in fetch_catalogs(opener=opener)['bundles']] == [fresh]
 
   def test_the_merge_keeps_builds_at_our_version_and_adds_the_rest_for_an_accelerator(self):
     from jetlink.registry.catalog import merge_catalogs

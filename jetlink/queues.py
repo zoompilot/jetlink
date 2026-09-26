@@ -31,8 +31,9 @@ from jetlink.spec import ModelSpec
 # numpy 1.x has no vectorised float16 store on aarch64: casting one 393 KB frame
 # of uint8 to float16 takes 2.25 ms on the Orin under 1.26, and a lookup of the
 # 256 possible values gives the same bits in 0.69 ms. numpy 2.x casts it in
-# 0.27 ms (2.5.3, same Orin) against the lookup's 0.62, and is faster still on
-# the Mac, so the lookup is kept only where numpy needs it: the JetPack 6 image.
+# 0.27 ms (2.5.3, same Orin) against the lookup's 0.62, and an M1 Pro in 0.12 ms
+# against 0.86, so the lookup is kept only where numpy needs it: the JetPack 6
+# image.
 # Viewed as uint16 so np.take can share the dtype.
 _U8_TO_F16_BITS = np.arange(256, dtype=np.uint8).astype(np.float16).view(np.uint16)
 _LOOKUP = int(np.__version__.split('.')[0]) < 2

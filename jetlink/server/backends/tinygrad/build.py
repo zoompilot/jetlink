@@ -40,7 +40,7 @@ from pathlib import Path
 import numpy as np
 
 from jetlink.server.backends.base import ProgressFn, write_sidecar
-from jetlink.spec import DRIVING_OUTPUT
+from jetlink.spec import DRIVING_OUTPUT, STATE_OUTPUT_PREFIX
 
 log = logging.getLogger('jetlink.tinygrad')
 
@@ -116,11 +116,14 @@ def _direct_url_commit() -> str | None:
     return None
 
 
-def host_dtype_for(model_dtype: np.dtype) -> np.dtype:
+def host_dtype_for(model_dtype: np.dtype, looped: bool = False) -> np.dtype:
   """The queues gather into float16 at memcpy speed and 0..255 is exact in
   it, so a uint8 graph input is staged as fp16 and cast on the device; that
-  is one small kernel and nothing in the queues."""
-  return np.dtype(np.float16) if np.dtype(model_dtype) == np.uint8 else np.dtype(model_dtype)
+  is one small kernel and nothing in the queues. A stateful graph's own
+  queue (`looped`) comes back out as it went in, so it keeps its dtype and
+  the loop is a copy, not 2M casts a frame."""
+  model_dtype = np.dtype(model_dtype)
+  return np.dtype(np.float16) if model_dtype == np.uint8 and not looped else model_dtype
 
 
 def plan_inputs(runner) -> list[Staged]:
@@ -131,7 +134,8 @@ def plan_inputs(runner) -> list[Staged]:
     if any(d <= 0 for d in shape):
       raise ValueError(f"input {name} has a dynamic shape {spec.shape}; jetlink builds fixed-shape engines")
     model_dtype = np.dtype(_to_np_dtype(spec.dtype))
-    out.append(Staged(name, shape, host_dtype_for(model_dtype).name, model_dtype.name))
+    looped = STATE_OUTPUT_PREFIX + name in runner.graph_outputs
+    out.append(Staged(name, shape, host_dtype_for(model_dtype, looped).name, model_dtype.name))
   return out
 
 

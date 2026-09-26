@@ -132,30 +132,21 @@ def fetch_catalog(url: str = CATALOG_URL, timeout: float = CATALOG_TIMEOUT, open
   return http_json(url, timeout, opener)
 
 
-def catalog_version(url: str) -> int | None:
-  """The version a catalog URL names, or None for one not in sunnypilot's scheme."""
-  m = re.search(r'_v(\d+)\.json$', url)
-  return int(m.group(1)) if m else None
-
-
-def newer_catalogs(url: str = CATALOG_URL, limit: int = PROBE_LIMIT, timeout: float = CATALOG_TIMEOUT,
-                   opener=None) -> list[dict]:
-  """Every catalog sunnypilot has published after the one at `url`, oldest
-  first. Stops at the first version that is not there; a failure past the
-  first is logged and ends the probe, since what was found is still good."""
-  version = catalog_version(url)
-  if version is None:
-    return []
-  found = []
-  for v in range(version + 1, version + 1 + limit):
+def fetch_catalogs(opener=None) -> dict:
+  """The pinned catalog merged with every one sunnypilot has published since,
+  whose commits the server runs too. The pinned one has to come; the probe
+  after it stops at the first version that is not there, and a failure past
+  the pin is logged and ends it, since what was found is still good."""
+  found = [fetch_catalog(CATALOG_URL, opener=opener)]
+  for v in range(CATALOG_VERSION + 1, CATALOG_VERSION + 1 + PROBE_LIMIT):
     try:
-      found.append(fetch_catalog(CATALOG_URL_TEMPLATE.format(version=v), timeout=timeout, opener=opener))
+      found.append(fetch_catalog(CATALOG_URL_TEMPLATE.format(version=v), opener=opener))
     except NotFound:
       break
     except NetworkError as e:
       log.warning("stopped probing for newer catalogs: %s", e)
       break
-  return found
+  return merge_catalogs(found)
 
 
 def merge_catalogs(catalogs: list[dict], selector: int = REQUIRED_SELECTOR_VERSION) -> dict:
