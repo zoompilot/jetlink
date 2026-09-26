@@ -9,10 +9,10 @@ struct FrameBudgetView: View {
   let stats: StatsEvent
   let history: [StatsSample]
 
-  static let budgetMs = 50.0
+  nonisolated static let budgetMs = 50.0
   /// Less room than this at p99 reads as tight: the comma's own work and the
   /// transfer to the Mac come out of the same 50 ms, and are not measured here.
-  static let tightMs = 10.0
+  nonisolated static let tightMs = 10.0
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
