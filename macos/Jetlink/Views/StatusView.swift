@@ -14,6 +14,7 @@ struct StatusView: View {
     Form {
       serverSection
       commaSection
+      frameBudgetSection
       engineSection
       Section {
         HStack {
@@ -125,8 +126,6 @@ struct StatusView: View {
       if server.link.state == .connected, let stats = server.stats {
         LabeledContent("Frames", value: stats.frames.formatted(.number.grouping(.automatic)))
         LabeledContent("Rate", value: "\(stats.fps.formatted(.number.precision(.fractionLength(1)))) per second")
-        LabeledContent("Frame time", value: StatusView.frameTimeText(stats))
-        LabeledContent("GPU time", value: "\(stats.gpuMs.mean.formatted(.number.precision(.fractionLength(1)))) ms mean")
         LabeledContent("Slow frames") {
           Text(stats.slow.formatted())
             .foregroundStyle(stats.slow > 0 ? .red : .primary)
@@ -139,6 +138,23 @@ struct StatusView: View {
       Text("Plug the comma into a USB-A port with an A-to-C data cable. Until it connects, the comma drives on its small model.")
         .font(.callout)
         .foregroundStyle(.secondary)
+    }
+  }
+
+  // MARK: Frame budget
+
+  @ViewBuilder
+  private var frameBudgetSection: some View {
+    if server.link.state == .connected, let stats = server.stats {
+      Section {
+        FrameBudgetView(stats: stats, history: server.statsHistory)
+      } header: {
+        Text("Frame budget")
+      } footer: {
+        Text("Measured on this Mac, from a frame's arrival to its reply leaving. The comma's own work and the transfer to the Mac use the same 50 ms, so leave room.")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+      }
     }
   }
 
@@ -182,14 +198,14 @@ struct StatusView: View {
   private var engineSection: some View {
     Section("Engine") {
       if showsEmptyState {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
           Label("No model prepared", systemImage: "shippingbox")
             .font(.headline)
-          Text("Download and prepare the model your comma uses in Models. Leave Jetlink running afterwards so it stays loaded.")
+          Text("Prepare the model your comma uses and leave Jetlink running. Otherwise the comma sends its model when it connects, and drives on its small model until the Mac is ready.")
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
-          Button("Open Models") { selection = .models }
+          emptyStateAction
         }
         .frame(maxWidth: .infinity, alignment: .leading)
       } else {
@@ -217,6 +233,29 @@ struct StatusView: View {
         }
       }
     }
+  }
+
+  /// One click for the default model, which is what a comma nobody changed
+  /// asks for, and the list for anyone who did change it.
+  @ViewBuilder
+  private var emptyStateAction: some View {
+    if let row = defaultRow, case .downloading = row.status {
+      ModelStatusLabel(row.status)
+        .frame(maxWidth: 260, alignment: .leading)
+    } else if let row = defaultRow, ModelStore.canPrepare(row) {
+      HStack {
+        Button("Prepare \(row.displayName)") { models.prepare(row) }
+          .buttonStyle(.borderedProminent)
+          .help(ModelsView.prepareHelp(row))
+        Button("Choose Another Model…") { selection = .models }
+      }
+    } else {
+      Button("Open Models") { selection = .models }
+    }
+  }
+
+  private var defaultRow: ModelRow? {
+    models.rows.first { $0.isDefault }
   }
 
   private var showsEmptyState: Bool {
@@ -318,12 +357,6 @@ struct StatusView: View {
     }
   }
 
-  /// "31.2 ms mean, 38.0 ms p99, 41.5 ms max".
-  static func frameTimeText(_ stats: StatsEvent) -> String {
-    let one = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(1))
-    return "\(stats.totalMs.mean.formatted(one)) ms mean, \(stats.totalMs.p99.formatted(one)) ms p99, \(stats.totalMs.max.formatted(one)) ms max"
-  }
-
   static func uptimeText(from start: Date, to now: Date) -> String {
     let seconds = max(0, Int(now.timeIntervalSince(start)))
     if seconds < 60 {
@@ -339,12 +372,12 @@ struct StatusView: View {
     .environment(
       ServerStore.preview(
         runState: .serving, info: PreviewData.serverInfo, link: PreviewData.linkConnected,
-        engine: PreviewData.engineReady, stats: PreviewData.stats)
+        engine: PreviewData.engineReady, stats: PreviewData.stats, statsHistory: PreviewData.statsHistory)
     )
     .environment(ModelStore.preview(catalog: PreviewData.catalog, inventory: PreviewData.inventory, engine: PreviewData.engineReady))
     .environment(AppSettings.preview())
     .environment(LogBuffer.preview(lines: PreviewData.logLines))
-    .frame(width: 640, height: 620)
+    .frame(width: 680, height: 980)
 }
 
 #Preview("Building") {

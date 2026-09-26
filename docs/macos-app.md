@@ -63,8 +63,14 @@ The Status screen then shows:
 - **Connected over USB** on the Link row.
 - **Rate**, the frames per second the comma is sending. It should settle near
   20 per second.
-- **Frame time**, in milliseconds: mean (average), p99 (99% of frames are at or below this time), and maximum. The budget is 50 ms.
 - **Slow frames**, the number of frames over 60 ms in the last second. This should stay at zero. A consistently higher count means the Mac is too slow, and the comma may drop back to its small model.
+- **Frame budget**, how much of the comma's 50 ms frame the Mac uses. The
+  headline is the room left at p99 (99% of frames take this long or less). The
+  bar splits the average frame into Inputs, Model, Overhead and Reply, with p99
+  marked against the 50 ms track. The chart shows the last two minutes, with a
+  red dot for any second whose slowest frame went over 50 ms. The Mac's time is
+  not all of it: the comma's own work and the transfer to the Mac come out of
+  the same 50 ms, so keep 10 ms or more to spare.
 
 On the comma, the home-button icon pulses while the model transfers and loads,
 then turns green. For driving behavior, see the
@@ -78,19 +84,21 @@ The next launch loads the prepared engine again.
 
 ## Prepare a model before you drive
 
-This is optional. The comma can download and send the model automatically.
-Use these steps to prepare it on the Mac before connecting.
+This is optional. The comma can send the model when it connects, but it then
+drives on its small model until the Mac has prepared it. Preparing it on the
+Mac first avoids that wait.
 
-Open **Models**. The list is the same one the comma shows under **Settings >
-Models > Big Model**, in the same order. Select the same model as your comma.
-Choose **Default** if you have not changed the model on the comma.
+If you have not changed the model on the comma, click **Prepare** on the
+Status screen. It names the default model, and one click downloads it, prepares
+it for this Mac and loads it.
 
-1. Select the model and choose **Download**. The Status column shows
-   download progress and transfer speed.
-2. Choose **Prepare**. Wait while the app compiles and loads the model.
-3. Wait for **Loaded**.
+For another model, open **Models**. The list is the same one the comma shows
+under **Settings > Models > Big Model**, in the same order. Click **Prepare**
+in the model's row, or **Load** if it was prepared before. The Status column
+shows the download, then the preparation, then **Loaded**. **Cancel** stops a
+download.
 
-What the steps mean:
+What the Status column says:
 
 | Status | What is happening |
 | --- | --- |

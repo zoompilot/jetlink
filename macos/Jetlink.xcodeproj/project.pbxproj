@@ -37,6 +37,7 @@
 		C08CE8557902A92AA5FCD1EA /* ServerExitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94CEA1B0200D0EBD755E9D1D /* ServerExitTests.swift */; };
 		C17ECDB8A4833CBCF16B9746 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6B71A2709AC0F259D4486CB6 /* Assets.xcassets */; };
 		C5BD297534DB35414E8EE4A4 /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C8A278FA961C026335DCFD8 /* LogsView.swift */; };
+		CBE2F89E60C53479FDE3663A /* FrameBudgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 689D4ADF35CE9FC4F8FBB048 /* FrameBudgetView.swift */; };
 		CCA1496ABFF1478E38C92D17 /* ControlProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0E3D4F93D2C373C82E2008F /* ControlProtocolTests.swift */; };
 		CE640B2C1591BF205429F1E2 /* EmbeddedPython.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76ABE66B0A28D17CFE0293FF /* EmbeddedPython.swift */; };
 		CF995AA744EEF53F0CF526EA /* StatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BEA6A4DA5B0C2666AC2A710 /* StatusBadge.swift */; };
@@ -71,6 +72,7 @@
 		4BEA6A4DA5B0C2666AC2A710 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
 		4F5A9541625DBE0986C9F54B /* ModelStatusLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelStatusLabel.swift; sourceTree = "<group>"; };
 		66576D026A6FECC7B3476028 /* ModelRowBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelRowBuilderTests.swift; sourceTree = "<group>"; };
+		689D4ADF35CE9FC4F8FBB048 /* FrameBudgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameBudgetView.swift; sourceTree = "<group>"; };
 		6B6101A302AB815094A1A71B /* ControlClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlClientTests.swift; sourceTree = "<group>"; };
 		6B71A2709AC0F259D4486CB6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		6C3E6AEE6E1472D196F90143 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
@@ -208,6 +210,7 @@
 			children = (
 				B668BFB7A68D7E8F0B5F93E2 /* ActivityView.swift */,
 				246B6131F06A6BB2833E7648 /* ByteCount.swift */,
+				689D4ADF35CE9FC4F8FBB048 /* FrameBudgetView.swift */,
 				263F21D988CFF3440C37780D /* ModelName.swift */,
 				4F5A9541625DBE0986C9F54B /* ModelStatusLabel.swift */,
 				45DBD17986ED74D8DB8CBADC /* ProgressRow.swift */,
@@ -395,6 +398,7 @@
 				A4264BF79835688E9CAEA77C /* ControlClient.swift in Sources */,
 				3C8223A33CAC7A7666918F80 /* ControlProtocol.swift in Sources */,
 				CE640B2C1591BF205429F1E2 /* EmbeddedPython.swift in Sources */,
+				CBE2F89E60C53479FDE3663A /* FrameBudgetView.swift in Sources */,
 				8B167F9986DACB4E316DC397 /* JetlinkApp.swift in Sources */,
 				8E703503A6C0E602F02662B6 /* LogBuffer.swift in Sources */,
 				16F27CC89C19E59E5F00C3FC /* LogFileWriter.swift in Sources */,

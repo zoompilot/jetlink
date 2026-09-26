@@ -46,6 +46,13 @@ enum ServerStoreError: Error, LocalizedError, Equatable {
   }
 }
 
+/// One `stats` event and when it arrived, for the frame time chart.
+struct StatsSample: Identifiable, Equatable, Sendable {
+  var id: Date { at }
+  let at: Date
+  let stats: StatsEvent
+}
+
 /// Owns the server process, the control connection, and everything the Status
 /// view shows.
 @MainActor
@@ -56,8 +63,13 @@ final class ServerStore {
   private(set) var link: LinkEvent = .waiting
   private(set) var engine: EngineEvent = .none
   private(set) var stats: StatsEvent?
+  /// The last two minutes of `stats`, oldest first, while the comma stays connected.
+  private(set) var statsHistory: [StatsSample] = []
   private(set) var startedAt: Date?
   var lastFailure: String?
+
+  /// Two minutes at one summary a second.
+  static let statsHistoryLength = 120
 
   let settings: AppSettings
   let logs: LogBuffer
@@ -266,11 +278,18 @@ final class ServerStore {
       if server.state == "stopping" { stopRequested = true }
     case .link(let value):
       link = value
-      if value.state != .connected { stats = nil }
+      if value.state != .connected {
+        stats = nil
+        statsHistory = []
+      }
     case .engine(let value):
       engine = value
     case .stats(let value):
       stats = value
+      statsHistory.append(StatsSample(at: Date(), stats: value))
+      if statsHistory.count > ServerStore.statsHistoryLength {
+        statsHistory.removeFirst(statsHistory.count - ServerStore.statsHistoryLength)
+      }
     case .reply:
       break
     default:
@@ -376,6 +395,7 @@ final class ServerStore {
     link = .waiting
     engine = .none
     stats = nil
+    statsHistory = []
     startedAt = nil
   }
 
@@ -403,7 +423,8 @@ extension ServerStore {
     info: ServerInfo? = nil,
     link: LinkEvent,
     engine: EngineEvent,
-    stats: StatsEvent? = nil
+    stats: StatsEvent? = nil,
+    statsHistory: [StatsSample] = []
   ) -> ServerStore {
     let store = ServerStore(settings: AppSettings.preview(), logs: LogBuffer(), logFile: nil, isLive: false)
     store.runState = runState
@@ -411,6 +432,7 @@ extension ServerStore {
     store.link = link
     store.engine = engine
     store.stats = stats
+    store.statsHistory = statsHistory
     store.startedAt = Date(timeIntervalSinceNow: -3600)
     return store
   }

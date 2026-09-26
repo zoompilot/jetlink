@@ -61,10 +61,29 @@ enum PreviewData {
     frames: 12_345,
     fps: 19.9,
     totalMs: StatsEvent.Total(mean: 31.2, p99: 38.0, max: 41.5),
-    gpuMs: StatsEvent.Gpu(mean: 21.0),
+    gpuMs: StatsEvent.Gpu(mean: 29.4),
     slow: 0,
-    windowS: 1.0
+    windowS: 1.0,
+    stagesMs: StatsEvent.Stages(queue: 0.6, gpu: 29.4, other: 1.2, send: 0.4),
+    servedMs: StatsEvent.Total(mean: 31.6, p99: 38.4, max: 41.9)
   )
+
+  /// Two minutes of one-second summaries, with one second over the budget.
+  static let statsHistory: [StatsSample] = {
+    let end = Date(timeIntervalSinceReferenceDate: 780_000_000)
+    return (0..<120).map { i in
+      let wobble = sin(Double(i) / 6) * 1.4 + (i % 7 == 0 ? 1.1 : 0)
+      let mean = 31.6 + wobble
+      let p99 = mean + 5.5 + (i % 11 == 0 ? 4 : 0)
+      let max = i == 83 ? 57.2 : p99 + 2.1
+      let stats = StatsEvent(
+        frames: 12_345 - (119 - i) * 20, fps: 20, totalMs: StatsEvent.Total(mean: mean - 0.4, p99: p99 - 0.4, max: max - 0.4),
+        gpuMs: StatsEvent.Gpu(mean: mean - 2.2), slow: 0, windowS: 1,
+        stagesMs: StatsEvent.Stages(queue: 0.6, gpu: mean - 2.2, other: 1.2, send: 0.4),
+        servedMs: StatsEvent.Total(mean: mean, p99: p99, max: max))
+      return StatsSample(at: end.addingTimeInterval(Double(i - 119)), stats: stats)
+    }
+  }()
 
   // MARK: Inventory
 

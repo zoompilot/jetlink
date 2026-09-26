@@ -164,12 +164,66 @@ struct FormattingTests {
     #expect(StatusView.uptimeText(from: start, to: start.addingTimeInterval(3900)) == "1 hour, 5 minutes")
   }
 
-  @Test("Frame times read as mean, p99 and max in milliseconds")
-  func frameTime() {
-    let text = StatusView.frameTimeText(PreviewData.stats)
-    #expect(text.contains("ms mean"))
-    #expect(text.contains("ms p99"))
-    #expect(text.contains("ms max"))
+  @Test("The headline is the room left at p99, or how far over it is")
+  func headroom() {
+    #expect(FrameBudgetView.headroomText(p99: 38.4) == "11.6 ms to spare")
+    #expect(FrameBudgetView.headroomText(p99: 50) == "0.0 ms to spare")
+    #expect(FrameBudgetView.headroomText(p99: 53.2) == "3.2 ms over")
+    #expect(FrameBudgetView.Room(headroomMs: 11.6) == .plenty)
+    #expect(FrameBudgetView.Room(headroomMs: 10) == .plenty)
+    #expect(FrameBudgetView.Room(headroomMs: 9.9) == .tight)
+    #expect(FrameBudgetView.Room(headroomMs: 0) == .tight)
+    #expect(FrameBudgetView.Room(headroomMs: -0.1) == .over)
+  }
+
+  @Test("The bar always shows the whole budget, and stretches for frames past it")
+  func budgetBarScale() {
+    #expect(abs(FrameStageBar.domainMax(PreviewData.stats) - 55) < 1e-9)
+    #expect(FrameStageBar.ticks(55) == [0, 10, 20, 30, 40, 50])
+    let slow = StatsEvent(
+      frames: 1, fps: 20, totalMs: StatsEvent.Total(mean: 60, p99: 70, max: 80), gpuMs: StatsEvent.Gpu(mean: 55),
+      slow: 5, windowS: 1)
+    #expect(FrameStageBar.domainMax(slow) == 70 * 1.08)
+    #expect(FrameStageBar.ticks(FrameStageBar.domainMax(slow)).last == 70)
+  }
+
+  @Test("A server without stages still fills the bar: the model and the rest")
+  func stagesFallBack() {
+    let old = StatsEvent(
+      frames: 1, fps: 20, totalMs: StatsEvent.Total(mean: 31.2, p99: 38, max: 41.5), gpuMs: StatsEvent.Gpu(mean: 21),
+      slow: 0, windowS: 1)
+    #expect(old.stages == StatsEvent.Stages(queue: 0, gpu: 21, other: 10.2, send: 0))
+    #expect(old.served == old.totalMs)
+    #expect(PreviewData.stats.served.mean == 31.6)
+  }
+
+  @Test("The chart's time axis counts back from now")
+  func chartAxis() {
+    #expect(FrameTimeChart.axisLabel(0) == "now")
+    #expect(FrameTimeChart.axisLabel(-30) == "30 s")
+    #expect(FrameTimeChart.axisLabel(-120) == "2 min")
+    #expect(FrameTimeChart.agoText(0.2) == "Just now")
+    #expect(FrameTimeChart.agoText(12) == "12 s ago")
+  }
+
+  @Test("One action takes a model from wherever it is to loaded")
+  func prepareAction() {
+    var notDownloaded = PreviewData.loadedRow
+    notDownloaded.status = .notDownloaded
+    #expect(ModelStore.canPrepare(notDownloaded))
+    #expect(ModelsView.prepareTitle(notDownloaded) == "Prepare")
+    #expect(ModelsView.prepareHelp(notDownloaded).hasPrefix("Download the model"))
+    #expect(!ModelStore.canPrepare(PreviewData.loadedRow))
+    var prepared = PreviewData.loadedRow
+    prepared.status = .prepared
+    #expect(ModelStore.canPrepare(prepared))
+    #expect(ModelsView.prepareTitle(prepared) == "Load")
+    var downloading = PreviewData.loadedRow
+    downloading.status = .downloading(frac: 0.4, rateBps: 1)
+    #expect(!ModelStore.canPrepare(downloading))
+    // The catalog has not resolved its checksum yet, so there is nothing to ask for.
+    #expect(PreviewData.notDownloadedRow.sha256 == nil)
+    #expect(!ModelStore.canPrepare(PreviewData.notDownloadedRow))
   }
 
   @Test("Prepared backends are listed once each, in plain names")

@@ -108,19 +108,19 @@ final class ModelStore {
     perform("refresh the catalog") { try await $0.send(.catalog(refresh: true)) }
   }
 
-  func download(_ row: ModelRow) {
-    guard row.sha256 != nil || row.ref != nil else {
-      lastError = "That model has no reference to download."
-      return
-    }
-    let sha = row.sha256
-    let ref = sha == nil ? row.ref : nil
-    perform("download that model") { try await $0.send(.download(ref: ref, sha256: sha)) }
-  }
-
   func cancelDownload(_ row: ModelRow) {
     guard let sha = row.sha256 else { return }
     perform("cancel that download") { try await $0.send(.cancelDownload(sha256: sha)) }
+  }
+
+  /// True when there is something left to do before this model is loaded:
+  /// downloading, preparing or loading it, or trying again after a failure.
+  static func canPrepare(_ row: ModelRow) -> Bool {
+    guard row.sha256 != nil else { return false }
+    switch row.status {
+    case .notDownloaded, .downloaded, .prepared, .failed: return true
+    case .unresolved, .downloading, .preparing, .loaded: return false
+    }
   }
 
   /// True when preparing this model would interrupt the comma that is driving:
@@ -135,9 +135,11 @@ final class ModelStore {
     prepare(row, confirmedInterruption: false)
   }
 
+  /// Everything it takes to have this model loaded, in one step: the server
+  /// downloads it first when it is not on disk, then prepares and loads it.
   func prepare(_ row: ModelRow, confirmedInterruption: Bool) {
     guard let sha = row.sha256 else {
-      lastError = "That model has to be downloaded before it can be prepared."
+      lastError = "Jetlink does not know that model's checksum yet. Refresh the model list and try again."
       return
     }
     if prepareNeedsConfirmation(row) && !confirmedInterruption {

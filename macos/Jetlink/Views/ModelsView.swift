@@ -153,6 +153,10 @@ struct ModelsView: View {
         Text(ModelsView.preparedForText(row))
       }
       .width(min: 110, ideal: 130)
+      TableColumn("") { row in
+        rowAction(row)
+      }
+      .width(min: 80, ideal: 90)
     }
     .contextMenu(forSelectionType: ModelRow.ID.self) { ids in
       if let row = models.rows.first(where: { ids.contains($0.id) }) {
@@ -221,16 +225,27 @@ struct ModelsView: View {
     return models.rows.first { $0.id == selection }
   }
 
+  /// The one thing to do next, in the row itself: prepare it (downloading it
+  /// first if need be), stop its download, or nothing once it is loaded.
+  @ViewBuilder
+  private func rowAction(_ row: ModelRow) -> some View {
+    if canCancelDownload(row) {
+      Button("Cancel") { models.cancelDownload(row) }
+        .controlSize(.small)
+        .help("Stop the download")
+    } else if ModelStore.canPrepare(row) {
+      Button(ModelsView.prepareTitle(row)) { startPrepare(row) }
+        .controlSize(.small)
+        .help(ModelsView.prepareHelp(row))
+    }
+  }
+
   @ViewBuilder
   private func actionButtons(for row: ModelRow) -> some View {
-    Button("Download") { models.download(row) }
-      .disabled(!canDownload(row))
+    Button(ModelsView.prepareTitle(row)) { startPrepare(row) }
+      .disabled(!ModelStore.canPrepare(row))
     Button("Cancel download") { models.cancelDownload(row) }
       .disabled(!canCancelDownload(row))
-    Button("Prepare") { startPrepare(row) }
-      .disabled(!canPrepare(row))
-    Button("Load") { startPrepare(row) }
-      .disabled(!canLoad(row))
     Button("Unload") { models.unload() }
       .disabled(!canUnload(row))
     Divider()
@@ -255,23 +270,9 @@ struct ModelsView: View {
     }
   }
 
-  private func canDownload(_ row: ModelRow) -> Bool {
-    guard row.sha256 != nil else { return false }
-    if case .failed = row.status { return true }
-    return row.status == .notDownloaded
-  }
-
   private func canCancelDownload(_ row: ModelRow) -> Bool {
     if case .downloading = row.status { return true }
     return false
-  }
-
-  private func canPrepare(_ row: ModelRow) -> Bool {
-    row.status == .downloaded
-  }
-
-  private func canLoad(_ row: ModelRow) -> Bool {
-    row.status == .prepared
   }
 
   private func canUnload(_ row: ModelRow) -> Bool {
@@ -315,7 +316,7 @@ struct ModelsView: View {
     switch confirmation {
     case .deleteDownload: "Delete the download?"
     case .deleteEngines: "Delete the prepared engines?"
-    case let .prepareSwitch(row): "Prepare \(row.displayName)?"
+    case let .prepareSwitch(row): "\(ModelsView.prepareTitle(row)) \(row.displayName)?"
     case nil: ""
     }
   }
@@ -323,7 +324,7 @@ struct ModelsView: View {
   private func confirmButtonTitle(_ item: Confirmation) -> String {
     switch item {
     case .deleteDownload, .deleteEngines: "Delete"
-    case .prepareSwitch: "Prepare"
+    case let .prepareSwitch(row): ModelsView.prepareTitle(row)
     }
   }
 
@@ -353,6 +354,26 @@ struct ModelsView: View {
   }
 
   // MARK: Formatting
+
+  /// "Load" when a prepared engine is already on disk and loading is all that
+  /// is left; "Prepare" otherwise, which downloads the model first if need be.
+  static func prepareTitle(_ row: ModelRow) -> String {
+    row.status == .prepared ? "Load" : "Prepare"
+  }
+
+  static func prepareHelp(_ row: ModelRow) -> String {
+    switch row.status {
+    case .notDownloaded:
+      let size = row.bytes.map { " (\(ByteCount.string($0)))" } ?? ""
+      return "Download the model\(size), prepare it for this Mac, and load it"
+    case .prepared:
+      return "Load the prepared engine"
+    case .failed:
+      return "Try again"
+    default:
+      return "Prepare the model for this Mac and load it"
+    }
+  }
 
   static let onnxType = UTType(filenameExtension: "onnx") ?? .data
 

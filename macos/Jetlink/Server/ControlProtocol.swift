@@ -84,12 +84,34 @@ struct StatsEvent: Codable, Sendable, Equatable {
     let mean: Double
   }
 
+  /// Means that add up to `servedMs.mean`: staging the inputs, the model run,
+  /// the rest of the run, and sending the reply.
+  struct Stages: Codable, Sendable, Equatable {
+    let queue: Double
+    let gpu: Double
+    let other: Double
+    let send: Double
+  }
+
   let frames: Int
   let fps: Double
   let totalMs: Total
   let gpuMs: Gpu
   let slow: Int
   let windowS: Double
+  /// Absent from a server older than the frame budget view.
+  var stagesMs: Stages? = nil
+  /// From a frame's arrival to its reply leaving: `totalMs` plus the send.
+  var servedMs: Total? = nil
+
+  /// The stages, or for an older server the model run and everything else.
+  var stages: Stages {
+    stagesMs ?? Stages(queue: 0, gpu: gpuMs.mean, other: max(0, totalMs.mean - gpuMs.mean), send: 0)
+  }
+
+  var served: Total {
+    servedMs ?? totalMs
+  }
 }
 
 struct InventoryModel: Codable, Sendable, Equatable, Identifiable {
