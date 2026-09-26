@@ -28,6 +28,8 @@ online during setup.
 
 ### Jetson or Linux PC
 
+<a href="docs/images/install-demo.mp4"><img src="docs/images/install-demo.webp" width="100%" alt="The installer on a Jetson: one command, two questions about power, then Docker, GPU access and the Jetlink server, and jetlink status"></a>
+
 For a Jetson Orin or an Ubuntu/Debian PC with an NVIDIA GeForce RTX 20 series
 or newer GPU, run:
 
@@ -47,6 +49,8 @@ When the installer finishes, run `jetlink status` to check the server, then
 continue with comma setup below.
 
 ### Mac
+
+<a href="docs/images/mac-demo.mp4"><img src="docs/images/mac-demo.webp" width="100%" alt="Jetlink for Mac: Use Model downloads and prepares a model, the comma connects over USB, and Status shows each frame against the 50 ms budget"></a>
 
 You need Apple silicon and macOS 15 or later; 16 GB of memory is recommended.
 
