@@ -42,7 +42,7 @@ from pathlib import Path
 
 import numpy as np
 
-from jetlink.spec import ModelSpec
+from jetlink.spec import DRIVING_OUTPUT, ModelSpec
 
 # Correlation, not an absolute tolerance: it moves on a wrong head, a transposed
 # column or a stale queue, all of which a tolerance would wave through.
@@ -104,44 +104,21 @@ def make_inputs(spec: ModelSpec, n: int, seed: int = 0) -> list[tuple[np.ndarray
                 + 24 * np.sin((xx + yy) / 61.0))
         warped[cam, ch] = np.clip(base + rng.normal(0, 6, (h, w)), 0, 255).astype(np.uint8)
     packed = np.zeros(spec.packed_nelem, np.float32)
-    off = 0
-    for name, shape in spec.packed_shapes.items():
-      size = int(np.prod(shape))
+    for name, (at, _) in spec.packed_layout.items():
+      size = at.stop - at.start
       if name == 'traffic_convention':
-        packed[off:off + size] = np.array([1.0, 0.0][:size])
+        packed[at] = np.array([1.0, 0.0][:size])
       elif name == 'action_t':
         # Action horizons in seconds; modeld sends 0.2 to 0.4 s on a real car.
         # Bounded, not ramped: past ~1 s the plan runs backwards, out of distribution.
-        packed[off:off + size] = np.array([0.25 + 0.1 * np.sin(0.5 * i), 0.35 + 0.1 * np.cos(0.5 * i)][:size])
+        packed[at] = np.array([0.25 + 0.1 * np.sin(0.5 * i), 0.35 + 0.1 * np.cos(0.5 * i)][:size])
       elif name == 'desire':
         # a pulse every eighth frame through the seven real desires; index 0 is
         # "none" and modeld zeroes it
         if i % 8 == 0:
-          packed[off + 1 + (i // 8) % (size - 1)] = 1.0
-      off += size
+          packed[at.start + 1 + (i // 8) % (size - 1)] = 1.0
     frames.append((warped, packed))
   return frames
-
-
-def hidden_slice(spec: ModelSpec) -> slice:
-  return spec.output_slices['hidden_state']
-
-
-def feeds_hidden_back(spec: ModelSpec) -> bool:
-  """Whether the comma sends the hidden state back as prev_feat. A stateful
-  graph keeps it on the server, and its packed inputs have no room for it."""
-  return 'prev_feat' in spec.packed_shapes
-
-
-def unpack(spec: ModelSpec, packed: np.ndarray) -> dict[str, np.ndarray]:
-  """The packed floats as named graph inputs, for a stateful graph whose packed
-  names are its own input names."""
-  out, off = {}, 0
-  for name, shape in spec.packed_shapes.items():
-    size = int(np.prod(shape))
-    out[name] = packed[off:off + size].reshape(spec.input_shapes[name])
-    off += size
-  return out
 
 
 # -- capture: what actually comes back over the link -------------------------
@@ -176,15 +153,14 @@ def capture(args) -> int:
     (out / 'spec.json').write_text(json.dumps(spec.to_dict()))
     frames = make_inputs(spec, args.n, args.seed)
 
-    hid = hidden_slice(spec)
     for i, (warped, packed) in enumerate(frames):
       # carry the hidden state as modeld does, or frame 2 on compares two recurrences
       result = client.infer(warped, packed, frame_id=i, reset=(i == 0))
       np.save(out / f'in_warped_{i}.npy', warped)
       np.save(out / f'in_packed_{i}.npy', packed)
       np.save(out / f'out_link_{i}.npy', np.asarray(result, np.float32))
-      if i + 1 < len(frames) and feeds_hidden_back(spec):
-        frames[i + 1][1][-(hid.stop - hid.start):] = result[hid]
+      if i + 1 < len(frames):
+        spec.feed_back(frames[i + 1][1], result)
       print(f"  frame {i}: {len(result)} values, "
             f"finite={bool(np.all(np.isfinite(result)))}")
   finally:
@@ -240,15 +216,14 @@ def reference(args) -> int:
   queues = PolicyQueues(spec)
   queues.reset()
 
-  hid = hidden_slice(spec)
-  prev_hidden = None
+  prev_out = None
   for i in range(n):
     warped = np.load(d / f'in_warped_{i}.npy')
     packed = np.load(d / f'in_packed_{i}.npy').copy()
     # the hidden state is our own previous output; feeding the link's back would
     # hide the drift this is looking for
-    if prev_hidden is not None:
-      packed[-(hid.stop - hid.start):] = prev_hidden
+    if prev_out is not None:
+      spec.feed_back(packed, prev_out)
     feed = queues.step(warped, packed)
     missing = set(dtypes) - set(feed)
     if missing:
@@ -257,7 +232,7 @@ def reference(args) -> int:
     out = np.asarray(sess.run(None, feed)[0], np.float32).reshape(-1)
     np.save(d / f'out_ref_{i}.npy', out)
     print(f"  frame {i}: {out.shape[0]} values, finite={bool(np.all(np.isfinite(out)))}")
-    prev_hidden = out[hid]
+    prev_out = out
   return 0
 
 
@@ -272,13 +247,15 @@ def reference_stateful(spec: ModelSpec, sess, d: Path, n: int) -> int:
   for i in range(n):
     warped = np.load(d / f'in_warped_{i}.npy')
     packed = np.load(d / f'in_packed_{i}.npy')
-    feed = {'new_img': warped, **unpack(spec, packed), **state}
+    # a stateful graph's packed names are its own input names
+    feed = {'new_img': warped, **state,
+            **{name: packed[at] for name, (at, _) in spec.packed_layout.items()}}
     missing = set(dtypes) - set(feed)
     if missing:
       raise SystemExit(f"no value for graph input(s) {sorted(missing)}")
     feed = {k: np.ascontiguousarray(v, dtype=dtypes[k]).reshape(shapes[k]) for k, v in feed.items()}
     outs = dict(zip(names, sess.run(None, feed), strict=True))
-    out = np.asarray(outs['outputs'], np.float32).reshape(-1)
+    out = np.asarray(outs[DRIVING_OUTPUT], np.float32).reshape(-1)
     np.save(d / f'out_ref_{i}.npy', out)
     print(f"  frame {i}: {out.shape[0]} values, finite={bool(np.all(np.isfinite(out)))}")
     state = {name: outs[nxt] for name, nxt in spec.state_pairs.items()}

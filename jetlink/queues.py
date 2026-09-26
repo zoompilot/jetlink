@@ -120,16 +120,6 @@ def sample_desire(q: RingQueue, frame_skip: int, out: np.ndarray | None = None) 
   return m.reshape(1, m.shape[0] * m.shape[1], *m.shape[2:])
 
 
-def _unpack_layout(spec: ModelSpec) -> list[tuple[str, int, int, tuple[int, ...]]]:
-  """(name, start, stop, shape) of each input in the packed scalars."""
-  offset, out = 0, []
-  for name, shape in spec.packed_shapes.items():
-    size = int(np.prod(shape))
-    out.append((name, offset, offset + size, shape))
-    offset += size
-  return out
-
-
 def _check_frame(spec: ModelSpec, warped: np.ndarray, packed: np.ndarray) -> None:
   if warped.shape != spec.warped_shape:
     raise ValueError(f"warped {warped.shape} != {spec.warped_shape}")
@@ -145,7 +135,7 @@ class PolicyQueues:
     self.dtype = dtype
     self.frame_skip = spec.frame_skip
 
-    self._packed_layout = _unpack_layout(spec)
+    self._packed_layout = list(spec.packed_layout.values())
 
     self.img_q = RingQueue(spec.img_buf_shape, dtype)
     self.big_img_q = RingQueue(spec.img_buf_shape, dtype)
@@ -165,7 +155,7 @@ class PolicyQueues:
 
   def _unpack(self, packed: np.ndarray):
     # slice views, not np.split: the offsets never change and split allocates
-    return tuple(packed[a:b].reshape(shape) for _, a, b, shape in self._packed_layout)
+    return tuple(packed[s].reshape(shape) for s, shape in self._packed_layout)
 
   def _push(self, warped: np.ndarray, packed: np.ndarray):
     _check_frame(self.spec, warped, packed)
@@ -231,7 +221,7 @@ class StateLoop:
     self.pairs = spec.state_pairs
     if not self.pairs:
       raise ValueError("the graph takes new_img but returns no next_state_ outputs")
-    self._packed_layout = _unpack_layout(spec)
+    self._packed_layout = spec.packed_layout
     loop = getattr(engine, 'loop_state', None)
     self.on_engine = bool(loop(self.pairs)) if callable(loop) else False
 
@@ -248,8 +238,8 @@ class StateLoop:
     """Write one frame's inputs; the state inputs are already in place."""
     _check_frame(self.spec, warped, packed)
     store(dest['new_img'], warped)
-    for name, a, b, _ in self._packed_layout:
-      store(dest[name], packed[a:b])
+    for name, (s, _) in self._packed_layout.items():
+      store(dest[name], packed[s])
 
   def after_run(self, outputs: dict[str, np.ndarray], dest: dict[str, np.ndarray]) -> None:
     """Advance the queues: each next_state_ becomes next frame's state_."""

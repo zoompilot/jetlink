@@ -471,19 +471,8 @@ class EngineHost:
       entry.write_meta({**meta, 'spec': spec.to_dict()})
 
   def _warm(self, engine, spec: ModelSpec) -> Loaded:
-    from jetlink.queues import for_model
     _check_shapes(engine, spec)
-    # before the warm run: a TensorRT engine that keeps the state loop on the
-    # GPU has to know it before the graph is captured
-    queues = for_model(spec, engine)
-    # Warm runs on zeros, so the first real frame pays for nothing lazy: CUDA
-    # state and the graph capture for TensorRT, a first replay for the others.
-    host_inputs = {n: engine.host_input(n) for n in engine.inputs}
-    warped = np.zeros(spec.warped_shape, np.uint8)
-    packed = np.zeros(spec.packed_nelem, np.float32)
-    queues.step_into(warped, packed, host_inputs)
-    log.info("%s", engine.warm())
-    queues.reset()
+    queues, host_inputs = warm(engine, spec)
     return Loaded(spec.sha256, spec, engine, queues, host_inputs)
 
   def unload(self) -> None:
@@ -551,6 +540,21 @@ def _check_shapes(engine, spec: ModelSpec) -> None:
   missing = set(spec.state_pairs.values()) - set(engine.outputs)
   if missing:
     raise ValueError(f"engine has no output(s) {sorted(missing)} to feed the state back from")
+
+
+def warm(engine, spec: ModelSpec):
+  """The queues and the engine's host inputs for `spec`, after one run on
+  zeros so the first real frame pays for nothing lazy: CUDA state and the
+  graph capture for TensorRT, a first replay for the others."""
+  from jetlink.queues import for_model
+  # before the warm run: a TensorRT engine that keeps the state loop on the
+  # GPU has to know it before the graph is captured
+  queues = for_model(spec, engine)
+  host_inputs = {n: engine.host_input(n) for n in engine.inputs}
+  queues.step_into(np.zeros(spec.warped_shape, np.uint8), np.zeros(spec.packed_nelem, np.float32), host_inputs)
+  log.info("%s", engine.warm())
+  queues.reset()
+  return queues, host_inputs
 
 
 class Session:

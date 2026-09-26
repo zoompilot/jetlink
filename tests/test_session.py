@@ -18,6 +18,7 @@ import json
 import logging
 import threading
 import time
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import numpy as np
@@ -106,26 +107,33 @@ def ready_session(spec, transport, engine=None, cache='/tmp/jetlink-test-cache')
   return session, engine
 
 
+@contextmanager
+def served(spec, **ready):
+  """A real client and Session over TCP loopback, only the engine faked:
+  (client, session, engine)."""
+  srv = TcpTransport.listen('127.0.0.1', 0)
+  client_t = TcpTransport.connect('127.0.0.1', srv.getsockname()[1])
+  server_t, _ = TcpTransport.accept(srv)
+  srv.close()
+  session, engine = ready_session(spec, server_t, **ready)
+  thread = threading.Thread(target=session.serve_forever, daemon=True)
+  thread.start()
+  client = JetlinkClient(client_t, deadline=10.0)
+  client.spec = spec
+  try:
+    yield client, session, engine
+  finally:
+    client.close()
+    server_t.close()
+    thread.join(1.0)
+    session.host.close()
+
+
 @pytest.fixture
 def link():
   spec = make_spec()
-  srv = TcpTransport.listen('127.0.0.1', 0)
-  port = srv.getsockname()[1]
-  client_t = TcpTransport.connect('127.0.0.1', port)
-  server_t, _ = TcpTransport.accept(srv)
-  srv.close()
-
-  session, engine = ready_session(spec, server_t)
-  thread = threading.Thread(target=session.serve_forever, daemon=True)
-  thread.start()
-
-  client = JetlinkClient(client_t, deadline=10.0)
-  client.spec = spec
-  yield client, session, engine, spec
-  client.close()
-  server_t.close()
-  thread.join(1.0)
-  session.host.close()
+  with served(spec) as (client, session, engine):
+    yield client, session, engine, spec
 
 
 def test_infer_round_trip(link):
@@ -148,10 +156,9 @@ def test_hidden_state_feeds_back_into_the_queues(link):
   client, session, engine, spec = link
   warped = np.zeros(spec.warped_shape, np.uint8)
   packed = np.zeros(spec.packed_nelem, np.float32)
-  hidden = spec.output_slices['hidden_state']
 
   client.infer(warped, packed, frame_id=1)
-  packed[-(hidden.stop - hidden.start):] = 3.0   # a distinctive prev_feat
+  packed[spec.packed_layout['prev_feat'][0]] = 3.0   # a distinctive prev_feat
   client.infer(warped, packed, frame_id=2)
 
   # feat_q is sampled at logical [0, 4, ... 124] of 128, so a value pushed now

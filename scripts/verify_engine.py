@@ -34,6 +34,7 @@ does); --device is passed to it as the server's --device is.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 import time
 from pathlib import Path
@@ -45,27 +46,20 @@ from verify_parity import MIN_CORR, load_spec_file, report_slices
 
 from jetlink.server.backends import NAMES, select
 from jetlink.server.backends.base import Engine, infer
+from jetlink.spec import DRIVING_OUTPUT
 
 
 def model_output(outputs: dict) -> np.ndarray:
   """The driving output, by name: a stateful graph returns its queues beside it."""
-  out = outputs['outputs'] if 'outputs' in outputs else next(iter(outputs.values()))
-  return np.asarray(out, np.float32).reshape(-1)
+  return np.asarray(outputs[DRIVING_OUTPUT], np.float32).reshape(-1)
 
 
 def replay_capture(engine: Engine, d: Path) -> int:
   """Feed a verify_parity capture through the server's own path and compare with out_link_*."""
-  from jetlink.queues import for_model
+  from jetlink.server.session import warm
 
-  spec = load_spec_file(d / 'spec.json')
-  # as EngineHost._warm builds it: before the warm run, so a TensorRT engine
-  # that keeps the state loop on the GPU knows it before the graph is captured
-  queues = for_model(spec, engine)
-  host_inputs = {n: engine.host_input(n) for n in engine.inputs}
-  # same warm-up as EngineHost._warm, so the replay runs the kernels the server runs
-  queues.step_into(np.zeros(spec.warped_shape, np.uint8), np.zeros(spec.packed_nelem, np.float32), host_inputs)
-  print(engine.warm())
-  queues.reset()
+  # the server's own warm-up, so the replay runs the kernels the server runs
+  queues, host_inputs = warm(engine, load_spec_file(d / 'spec.json'))
 
   n = len(list(d.glob('in_warped_*.npy')))
   if not n:
@@ -92,6 +86,8 @@ def replay_capture(engine: Engine, d: Path) -> int:
 
 
 def main() -> int:
+  # the load and the warm-up report their timings through the log
+  logging.basicConfig(level=logging.INFO, format='%(message)s')
   p = argparse.ArgumentParser()
   p.add_argument('--engine', required=True, help='the artifact: a .plan, .pkl or .ortcache')
   p.add_argument('--backend', choices=('auto', *NAMES), default='auto')

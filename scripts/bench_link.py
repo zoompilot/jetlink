@@ -130,7 +130,6 @@ def _run(args, client) -> int:
   rng = np.random.default_rng(0)
   warped = rng.integers(0, 256, spec.warped_shape, dtype=np.uint8)
   packed = np.zeros(spec.packed_nelem, np.float32)
-  hidden = spec.output_slices['hidden_state']
 
   lat, gpu, queue, srv = [], [], [], []
   send_ms, recv_ms = [], []
@@ -150,10 +149,8 @@ def _run(args, client) -> int:
     lat.append((t_done - t) * 1e3)
     send_ms.append((t_sent - t) * 1e3)
     recv_ms.append((t_done - t_sent) * 1e3)
-    # feed the hidden state back as modeld does, so the queues see a real
-    # sequence; a stateful graph keeps its own and has no slot for it
-    if 'prev_feat' in spec.packed_shapes:
-      packed[-(hidden.stop - hidden.start):] = out[hidden]
+    # feed the hidden state back as modeld does, so the queues see a real sequence
+    spec.feed_back(packed, out)
     g_us, q_us, t_us = client.last_timings
     gpu.append(g_us / 1e3)
     queue.append(q_us / 1e3)

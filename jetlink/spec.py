@@ -106,31 +106,33 @@ class ModelSpec:
 
   @property
   def packed_shapes(self) -> dict[str, tuple[int, ...]]:
-    tc = self.input_shapes['traffic_convention']
-    at = self.input_shapes['action_t']
+    scalars = {'traffic_convention': tuple(self.input_shapes['traffic_convention']),
+               'action_t': tuple(self.input_shapes['action_t'])}
     if self.stateful:
       # the pulse is the graph's own input and the hidden state stays inside it
-      return {
-        'desire': (math.prod(self.input_shapes['desire']),),
-        'traffic_convention': tuple(tc),
-        'action_t': tuple(at),
-      }
-    dp = self.input_shapes['desire_pulse']
+      return {'desire': (math.prod(self.input_shapes['desire']),), **scalars}
     fb = self.input_shapes['features_buffer']
-    return {
-      'desire': (dp[2],),
-      'traffic_convention': tuple(tc),
-      'action_t': tuple(at),
-      'prev_feat': (fb[0], self.feat_dim),
-    }
+    return {'desire': (self.input_shapes['desire_pulse'][2],), **scalars,
+            'prev_feat': (fb[0], self.feat_dim)}
 
   @property
-  def packed_sizes(self) -> list[int]:
-    return [math.prod(s) for s in self.packed_shapes.values()]
+  def packed_layout(self) -> dict[str, tuple[slice, tuple[int, ...]]]:
+    """Where each of packed_shapes sits in the flat floats: name -> (slice, shape)."""
+    out, offset = {}, 0
+    for name, shape in self.packed_shapes.items():
+      out[name] = (slice(offset, offset + math.prod(shape)), shape)
+      offset += math.prod(shape)
+    return out
 
   @property
   def packed_nelem(self) -> int:
-    return sum(self.packed_sizes)
+    return sum(math.prod(s) for s in self.packed_shapes.values())
+
+  def feed_back(self, packed, output) -> None:
+    """Carry the hidden state `output` returned into the next frame's packed
+    floats, as modeld does. A stateful graph keeps its own: nothing to do."""
+    if not self.stateful:
+      packed[self.packed_layout['prev_feat'][0]] = output[self.output_slices['hidden_state']]
 
   @property
   def packed_nbytes(self) -> int:

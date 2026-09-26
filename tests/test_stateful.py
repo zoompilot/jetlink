@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,14 +26,12 @@ onnx = pytest.importorskip('onnx')
 
 from onnx import TensorProto, helper  # noqa: E402
 
-from jetlink.client import JetlinkClient  # noqa: E402
 from jetlink.onnx_patch import needs_patch, patch_uint8_inputs  # noqa: E402
 from jetlink.queues import PolicyQueues, StateLoop, for_model  # noqa: E402
 from jetlink.server.backends.base import IO  # noqa: E402
 from jetlink.spec import ModelSpec, spec_from_onnx  # noqa: E402
-from jetlink.transport.tcp import TcpTransport  # noqa: E402
 from tests import tiny_model  # noqa: E402
-from tests.test_session import ready_session  # noqa: E402
+from tests.test_session import served  # noqa: E402
 
 IMAGES = tiny_model.STATEFUL_IMAGES
 
@@ -243,20 +240,8 @@ class TestOverTheLink:
 
   @pytest.fixture
   def link(self, spec, tmp_path):
-    srv = TcpTransport.listen('127.0.0.1', 0)
-    client_t = TcpTransport.connect('127.0.0.1', srv.getsockname()[1])
-    server_t, _ = TcpTransport.accept(srv)
-    srv.close()
-    session, _ = ready_session(spec, server_t, engine=NumpyEngine(), cache=tmp_path)
-    thread = threading.Thread(target=session.serve_forever, daemon=True)
-    thread.start()
-    client = JetlinkClient(client_t, deadline=10.0)
-    client.spec = spec
-    yield client
-    client.close()
-    server_t.close()
-    thread.join(1.0)
-    session.host.close()
+    with served(spec, engine=NumpyEngine(), cache=tmp_path) as (client, _, _):
+      yield client
 
   def test_the_state_carries_from_frame_to_frame(self, link, spec):
     frames = tiny_model.stateful_frames(8, seed=2)
@@ -414,7 +399,6 @@ class TestBenchTools:
     assert vp.reference_stateful(spec, Session(), tmp_path, len(frames)) == 0
     for i, want in enumerate(reference(frames)):
       np.testing.assert_allclose(np.load(tmp_path / f'out_ref_{i}.npy'), want, rtol=1e-6, atol=1e-6)
-    assert not vp.feeds_hidden_back(spec)
 
   def test_a_capture_replays_bit_for_bit_and_a_corrupt_one_does_not(self, spec, tmp_path):
     ve = self.script('verify_engine')
