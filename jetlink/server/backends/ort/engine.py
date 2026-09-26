@@ -115,17 +115,30 @@ class OrtEngine:
   def host_input(self, name: str) -> np.ndarray:
     return self._host[name]
 
-  def run(self) -> dict[str, np.ndarray]:
+  def _ask(self, *request):
     if self._proc is None:
       raise WorkerDied('engine is closed')
-    self._conn.send(('run',))
+    self._conn.send(request)
     if not self._conn.poll(RUN_TIMEOUT):
       raise WorkerDied(f'no answer from the onnxruntime worker in {RUN_TIMEOUT:.0f} s')
     msg = self._recv()
     if msg[0] != 'ok':
       raise RuntimeError(f"onnxruntime worker: {msg[1]}")
-    self.last_gpu_us = int(msg[1])
+    return msg
+
+  def run(self) -> dict[str, np.ndarray]:
+    self.last_gpu_us = int(self._ask('run')[1])
     return self._out
+
+  def loop_state(self, pairs: dict[str, str]) -> bool:
+    """Keep a stateful graph's queues in the worker, each next_state_ output
+    fed back as its state_ input there. Otherwise they cross the shared block
+    every frame, 12 MB on Cinque Terre V3 and cast to fp32 on the way."""
+    self._ask('loop', dict(pairs))
+    return True
+
+  def reset_state(self) -> None:
+    self._ask('reset')
 
   def warm(self) -> str:
     # CoreML allocates its working set on the first run and the second is the

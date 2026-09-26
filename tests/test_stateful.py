@@ -204,11 +204,12 @@ class TestPatch:
       patch_uint8_inputs(helper.make_model(graph))
 
 
-def _agrees(backend, model_path, spec, tmp_path, suffix):
+def _agrees(backend, model_path, spec, tmp_path, suffix, loops_itself):
   artifact = backend.build(model_path, tmp_path / f'tiny{suffix}', meta_extra={'spec': spec.to_dict()})
   engine = backend.load(artifact)
   try:
     assert set(engine.outputs) >= {'outputs', *tiny_model.STATE_PAIRS.values()}
+    assert for_model(spec, engine).on_engine is loops_itself
     frames = tiny_model.stateful_frames(7, seed=5)
     for got, want in zip(drive(engine, spec, frames, reset_at=(4,)),
                          reference(frames[:4]) + reference(frames[4:]), strict=True):
@@ -220,9 +221,9 @@ def _agrees(backend, model_path, spec, tmp_path, suffix):
 
 
 @pytest.mark.skipif(importlib.util.find_spec('onnxruntime') is None, reason='needs onnxruntime')
-def test_onnxruntime_loops_the_state_on_the_host(model_path, spec, tmp_path):
+def test_onnxruntime_loops_the_state_in_its_worker(model_path, spec, tmp_path):
   from jetlink.server.backends.ort import OrtBackend
-  _agrees(OrtBackend('cpu'), model_path, spec, tmp_path, '.ortcache')
+  _agrees(OrtBackend('cpu'), model_path, spec, tmp_path, '.ortcache', loops_itself=True)
 
 
 @pytest.mark.skipif(importlib.util.find_spec('tinygrad') is None, reason='needs tinygrad')
@@ -232,7 +233,7 @@ def test_tinygrad_returns_the_queues_and_loops_them(model_path, spec, tmp_path):
     backend = TinygradBackend('CPU')
   except Exception as e:
     pytest.skip(f'tinygrad CPU device unavailable: {e}')
-  _agrees(backend, model_path, spec, tmp_path, '.pkl')
+  _agrees(backend, model_path, spec, tmp_path, '.pkl', loops_itself=False)
 
 
 class TestOverTheLink:

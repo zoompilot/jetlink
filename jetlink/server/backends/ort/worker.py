@@ -91,7 +91,12 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
       -> ('attach', shm_name, laid_inputs, laid_outputs)
       <- ('ready', providers_in_use)
       -> ('run',)      <- ('ok', gpu_us) | ('error', text)
+      -> ('loop', {state_input: next_state_output})    <- ('ok', 0)
+      -> ('reset',)    <- ('ok', 0)
       -> ('close',)    child exits
+
+  After 'loop' each named output feeds its input on the next run from here,
+  and neither is read from or written to the block again; 'reset' zeroes them.
 
   Any exception before 'ready' is sent as ('error', traceback) and the child
   exits; the parent turns it into the same exception the in-process path
@@ -145,12 +150,19 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
     sinks = views(block, laid_out)
     plan = [([i.name for i in s.get_inputs()], [o.name for o in s.get_outputs()]) for s in chain]
     keepalive = create_keepalive(sessions)
+    looped: dict[str, str] = {}          # state_ input -> the next_state_ output that feeds it
+    state: dict[str, np.ndarray] = {}    # what those inputs get on the next run
     conn.send(('ready', [list(s.get_providers()) for s in chain]))
 
     while True:
       msg = conn.recv()
       if msg[0] == 'close':
         break
+      if msg[0] in ('loop', 'reset'):
+        looped = dict(msg[1]) if msg[0] == 'loop' else looped
+        state = {n: np.zeros_like(feeds[n]) for n in looped}
+        conn.send(('ok', 0))
+        continue
       if msg[0] != 'run':
         conn.send(('error', f"unknown request {msg[0]!r}"))
         continue
@@ -158,12 +170,14 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
         if keepalive is not None:
           keepalive.pulse()
         t0 = time.perf_counter()
-        between: dict[str, np.ndarray] = {}
+        between: dict[str, np.ndarray] = dict(state)
         for s, (in_names, out_names) in zip(chain, plan, strict=True):
           feed = {n: between[n] if n in between else feeds[n] for n in in_names}
           between.update(zip(out_names, s.run(out_names, feed), strict=True))
+        state = {n: np.asarray(between[nxt], feeds[n].dtype) for n, nxt in looped.items()}
         for name, sink in sinks.items():
-          np.copyto(sink, np.asarray(between[name]).reshape(sink.shape), casting='unsafe')
+          if name not in looped.values():
+            np.copyto(sink, np.asarray(between[name]).reshape(sink.shape), casting='unsafe')
         conn.send(('ok', int((time.perf_counter() - t0) * 1e6)))
       except Exception as e:
         if keepalive is not None:

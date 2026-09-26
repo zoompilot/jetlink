@@ -211,9 +211,10 @@ class StateLoop:
   in as state_<q> on the next. That is openpilot's ModelState since #38916,
   which aliases each next_ output onto its state_ input.
 
-  An engine with `loop_state` keeps the loop in device memory: the queues are
-  12 MB, which would otherwise cross to the host and back every frame. For any
-  other engine the copy is done here, after the reply has gone.
+  An engine with `loop_state` keeps the loop itself, TensorRT in device memory
+  and onnxruntime in its worker: the queues are 12 MB, which would otherwise
+  cross to the host and back every frame. For tinygrad the copy is done here,
+  after the reply has gone.
   """
 
   def __init__(self, spec: ModelSpec, engine):
