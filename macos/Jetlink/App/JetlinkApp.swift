@@ -20,7 +20,7 @@ struct JetlinkApp: App {
     .defaultSize(width: 1000, height: 640)
     .commands { AppCommands(appState: appState, navigation: navigation) }
 
-    MenuBarExtra("Jetlink", systemImage: menuBarSymbol) {
+    MenuBarExtra {
       MenuBarView()
         .jetlinkEnvironment(appState)
         .environment(navigation)
@@ -28,6 +28,9 @@ struct JetlinkApp: App {
           delegate.appState = appState
           appState.launch()
         }
+    } label: {
+      Image(nsImage: MenuBarGlyph.image(menuBarState))
+        .accessibilityLabel("Jetlink")
     }
     .menuBarExtraStyle(.menu)
 
@@ -38,15 +41,16 @@ struct JetlinkApp: App {
     }
   }
 
-  /// Three symbols: nothing running, running, and a comma on the other end.
-  private var menuBarSymbol: String {
+  /// The icon's mark in three states: faded with no server, in outline while
+  /// it waits for a comma, and filled once a comma is on the other end.
+  private var menuBarState: MenuBarGlyph.State {
     switch appState.server.runState {
     case .stopped, .failed:
-      return "cable.connector.slash"
+      return .off
     case .starting, .stopping:
-      return "cable.connector"
+      return .waiting
     case .serving:
-      return appState.server.link.state == .connected ? "car.fill" : "cable.connector"
+      return appState.server.link.state == .connected ? .connected : .waiting
     }
   }
 }
