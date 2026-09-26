@@ -24,7 +24,7 @@ case "$name" in
     for pkg in "$@"; do
       case "$pkg" in
         docker.io|docker-ce) ln -sf "$0" "$FAKE_BIN/docker" ;;
-        nvidia-container|nvidia-container-toolkit) ln -sf "$0" "$FAKE_BIN/nvidia-ctk" ;;
+        nvidia-container-toolkit) ln -sf "$0" "$FAKE_BIN/nvidia-ctk" ;;
       esac
     done ;;
 
@@ -38,7 +38,21 @@ case "$name" in
         done ;;
       mask) for u in "${@:2}"; do touch "$state/masked-$u"; done ;;
       unmask) for u in "${@:2}"; do rm -f "$state/masked-$u"; done ;;
-      show) echo "${FAKE_RESTARTS:-0}" ;;
+      show)
+        case " $* " in
+          *" nv-install-docker.service "*)
+            # JetPack's own Docker install: running for FAKE_NV_DOCKER_POLLS
+            # looks, and Docker is there once it has finished
+            left="$(cat "$state/nv-docker" 2>/dev/null || echo "${FAKE_NV_DOCKER_POLLS:-0}")"
+            if [ "$left" -gt 0 ]; then
+              echo $((left - 1)) >"$state/nv-docker"
+              echo activating
+            else
+              [ -f "$state/nv-docker" ] && ln -sf "$0" "$FAKE_BIN/docker"
+              echo inactive
+            fi ;;
+          *) echo "${FAKE_RESTARTS:-0}" ;;
+        esac ;;
     esac ;;
 
   journalctl)
@@ -52,7 +66,15 @@ case "$name" in
               echo '{"nvidia":{"path":"nvidia-container-runtime"},"runc":{"path":"runc"}}'
             else echo '{"runc":{"path":"runc"}}'; fi ;;
       manifest) [ "${FAKE_PUBLISHED:-0}" = 1 ] || { echo "no such manifest" >&2; exit 1; } ;;
-      pull|build|rm|rmi|stop) ;;
+      pull)
+        # the first FAKE_PULL_FAILS pulls are cut off part way
+        left="$(cat "$state/pull-fails" 2>/dev/null || echo "${FAKE_PULL_FAILS:-0}")"
+        if [ "$left" -gt 0 ]; then
+          echo $((left - 1)) >"$state/pull-fails"
+          echo "failed to copy: failed to send write: EOF" >&2
+          exit 1
+        fi ;;
+      build|rm|rmi|stop) ;;
       image)
         case "${2:-}" in
           inspect) echo "sha256:$(printf '%064d' 7)" ;;

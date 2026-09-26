@@ -174,7 +174,10 @@ puts together, from a checkout of this repository:
 
 1. Docker, and the NVIDIA Container Toolkit with `sudo nvidia-ctk runtime
    configure --runtime=docker`. On JetPack 6 use Ubuntu's `docker.io`: Docker 28
-   and later cannot run containers on a JetPack 6 kernel.
+   and later cannot run containers on a JetPack 6 kernel. On a Jetson install
+   `nvidia-container-toolkit`, not JetPack's `nvidia-container`: that package
+   removes whatever Docker is installed and puts in the newest Docker CE, in
+   the background, a minute after apt finishes.
 2. The server image: `sudo docker/build.sh` picks `docker/Dockerfile` (CUDA 13,
    JetPack 7.2 and PCs) or `docker/Dockerfile.jetpack6`.
 3. `/etc/jetlink/server.env`, which `scripts/jetlink-run-server` reads to start

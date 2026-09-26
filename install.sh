@@ -46,6 +46,8 @@ WAIT_ONLINE_UNITS="systemd-networkd-wait-online.service NetworkManager-wait-onli
 DT_MODEL="${JETLINK_TEST_DT_MODEL:-/proc/device-tree/model}"
 MEM_SLEEP="${JETLINK_TEST_MEM_SLEEP:-/sys/power/mem_sleep}"
 SWAPS="${JETLINK_TEST_SWAPS:-/proc/swaps}"
+# seconds between looks at something the installer waits on
+POLL_S="${JETLINK_TEST_POLL_S:-5}"
 
 OPT_YES=0 OPT_UPDATE=0 OPT_RECONFIGURE=0 OPT_BUILD=0 OPT_DRY_RUN=0 OPT_UNINSTALL=0
 OPT_IMAGE="" OPT_REF="${JETLINK_REF:-}"
@@ -307,6 +309,11 @@ detect() {
   DISK_GB=$(df -Pk "$where" | awk 'NR == 2 {printf "%d", $4 / 1048576}')
   DISK_GB="${JETLINK_TEST_FREE_GB:-$DISK_GB}"
 
+  detect_docker
+}
+
+detect_docker() {
+  HAVE_DOCKER=0 DOCKER_VERSION='' HAVE_TOOLKIT=0 HAVE_NVIDIA_RUNTIME=0 SNAP_DOCKER=0
   if [ -x /snap/bin/docker ]; then SNAP_DOCKER=1; fi
   if command -v docker >/dev/null 2>&1; then
     HAVE_DOCKER=1
@@ -693,6 +700,40 @@ install_base_packages() {
   step "Installing ${missing[*]}" apt_get install --no-install-recommends "${missing[@]}"
 }
 
+# JetPack's `nvidia-container` package, which nvidia-jetpack pulls in, carries
+# its own Docker installer: installing it starts nv-install-docker.service,
+# which stops Docker, removes every Docker package, installs the newest Docker
+# CE and deletes itself, failing and retrying every 30 s while apt is busy.
+# Whatever the installer does to Docker meanwhile is undone under it (a pull
+# dies with "failed to send write: EOF"), so a run in progress finishes first.
+# The installer never starts one itself: see install_toolkit.
+NV_DOCKER_UNIT=nv-install-docker.service
+
+nvidia_docker_setup_running() {
+  case "$(as_root systemctl show -p ActiveState --value "$NV_DOCKER_UNIT" 2>/dev/null)" in
+    activating|active|reloading|deactivating) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+wait_nvidia_docker_setup() {
+  local deadline=$((SECONDS + 900))
+  while nvidia_docker_setup_running; do
+    if [ $SECONDS -ge $deadline ]; then
+      echo "JetPack's Docker setup ($NV_DOCKER_UNIT) is still running after 15 minutes;"
+      echo "see: systemctl status $NV_DOCKER_UNIT"
+      return 1
+    fi
+    sleep "$POLL_S"
+  done
+}
+
+settle_docker() {
+  [ "$JETSON" = 1 ] && nvidia_docker_setup_running || return 0
+  step "Waiting for JetPack to finish installing Docker" wait_nvidia_docker_setup
+  detect_docker
+}
+
 install_docker() {
   if [ "$HAVE_DOCKER" = 1 ]; then
     as_root systemctl is-active --quiet docker || step "Starting Docker" as_root systemctl enable --now docker
@@ -730,9 +771,12 @@ add_docker_repo() {
 install_toolkit() {
   if [ "$HAVE_TOOLKIT" = 0 ]; then
     if [ "$JETSON" = 1 ]; then
-      # from the JetPack package source every Jetson already has
+      # From the JetPack package source every Jetson already has. The toolkit
+      # itself, not JetPack's `nvidia-container`: that one would replace the
+      # Docker just installed, in the background (see settle_docker), and on
+      # JetPack 6 with a Docker too new for its kernel.
       step "Getting the package list" apt_get update
-      step "Installing the NVIDIA Container Toolkit" apt_get install nvidia-container
+      step "Installing the NVIDIA Container Toolkit" apt_get install nvidia-container-toolkit
     else
       step "Adding NVIDIA's package source" add_toolkit_repo
       step "Installing the NVIDIA Container Toolkit" apt_get install nvidia-container-toolkit
@@ -766,7 +810,7 @@ get_image() {
   if [ -n "$OPT_IMAGE" ]; then
     IMAGE_REF="$OPT_IMAGE" IMAGE_SOURCE=given
     if ! as_root docker image inspect "$IMAGE_REF" >/dev/null 2>&1; then
-      step "Downloading $IMAGE_REF" as_root docker pull "$IMAGE_REF"
+      step "Downloading $IMAGE_REF" pull_image "$IMAGE_REF"
     fi
   elif [ "$OPT_BUILD" = 1 ] || [ "$SOURCE" = local ]; then
     build_image
@@ -786,7 +830,21 @@ try_pull() {
   local ref=$1
   # a missing tag fails in seconds; only then is it worth the spinner
   as_root docker manifest inspect "$ref" >/dev/null 2>&1 || return 1
-  step "Downloading the Jetlink server (about 4 GB)" as_root docker pull "$ref"
+  step "Downloading the Jetlink server (about 4 GB)" pull_image "$ref"
+}
+
+# Docker keeps the layers an interrupted pull finished, so another try costs
+# only the rest: a Wi-Fi drop three gigabytes in should not end the install.
+pull_image() {
+  local attempt
+  for attempt in 1 2 3; do
+    as_root docker pull "$1" && return 0
+    if [ "$attempt" != 3 ]; then
+      echo "the download was interrupted; trying again"
+      sleep "$POLL_S"
+    fi
+  done
+  return 1
 }
 
 build_image() {
@@ -1181,6 +1239,7 @@ main() {
 
   get_root
   heading "Installing"
+  settle_docker
   install_base_packages
   prepare_source
   install_docker

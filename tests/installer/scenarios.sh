@@ -16,6 +16,8 @@ export FAKE_BIN FAKE_LOG=/tmp/fake.log FAKE_STATE=/tmp/fake-state
 export JETLINK_TEST_DT_MODEL=/tmp/dt-model JETLINK_TEST_MEM_SLEEP=/tmp/mem-sleep
 # the same questions on every machine: plenty of disk, and no swap yet
 export JETLINK_TEST_FREE_GB=100 JETLINK_TEST_SWAPS=/tmp/swaps
+# nothing waited on here is real, so there is nothing to wait for
+export JETLINK_TEST_POLL_S=0
 printf 'Filename\tType\tSize\tUsed\tPriority\n/dev/zram0 partition 1000000 0 5\n' >/tmp/swaps
 PATH="$FAKE_BIN:$PATH"
 OUT=/tmp/out.txt
@@ -54,7 +56,8 @@ reset_box() {
       swapoff jetson_clocks curl gpg; do
     ln -sf "$SRC/tests/installer/fake.sh" "$FAKE_BIN/$c"
   done
-  unset FAKE_ARCH FAKE_SMI FAKE_GPU_OK FAKE_PUBLISHED FAKE_PM_REBOOT FAKE_NVIDIA_RUNTIME
+  unset FAKE_ARCH FAKE_SMI FAKE_GPU_OK FAKE_PUBLISHED FAKE_PM_REBOOT FAKE_NVIDIA_RUNTIME FAKE_NV_DOCKER_POLLS \
+    FAKE_PULL_FAILS
 }
 
 jetson() {  # jetson L4T_RELEASE REVISION
@@ -68,7 +71,7 @@ jetson() {  # jetson L4T_RELEASE REVISION
 < POWER_MODEL ID=2 NAME=MAXN_SUPER >
 < POWER_MODEL ID=3 NAME=7W >
 EOF
-  ln -sf "$SRC/tests/installer/fake.sh" "$FAKE_BIN/nvidia-ctk"   # JetPack's ISO carries the toolkit
+  # no container toolkit: a JetPack 7.2.1 ISO install has none until one is installed
   export FAKE_ARCH=aarch64
 }
 
@@ -130,6 +133,9 @@ expect_no_out "fastest power mode ("
 expect_no_out "Add 8 GB of swap so"
 expect_out "Jetlink is installed and running"
 expect_ran "apt-get -o DPkg::Lock::Timeout=900 -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin"
+expect_ran "apt-get -o DPkg::Lock::Timeout=900 -y install nvidia-container-toolkit"
+# JetPack's meta package would reinstall Docker in the background, mid-pull
+refute "installed JetPack's nvidia-container" grep -qE "install nvidia-container( |$)" "$FAKE_LOG"
 expect_ran "nvidia-ctk runtime configure --runtime=docker"
 expect_ran "docker build --network host -f /src/docker/Dockerfile -t jetlink:local-cuda /src"
 expect_ran "nvpmodel -m 2"
@@ -227,6 +233,33 @@ unset JETLINK_REPO_URL
 show_on_failure "$f"
 
 # ---------------------------------------------------------------------------
+scenario "JetPack still installing Docker when the installer starts"
+reset_box; jetson 39 2.1; f=$FAILED
+# nvidia-container's nv-install-docker is mid-run: wait it out, then use its Docker
+export FAKE_NV_DOCKER_POLLS=3
+install '' --yes
+expect_rc 0
+expect_out "Waiting for JetPack to finish installing Docker"
+expect_not_ran "install docker-ce"
+expect_ran "nvidia-ctk runtime configure --runtime=docker"
+expect_ran "systemctl restart docker"
+expect_out "Jetlink is installed and running"
+show_on_failure "$f"
+
+# ---------------------------------------------------------------------------
+scenario "a download cut off part way is tried again"
+reset_box; jetson 39 2.1; with_docker; f=$FAILED
+export FAKE_PUBLISHED=1 FAKE_PULL_FAILS=2 JETLINK_REPO_URL=file:///tmp/repo
+bash </src/install.sh -s -- --yes >"$OUT" 2>&1; RC=$?
+expect_rc 0
+expect_out "Downloading the Jetlink server"
+expect_in /var/log/jetlink-install.log "the download was interrupted; trying again"
+expect_in /etc/jetlink/server.env "JETLINK_IMAGE_REF=ghcr.io/zoompilot/jetlink:edge-cuda"
+expect_not_ran "docker build"
+unset JETLINK_REPO_URL
+show_on_failure "$f"
+
+# ---------------------------------------------------------------------------
 scenario "JetPack 6.2 Jetson, switched power"
 reset_box; jetson 36 4.3; f=$FAILED
 export FAKE_GPU_OK="--runtime nvidia"
@@ -235,6 +268,7 @@ install '2\n\n'
 expect_rc 0
 expect_out "JetPack 6 (Jetson Linux 36.4.3)"
 expect_ran "apt-get -o DPkg::Lock::Timeout=900 -y install docker.io"
+expect_ran "apt-get -o DPkg::Lock::Timeout=900 -y install nvidia-container-toolkit"
 expect_ran "docker build --network host -f /src/docker/Dockerfile.jetpack6 -t jetlink:local-jetpack6 /src"
 expect_in /etc/jetlink/server.env "JETLINK_FLAVOR=jetpack6"
 expect_in /etc/jetlink/server.env "JETLINK_SLEEP_AFTER=0"
