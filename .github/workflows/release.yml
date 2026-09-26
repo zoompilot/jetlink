@@ -249,7 +249,7 @@ jobs:
           # second one; the alias keeps older instructions working.
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile.jetpack6
@@ -305,7 +305,7 @@ jobs:
 
       - name: Build and push by digest
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile
