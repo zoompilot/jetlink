@@ -30,18 +30,19 @@ scripts/run-mac.sh
 ```
 
 The first run creates a Python environment and installs dependencies. The server
-then serves the comma over USB using CoreML on the GPU. Plug the comma into a
+then serves the comma over USB using CoreML, with the model's vision layers on
+the Neural Engine and the rest on the GPU. Plug the comma into a
 **USB-A port on a hub or dock** with an A-to-C data cable, or use a USB-C-to-A
 adapter. Going through USB-A makes the Mac take the host role reliably; a plain
 C-to-C cable may not.
 
 Runtime and storage:
 
-- CoreML takes **about 10 seconds** to prepare the model the first time, and
-  about 2 seconds to load it again every time the server restarts.
+- CoreML takes **about 20 seconds** to prepare the model the first time, and
+  from under a second to about 10 seconds to load it again every time the server restarts.
 - The script holds the Mac awake on AC power. On battery, keep the lid open.
 - Models and prepared engines live in `models_cache/` in the checkout,
-  about 3 GB per model with CoreML: a 766 MB download plus a 2.3 GB engine.
+  about 3 GB per model with CoreML: a 766 MB download plus a 2.1 GB engine.
   Set `JETLINK_CACHE` to move them.
 
 Options:
@@ -50,15 +51,18 @@ Options:
 # Serve a test client over TCP instead of the comma (see Test without a comma)
 JETLINK_TRANSPORT=tcp scripts/run-mac.sh
 
-# tinygrad on Metal: 66 ms a frame on an M1 Pro, against CoreML's 43
+# The GPU only, if another app keeps the Neural Engine busy: 44 ms a frame
+scripts/run-mac.sh --device coreml
+
+# tinygrad on Metal: 66 ms a frame on an M1 Pro
 JETLINK_BACKEND=tinygrad scripts/run-mac.sh
 
 # Prepare a model ahead of time, then exit
 scripts/run-mac.sh --build /path/to/big_driving_supercombo.onnx
 ```
 
-Measured on an M1 Pro: CoreML on the GPU runs 43 ms per frame against a 50 ms
-budget. Details in [backends and measurements](backends.md#mac-measured).
+Measured on an M1 Pro: the default runs 29 to 32 ms per frame against a 50 ms
+budget, the GPU alone 44 ms. Details in [backends and measurements](backends.md#mac-measured).
 
 ## Linux (NVIDIA GPU)
 
@@ -230,7 +234,7 @@ docker run --rm -it --network container:jetlink-cuda \
 | USB permission error on Linux | Install the udev rule, then replug the comma |
 | TCP connection refused | Start the server with `--transport tcp`. Check the IP address and allow port 5599 through the firewall. |
 | GPU not found in Docker | Redo the GPU access setup and rerun the `nvidia-smi` check; the driver must be 580 or newer |
-| Mac looks stuck loading | CoreML prepares in about 10 seconds and loads in about 2 on an M1 Pro. If loading takes minutes, remove the prepared engine and prepare it again. Check the server output for errors. |
+| Mac looks stuck loading | CoreML prepares in about 20 seconds and loads in up to 10 on an M1 Pro. If loading takes minutes, remove the prepared engine and prepare it again. Check the server output for errors. |
 | Link drops when laptop sleeps | Keep it awake, powered, and open |
 
 Desktop caches use `JETLINK_CACHE` if set, otherwise `~/.cache/jetlink`, or

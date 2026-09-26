@@ -18,7 +18,7 @@ status and disk use in the app.
 | A Mac with Apple silicon | The app is arm64 only. Intel Macs are not supported. |
 | macOS 15 or later | The app uses system features added in macOS 15. |
 | 16 GB of memory recommended | CoreML preparation uses about 3 GB on an M1 Pro; allow memory for other apps. |
-| About 3 GB of disk per model | A 766 MB download plus a 2.3 GB CoreML engine. |
+| About 3 GB of disk per model | A 766 MB download plus a 2.1 GB CoreML engine. |
 | A USB-A port on a hub, dock or adapter | Going through USB-A makes the Mac take the host role reliably. |
 | A USB 3 A-to-C data cable | Charge-only cables do not work. |
 
@@ -77,12 +77,12 @@ What the steps mean:
 | Prepared | A compiled engine is on disk, but it is not loaded. |
 | Loaded | The model is in memory and ready for the comma. |
 
-Preparing with CoreML takes about 10 seconds the first time, and loading a
-prepared engine takes about 2 seconds on an M1 Pro.
+Preparing takes about 20 seconds the first time on an M1 Pro, and loading a
+prepared engine takes under a second when it was the last model loaded and up to about
+10 seconds otherwise.
 
 You can close the window. The server keeps running and the menu bar icon stays.
-Quitting Jetlink stops the server, and the next start loads the engine again in
-about 2 seconds.
+Quitting Jetlink stops the server, and the next start loads the engine again.
 
 ## Plug in
 
@@ -111,7 +111,7 @@ then turns green. For driving behavior, see the
 | Start server when Jetlink opens | Starts the server as soon as the app launches. On by default. |
 | Open Jetlink at login | Adds Jetlink as a login item, so it is running before you get in the car. |
 | Keep the Mac awake while serving | Prevents idle sleep when connected to power. On battery, keep the lid open. |
-| Cache folder | Stores models and prepared engines. A CoreML engine is about 2.3 GB. Changing it takes effect when the server restarts. |
+| Cache folder | Stores models and prepared engines. A CoreML engine is about 2 GB. Changing it takes effect when the server restarts. |
 
 The cache folder defaults to `~/Library/Application Support/Jetlink/cache`. If
 you already used `scripts/run-mac.sh`, you have a `models_cache/` folder in a
@@ -132,19 +132,21 @@ Click **Restart server** to apply these settings.
 
 ## Backends
 
-Automatic uses CoreML on the GPU. The measurements below use an M1 Pro;
+Automatic runs the model's vision layers on the Neural Engine and the rest on
+the GPU, the fastest way on a Mac. The measurements below use an M1 Pro;
 performance on other Macs may differ. See [backends and
 measurements](backends.md#mac-measured).
 
-| Backend | Frame time on an M1 Pro | Prepare and load | Pick it when |
-| --- | --- | --- | --- |
-| Automatic (recommended) | 43 ms | About 10 seconds to prepare, about 2 seconds each later load | Use this by default. |
-| CoreML on the GPU | 43 ms, no frame over budget in 390 | About 10 seconds to prepare, about 2 seconds each later load | Select CoreML explicitly. |
-| CoreML with the Neural Engine | 36 ms, no frame over budget in 1,740 | About 16 seconds to prepare, under a second each later load | Use it for the lower frame time when nothing else on the Mac uses the Neural Engine. |
-| tinygrad on Metal | 66 ms, over the 50 ms budget every frame | About 15 seconds to prepare, about a second to load | Test tinygrad; it exceeds the driving frame budget on this Mac. |
+| Backend | Frame time on an M1 Pro | Pick it when |
+| --- | --- | --- |
+| Automatic (recommended) | About 30 ms: 32 ms on Cinque Terre V3, 29 ms on V2 | Use this by default. |
+| CoreML on the GPU | About 44 ms | Another app keeps the Neural Engine busy. |
+| tinygrad on Metal | 66 ms, over the 50 ms budget every frame | Test tinygrad; it exceeds the driving frame budget on this Mac. |
 
-Disk use depends on the backend: a CoreML engine is about 2.3 GB, a tinygrad
-engine is 777 MB.
+Automatic assumes Jetlink is the only app using the Neural Engine. If you
+chose **CoreML on the GPU** in an earlier version, it stays selected; choose
+**Automatic** to switch. Disk use depends on the backend: a CoreML engine is
+about 2 GB, a tinygrad engine is 777 MB.
 
 ## Troubleshooting
 
@@ -152,11 +154,11 @@ engine is 777 MB.
 | --- | --- |
 | The server failed to start | Open **Logs**. The last lines say why. The usual causes are another server already holding the USB device, and a cache folder that is not writable. |
 | The app stays on Waiting for comma | Use a USB-A port on a hub, dock or adapter, use a USB 3 data cable, and check that **Accelerator Link** is on under Settings > Models on the comma. |
-| Preparing takes a long time | CoreML should take about 10 seconds to prepare and about 2 seconds to load. If it takes minutes, remove the prepared engine under **Models** and prepare it again. Close other large applications to free memory. |
+| Preparing takes a long time | CoreML should take about 20 seconds to prepare and up to about 10 seconds to load. If it takes minutes, remove the prepared engine under **Models** and prepare it again. Close other large applications to free memory. |
 | The comma says **Big Model Lost** | Check the cable first. Then check that the Mac did not sleep: turn on **Keep the Mac awake while serving** and keep the Mac on power. |
 | Everything rebuilt after an update | A new runtime version means a new prepared engine, so the model is prepared again. The download is kept and is not fetched twice. |
 | The model list is empty | The Mac needs internet for the list. Open **Models** and choose **Refresh**. |
-| Frames are slow or the rate is below 20 | Check the cable and the USB port, then check whether another heavy application is using the GPU. |
+| Frames are slow or the rate is below 20 | Check the cable and the USB port, then check whether another heavy application is using the GPU or the Neural Engine. If one is, choose **CoreML on the GPU** under Settings > Server. |
 
 ## Where things live
 

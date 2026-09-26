@@ -110,7 +110,7 @@ Do this once, whichever computer you chose.
    turns green when ready. No manual model download or SSH setup is needed.
 
 The default model takes about **3 minutes to prepare on Jetson**. On Mac,
-preparation takes about **10 seconds**, with later loads around **2 seconds**;
+preparation takes about **20 seconds**, with later loads from under a second to about **10 seconds**;
 download time is extra. The screenshots above show an earlier app build.
 
 | Icon | Meaning |
