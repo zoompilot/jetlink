@@ -100,6 +100,10 @@ if [ "${SLEEP_AFTER%.*}" -gt 0 ] 2>/dev/null; then
   if [ -n "$rtc" ]; then
     args+=(--mount "type=bind,source=$rtc,target=$rtc")
   fi
+  # Writable mounts are not enough under AppArmor (stock JetPack is Ubuntu):
+  # Docker's docker-default profile denies every write under /sys, silently,
+  # so both writes fail with EACCES and the server logs "sleep disabled".
+  args+=(--security-opt apparmor=unconfined)
   # The comma presenting its gadget only wakes a sleeping Jetson if the hub it
   # hangs off is armed for remote wakeup; see wake-setup. On the host, because
   # /sys is read-only in the container.

@@ -162,6 +162,8 @@ JETLINK_DRY_RUN=1 /usr/local/lib/jetlink/run-server >/tmp/cmd.txt 2>&1
 expect_in /tmp/cmd.txt "--runtime nvidia --gpus all"
 expect_in /tmp/cmd.txt "--sleep-after 120"
 expect_in /tmp/cmd.txt "-v /sys/power:/sys/power"
+# docker-default's AppArmor profile denies those writes, mounts or not
+expect_in /tmp/cmd.txt "--security-opt apparmor=unconfined"
 expect_in /tmp/cmd.txt "-v /mnt/data/jetlink:/var/cache/jetlink"
 # the helper
 jetlink status >/tmp/status.txt 2>&1
@@ -279,6 +281,7 @@ expect_no_file /etc/systemd/system/jetlink-poweroff.path
 expect_no_file /etc/udev/rules.d/99-jetlink-usb-wakeup.rules
 JETLINK_DRY_RUN=1 /usr/local/lib/jetlink/run-server >/tmp/cmd.txt 2>&1
 if grep -q -- "--sleep-after" /tmp/cmd.txt; then fail "switched power should not sleep"; else ok; fi
+refute "switched power needs no AppArmor exception" grep -qF -- "apparmor=unconfined" /tmp/cmd.txt
 show_on_failure "$f"
 
 # ---------------------------------------------------------------------------
