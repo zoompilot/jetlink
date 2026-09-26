@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # Serve from a Mac. Makes a venv on first run, then serves the comma over USB
-# with CoreML through onnxruntime, the frame that makes the budget (39 ms on an
-# M1 Pro, docs/platforms.md). JETLINK_BACKEND=tinygrad picks tinygrad on
-# Metal instead: 66 ms a frame there, but a one-second start against CoreML's
-# nine minutes. JETLINK_TRANSPORT=tcp serves a bench client on port 5599
-# instead of the comma.
+# with CoreML through onnxruntime: on Apple silicon the vision layers run on the
+# Neural Engine and the rest on the GPU, 29 to 32 ms a frame on an M1 Pro
+# (docs/backends.md). If another app keeps the Neural Engine busy, pass
+# --device coreml for the GPU alone, 44 ms. JETLINK_BACKEND=tinygrad picks
+# tinygrad on Metal instead: 66 ms a frame there. JETLINK_TRANSPORT=tcp serves a
+# bench client on port 5599 instead of the comma.
 #
 # USB is the default because the comma is the only client that matters and it
 # only speaks USB in the car. Plug it into a USB-A port on a hub or dock with an
 # A-to-C cable; the server waits for the gadget until then.
 #
 # The cache is models_cache/ beside this checkout unless JETLINK_CACHE says
-# otherwise: a CoreML artifact is 10 GB and took eighteen minutes, so it should be
-# where you can see it, back it up and move it with the checkout, not under
-# ~/Library/Caches where a cleaner tool deletes it.
+# otherwise: a prepared model is about 2 GB, so it should be where you can see
+# it, back it up and move it with the checkout, not under ~/Library/Caches where
+# a cleaner tool deletes it.
 #
 # caffeinate -s: an idle Mac sleeps, and nothing wakes it on a USB edge the way
 # the Jetson's hub does, so it is held awake for as long as the server runs.

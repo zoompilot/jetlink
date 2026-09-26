@@ -97,6 +97,11 @@ def default_cache_dir() -> Path:
   return Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'jetlink'
 
 
+def is_apple_silicon() -> bool:
+  """A Mac with a Neural Engine, where `auto` means onnxruntime's `ane`."""
+  return sys.platform == 'darwin' and platform.machine() == 'arm64'
+
+
 def _run(cmd: list[str]) -> str:
   try:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout.strip()

@@ -4,13 +4,17 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-One CPU core kept busy while frames arrive, for the `ane` device.
+One CPU core kept busy while frames arrive, for `ane`'s one-session layout.
 
 At 20 frames a second the CPU drops its clocks in the gaps between frames,
-and CoreML's share of the next prediction then runs slowly. On an M1 Pro,
-with the vision trunk on the Neural Engine and the policy on the GPU, one
-busy core took a paced run from 33.8 ms mean and 41.6 ms p99, with the GPU
-already kept awake (metal.py), to 27.3 and 28.7 (1,200 frames, 2026-09-25).
+and CoreML's share of the next prediction then runs slowly. On an M1 Pro at
+20 Hz (2026-09-25), with Cinque Terre V2 in one session with every unit
+allowed, one busy core took the round trip from 29.2 ms mean and 32.3 ms p99
+to 28.7 and 31.9, interleaved over 1,200 frames each. The split `ane` runs
+for a stateful graph measured no faster with it, so it gets none. Spinning
+only in the 10 ms before each expected frame spun a tenth as much and
+matched the mean, but one block in three reached a 38 ms p99, so it is not
+used.
 
 The spinning is a separate process, not a thread: a Python thread spinning
 in the worker would hold the GIL the frame loop needs, and the worker is a
@@ -79,17 +83,15 @@ class CpuKeepWarm:
 
 
 def create_cpu_keepwarm(sessions: list[tuple[str, list]]) -> CpuKeepWarm | None:
-  """A keep-warm for a CoreML session with every compute unit allowed (the
-  `ane` device), on a Mac; None otherwise, or with JETLINK_CPU_KEEPWARM=0."""
-  mode = os.environ.get('JETLINK_CPU_KEEPWARM', '1')
-  if sys.platform != 'darwin' or mode == '0':
+  """A keep-warm for a CoreML session with every compute unit allowed (`ane`
+  on a graph whose history the server queues), on a Mac; None otherwise, or
+  with JETLINK_CPU_KEEPWARM=0."""
+  if sys.platform != 'darwin' or os.environ.get('JETLINK_CPU_KEEPWARM', '1') == '0':
     return None
   units = [p[1].get('MLComputeUnits') if isinstance(p, tuple) else None
            for _, providers in sessions for p in providers
            if (p[0] if isinstance(p, tuple) else p) == 'CoreMLExecutionProvider']
-  if not units:
-    return None
-  if mode != 'always' and not any(unit in ('ALL', 'CPUAndNeuralEngine') for unit in units):
+  if not units or any(unit != 'ALL' for unit in units):
     return None
   try:
     return CpuKeepWarm()

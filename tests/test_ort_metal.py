@@ -147,8 +147,8 @@ def test_initialization_failure_is_optional(monkeypatch, caplog):
 
 
 def test_ane_trunk_with_gpu_policy_enables_keepalive(monkeypatch):
-  # On an M1 Pro at 20 Hz the split measured 44.3 ms mean without the
-  # keep-alive and 33.8 with it (27.3 with the CPU keep-warm too), 2026-09-25.
+  # On an M1 Pro at 20 Hz the split measured 46.4 ms mean without the
+  # keep-alive and 35.8 with it, 2026-09-25.
   monkeypatch.setattr(metal.sys, 'platform', 'darwin')
   monkeypatch.delenv('JETLINK_METAL_KEEPALIVE', raising=False)
   sentinel = object()

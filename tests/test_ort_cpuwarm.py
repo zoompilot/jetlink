@@ -28,8 +28,10 @@ def cpu_seconds(pid: int) -> float:
   ('darwin', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'ALL'})], True),
   ('darwin', True, [('CoreMLExecutionProvider', {'MLComputeUnits': 'ALL'})], False),
   ('linux', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'ALL'})], False),
-  # the GPU path was not measured with it; the CPU provider has nothing to wait on
+  # the GPU path and the split measured no faster with it; the CPU provider
+  # has nothing to wait on
   ('darwin', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndGPU'})], False),
+  ('darwin', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndNeuralEngine'})], False),
   ('darwin', False, ['CPUExecutionProvider'], False),
 ])
 def test_only_the_ane_device_keeps_a_core_warm(monkeypatch, platform, disabled, providers, enabled):

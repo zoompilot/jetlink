@@ -92,11 +92,15 @@ class TestSelect:
 
   def test_a_mac_tries_coreml_by_name_then_tinygrad(self, monkeypatch):
     """An onnxruntime without the CoreML provider must not serve off the CPU
-    on auto; tinygrad on Metal is the next best, not a 600 ms frame."""
+    on auto; tinygrad on Metal is the next best, not a 600 ms frame. On Apple
+    silicon the CoreML device is the Neural Engine split, the fastest there."""
     monkeypatch.setattr(backends.sys, 'platform', 'darwin')
     monkeypatch.setattr(backends, '_importable', lambda m: m in ('onnxruntime', 'tinygrad'))
-    assert backends._candidates('auto') == [('ort', 'coreml'), ('tinygrad', 'auto')]
+    monkeypatch.setattr(backends, 'is_apple_silicon', lambda: True)
+    assert backends._candidates('auto') == [('ort', 'ane'), ('tinygrad', 'auto')]
     assert backends._candidates('METAL') == [('ort', 'METAL'), ('tinygrad', 'METAL')]
+    monkeypatch.setattr(backends, 'is_apple_silicon', lambda: False)
+    assert backends._candidates('auto') == [('ort', 'coreml'), ('tinygrad', 'auto')]
     monkeypatch.setattr(backends.sys, 'platform', 'linux')
     monkeypatch.setattr(backends, '_importable', lambda m: m in ('tensorrt', 'cuda', 'onnxruntime', 'tinygrad'))
     assert backends._candidates('auto') == [('trt', 'auto'), ('tinygrad', 'auto'), ('ort', 'auto')]
