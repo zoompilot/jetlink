@@ -285,8 +285,12 @@ def _staged_on_the_cpu(device, path, tmp_path, split=False):
 
 
 def test_the_neural_engine_split_computes_what_the_gpu_graph_does(backend, tmp_path):
-  """Bit for bit, on the same provider: the cut changes where the graph runs,
-  never what it computes."""
+  """On the same provider, the cut changes where the graph runs, never what it
+  computes. To within fp16 rounding, not bit for bit: whether two layouts of
+  one graph round alike depends on how onnxruntime fuses and orders them.
+  1.29 gave the two identical results; 1.30 fuses the whole graph across the
+  cut and lands one fp16 step (0.03125) from the split. A miswired split is
+  off by whole units, hundreds of steps."""
   path = tiny_model.write(tmp_path / 'tiny.onnx')
   whole = backend.load(_staged_on_the_cpu('coreml', path, tmp_path))
   split = backend.load(_staged_on_the_cpu('ane', path, tmp_path, split=True))
@@ -296,8 +300,11 @@ def test_the_neural_engine_split_computes_what_the_gpu_graph_does(backend, tmp_p
     assert set(split.outputs) == set(whole.outputs) == {'outputs'}
     for seed in range(3):
       inputs = tiny_model.random_inputs(seed)
-      np.testing.assert_array_equal(np.asarray(infer(split, inputs)['outputs']),
-                                    np.asarray(infer(whole, inputs)['outputs']))
+      want = np.asarray(infer(whole, inputs)['outputs'])
+      got = np.asarray(infer(split, inputs)['outputs'])
+      # four fp16 steps at the largest output
+      step = 2.0 ** (np.floor(np.log2(np.max(np.abs(want)))) - 10)
+      np.testing.assert_allclose(got, want, rtol=0, atol=4 * step)
   finally:
     split.close()
     whole.close()
