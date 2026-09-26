@@ -322,7 +322,88 @@ def test_prepare_for_a_model_that_is_not_here_is_refused(bench):
   c = bench.connect()
   c.send(id=3, cmd='prepare', sha256=OTHER)
   reply = c.wait_for('reply', id=3)
-  assert reply['ok'] is False and 'not downloaded' in reply['error']
+  assert reply['ok'] is False and 'not in the catalog' in reply['error']
+
+
+def gated_fetch(bench, sha256: str = SHA):
+  """A fetch that writes the model once the test lets it, and the gate."""
+  gate = threading.Event()
+
+  def fetch(ref_or_sha, progress, should_stop):
+    progress(0.0)
+    assert gate.wait(5.0)
+    path = bench.registry.model_path(sha256)
+    path.write_bytes(b'x' * bench.spec.nbytes)
+    return path
+
+  bench.registry.fetch_impl = fetch
+  return gate
+
+
+def downloads_settled(bench) -> None:
+  """Every download finished, and whatever it started after: one worker runs them all."""
+  bench.server._downloads.submit(lambda: None).result(timeout=5.0)
+
+
+def test_prepare_downloads_a_model_that_is_not_here_then_builds_it(bench):
+  bench.registry.resolvable[REF] = Pointer(SHA, bench.spec.nbytes)
+  bench.registry.pointers[REF] = bench.registry.resolvable[REF]
+  gate = gated_fetch(bench)
+  c = bench.connect()
+  c.send(id=1, cmd='prepare', sha256=SHA)
+  reply = c.wait_for('reply', id=1)
+  assert reply['ok'] is True and reply['state'] == 'downloading' and reply['sha256'] == SHA
+  assert c.wait_for('download', state='started')['total'] == bench.spec.nbytes
+  gate.set()
+  c.wait_for('download', state='done')
+  assert c.wait_for('engine', state='ready')['sha256'] == SHA
+  assert len(bench.cache.backend.builds) == 1
+
+
+def test_prepare_joins_a_download_already_running(bench):
+  bench.registry.pointers[REF] = Pointer(SHA, bench.spec.nbytes)
+  gate = gated_fetch(bench)
+  c = bench.connect()
+  c.send(id=1, cmd='download', ref=REF)
+  c.wait_for('download', state='started')
+  c.send(id=2, cmd='prepare', sha256=SHA)
+  assert c.wait_for('reply', id=2)['state'] == 'downloading'
+  gate.set()
+  assert c.wait_for('engine', state='ready')['sha256'] == SHA
+  assert len(bench.cache.backend.builds) == 1
+
+
+def test_a_cancelled_download_prepares_nothing(bench):
+  bench.registry.pointers[REF] = Pointer(SHA, bench.spec.nbytes)
+
+  def fetch(ref_or_sha, progress, should_stop):
+    while not should_stop():
+      time.sleep(0.01)
+    raise RuntimeError('cancelled')
+
+  bench.registry.fetch_impl = fetch
+  c = bench.connect()
+  c.send(id=1, cmd='prepare', sha256=SHA)
+  c.wait_for('download', state='started')
+  c.send(id=2, cmd='cancel_download', sha256=SHA)
+  c.wait_for('download', state='cancelled')
+  downloads_settled(bench)
+  assert bench.host.job is None and bench.cache.backend.builds == []
+
+
+def test_a_comma_that_connected_during_the_download_keeps_its_model(bench):
+  bench.registry.pointers[REF] = Pointer(SHA, bench.spec.nbytes)
+  gate = gated_fetch(bench)
+  c = bench.connect()
+  c.send(id=1, cmd='prepare', sha256=SHA)
+  c.wait_for('download', state='started')
+  bench.host.session = SimpleNamespace(request=Request(OTHER, 512, 4), frames=0)
+  bench.server._on_host('link', {'state': 'connected', 'detail': '', 'peer': 'usb'})
+  gate.set()
+  c.wait_for('download', state='done')
+  downloads_settled(bench)
+  assert bench.host.job is None and bench.cache.backend.builds == []
+  assert bench.registry.model_path(SHA).is_file()
 
 
 def test_unload_and_forget(bench):
@@ -569,6 +650,16 @@ def test_frame_stats_is_empty_until_a_frame_lands(bench):
   summary = bench.host.frame_stats.summary(60.0, frames_total=3)
   assert summary['frames'] == 3 and summary['slow'] == 1
   assert summary['total_ms'] == {'mean': 70.0, 'p99': 70.0, 'max': 70.0}
+
+
+def test_frame_stats_break_a_frame_into_stages_that_add_up(bench):
+  stats = bench.host.frame_stats
+  stats.record(30_000, 25_000, 1_000, 500)
+  stats.record(40_000, 33_000, 3_000, 1_500)
+  summary = stats.summary(60.0)
+  assert summary['stages_ms'] == {'queue': 2.0, 'gpu': 29.0, 'other': 4.0, 'send': 1.0}
+  assert summary['served_ms'] == {'mean': 36.0, 'p99': 30.5, 'max': 41.5}
+  assert sum(summary['stages_ms'].values()) == summary['served_ms']['mean']
 
 
 # -- bad input ---------------------------------------------------------------

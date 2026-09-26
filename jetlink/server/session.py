@@ -83,8 +83,8 @@ class FrameStats:
   def __init__(self, maxlen: int = 2000):
     self.samples = deque(maxlen=maxlen)
 
-  def record(self, total_us: int, gpu_us: int) -> None:
-    self.samples.append((time.perf_counter(), total_us, gpu_us))
+  def record(self, total_us: int, gpu_us: int, queue_us: int = 0, send_us: int = 0) -> None:
+    self.samples.append((time.perf_counter(), total_us, gpu_us, queue_us, send_us))
 
   def window(self, seconds: float) -> list:
     """The samples newer than `seconds` ago, oldest first."""
@@ -98,16 +98,34 @@ class FrameStats:
       return None
     n = len(rows)
     totals = sorted(r[1] for r in rows)
+    served = sorted(r[1] + r[4] for r in rows)
+
+    def mean(i: int) -> float:
+      return sum(r[i] for r in rows) / n / 1e3
+
     return {
       'frames': frames_total,
       'fps': round(n / seconds, 2),
-      'total_ms': {'mean': round(sum(totals) / n / 1e3, 2),
-                   'p99': round(totals[int(0.99 * (n - 1))] / 1e3, 2),
-                   'max': round(totals[-1] / 1e3, 2)},
-      'gpu_ms': {'mean': round(sum(r[2] for r in rows) / n / 1e3, 2)},
+      'total_ms': _spread(totals),
+      'gpu_ms': {'mean': round(mean(2), 2)},
+      # Where a frame's time goes, as means that add up to served_ms's mean:
+      # staging the inputs, the model run as the backend times it, the rest of
+      # the run (a worker handoff, the output check), and the reply's send.
+      'stages_ms': {'queue': round(mean(3), 2), 'gpu': round(mean(2), 2),
+                    'other': round(max(0.0, mean(1) - mean(2) - mean(3)), 2),
+                    'send': round(mean(4), 2)},
+      # From the frame's arrival to its reply leaving: total_ms plus the send.
+      'served_ms': _spread(served),
       'slow': sum(1 for t in totals if t > SLOW_FRAME_US),
       'window_s': round(seconds, 1),
     }
+
+
+def _spread(sorted_us: list) -> dict:
+  n = len(sorted_us)
+  return {'mean': round(sum(sorted_us) / n / 1e3, 2),
+          'p99': round(sorted_us[int(0.99 * (n - 1))] / 1e3, 2),
+          'max': round(sorted_us[-1] / 1e3, 2)}
 
 
 @dataclass(frozen=True)
@@ -785,7 +803,7 @@ class Session:
       # frame by its own stages; together they place a slow frame.
       log.warning("slow frame %d: gpu %.1f queue %.1f total %.1f send %.1f ms", frame_id,
                   loaded.engine.last_gpu_us / 1e3, queue_us / 1e3, total_us / 1e3, send_us / 1e3)
-    self.host.frame_stats.record(total_us, loaded.engine.last_gpu_us)
+    self.host.frame_stats.record(total_us, loaded.engine.last_gpu_us, queue_us, send_us)
 
   def on_shutdown(self, msg: Message) -> None:
     from jetlink.server.power import request_poweroff

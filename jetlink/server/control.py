@@ -83,6 +83,11 @@ class _Download:
   rate: float = 0.0
   rate_bytes: int = 0
   rate_at: float = 0.0
+  # A `prepare` that found no model file: the frame_skip to prepare with once
+  # the download lands, and whether the comma was already connected when it
+  # was asked for (the client confirmed interrupting it then).
+  prepare: int | None = None
+  prepare_over_comma: bool = False
 
 
 class _Client:
@@ -482,10 +487,15 @@ class ControlServer:
     with self._lock:
       if sha256 in self._active:
         raise ControlError(f'model {sha256[:16]} is already downloading')
-      state = _Download(sha256=sha256, ref=str(ref) if ref else None, total=total)
-      self._active[sha256] = state
-      state.future = self._downloads.submit(self._run_download, state)
+      self._queue_download(sha256, str(ref) if ref else None, total)
     return {'sha256': sha256}
+
+  def _queue_download(self, sha256: str, ref: str | None, total: int) -> _Download:
+    """Hold self._lock, and check self._active first."""
+    state = _Download(sha256=sha256, ref=ref, total=total)
+    self._active[sha256] = state
+    state.future = self._downloads.submit(self._run_download, state)
+    return state
 
   def _ref_for(self, sha256: str) -> str | None:
     """The catalog ref whose model has this sha, from the pointers or the list."""
@@ -525,6 +535,28 @@ class ControlServer:
     self._download_event(state, 'done', frac=1.0)
     self._forget_download(state)
     self._publish_inventory()
+    if state.prepare is not None and not self._closing.is_set():
+      self._prepare_downloaded(state)
+
+  def _prepare_downloaded(self, state: _Download) -> None:
+    """The second half of a `prepare` that had to download first.
+
+    A comma that connected during the download and is driving on another
+    model keeps it: nobody agreed to interrupt it, and the model stays on disk
+    for the next `prepare`.
+    """
+    session = self.host.session
+    wanted = session.request.sha256 if session is not None and session.request is not None else None
+    if (self._link.get('state') == 'connected' and wanted not in (None, state.sha256)
+        and not state.prepare_over_comma):
+      log.info("downloaded %s; not preparing it over the model the comma is using", state.sha256[:16])
+      return
+    try:
+      model_path = self.cache.model_path(state.sha256)
+      self.host.request(Request(state.sha256, self._nbytes(state.sha256, self.cache.entry(state.sha256), model_path),
+                                state.prepare), None)
+    except Exception:
+      log.exception("preparing %s after its download failed", state.sha256[:16])
 
   def _download_progress(self, state: _Download, frac: float) -> None:
     if frac < 1.0 and time.monotonic() - state.last_event < PROGRESS_INTERVAL:
@@ -606,10 +638,40 @@ class ControlServer:
     entry = self.cache.entry(sha256)
     model_path = self.cache.model_path(sha256)
     if not entry.exists and not model_path.is_file():
-      raise ControlError(f'model {sha256[:16]} is not downloaded')
+      return self._download_then_prepare(sha256, frame_skip)
     # The comma's own path, with no comma: one piece of code loads an engine.
     self.host.request(Request(sha256, self._nbytes(sha256, entry, model_path), frame_skip), None)
     return {'state': self.host.snapshot()['state']}
+
+  def _download_then_prepare(self, sha256: str, frame_skip: int) -> dict:
+    """`prepare` for a model with nothing on disk: download it, prepare it after.
+
+    A download already running for it (a `download`, or a second `prepare`)
+    is joined rather than refused. The pointer is resolved before the reply,
+    as `download` does, so an unknown model is an error now and not a failed
+    download later.
+    """
+    over_comma = self._link.get('state') == 'connected'
+    with self._lock:
+      state = self._active.get(sha256)
+      if state is not None:
+        state.prepare, state.prepare_over_comma = frame_skip, over_comma
+        return {'state': 'downloading', 'sha256': sha256}
+    ref = self._ref_for(sha256)
+    if ref is None:
+      raise ControlError(f'model {sha256[:16]} is not downloaded, and is not in the catalog')
+    try:
+      pointer = self.registry.resolve(ref)
+    except Exception as e:
+      raise ControlError(f'could not resolve {ref}: {e}') from e
+    if pointer.oid != sha256:
+      raise ControlError(f'{ref} points at {pointer.oid[:16]}, not {sha256[:16]}')
+    with self._lock:
+      # Joined by the lock with _run_download's _forget_download, so a download
+      # still listed here is one that will read `prepare` when it finishes.
+      state = self._active.get(sha256) or self._queue_download(sha256, ref, int(pointer.size))
+      state.prepare, state.prepare_over_comma = frame_skip, over_comma
+    return {'state': 'downloading', 'sha256': sha256}
 
   def _nbytes(self, sha256: str, entry, model_path: Path) -> int:
     """What the model weighs, for a Request that has no client behind it."""

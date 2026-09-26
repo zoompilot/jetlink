@@ -61,8 +61,9 @@ printf '{"id":1,"cmd":"download","ref":"f877d7a0ccc3cce943c76e285214c020cd65c899
   | nc -U /tmp/jetlink-control.sock
 ```
 
-`socat` also supports this socket. To prepare the downloaded model without
-stopping the server, replace `<sha256>` with its full SHA-256 hash:
+`socat` also supports this socket. To have a model downloaded if need be,
+prepared and loaded without stopping the server, replace `<sha256>` with its
+full SHA-256 hash:
 
 ```bash
 printf '{"id":2,"cmd":"prepare","sha256":"<sha256>","frame_skip":4}\n' \
@@ -95,9 +96,14 @@ Unix seconds, as shown by each field.
 // Emitted on every state change and on progress at most 4 times a second.
 
 {"event":"stats","t":0,"frames":1234,"fps":19.9,"total_ms":{"mean":31.2,"p99":38.0,"max":41.5},
- "gpu_ms":{"mean":21.0},"slow":0,"window_s":1.0}
+ "gpu_ms":{"mean":29.4},"stages_ms":{"queue":0.6,"gpu":29.4,"other":1.2,"send":0.4},
+ "served_ms":{"mean":31.6,"p99":38.4,"max":41.9},"slow":0,"window_s":1.0}
 // Once a second while a link is connected and at least one frame was served in
-// the window. slow counts frames over 60 ms in the window.
+// the window. slow counts frames over 60 ms in the window. total_ms runs from a
+// frame's arrival to its reply being ready; served_ms adds the reply's send.
+// stages_ms are means that add up to served_ms.mean: staging the inputs, the
+// model run as the backend times it, the rest of the run (a worker handoff,
+// the output check), and the send.
 
 {"event":"inventory","t":0,"loaded":"<sha256>|null","last_loaded":"<sha256>|null",
  "models":[{"sha256":"…","bytes":765953504,"path":"…/models/a086d5249fc308bb.onnx","name":"BMRLNAP Model v4","ref":"f877d7a0…|null"}],
@@ -141,7 +147,7 @@ Unix seconds, as shown by each field.
 | `download` | `ref` or `sha256` (one of them) | `sha256` | resolve the pointer if needed; enqueue a download (one runs at a time, FIFO); `download` events follow. Error if already downloaded, already queued, or the ref is unknown. |
 | `cancel_download` | `sha256` | | cancels a running or queued download; `.part` removed; a `download` event with `cancelled` |
 | `import` | `path` | `queued: true` | hash the file (streaming), copy it to `models/<sha16>.onnx` via a `.part`, record its name and size; `import` events, then `inventory` |
-| `prepare` | `sha256`, `frame_skip` (default 4) | `state` | build if needed, then load the engine and keep it in memory. Error when neither an artifact nor the model file exists. `state` is the engine state afterwards. |
+| `prepare` | `sha256`, `frame_skip` (default 4) | `state`, and `sha256` when downloading | build if needed, then load the engine and keep it in memory. `state` is the engine state afterwards. With neither an artifact nor the model file on disk, download it first (joining a download already running for it) and reply `state: "downloading"`; the build starts when the `download` event says `done`, unless a comma connected meanwhile and is using another model. Error when the model is not in the catalog. |
 | `unload` | | | release the loaded engine; `engine` event with `none` |
 | `forget` | `sha256`, `artifacts: bool`, `model: bool` | | unload first if that model is loaded; delete every `engines/<sha16>.*` when artifacts, `models/<sha16>.onnx` (and `.part`) when model; remove `last-loaded.json` if it names this sha and its artifact is gone; then `inventory` |
 | `inventory` | | | emit `inventory` |
