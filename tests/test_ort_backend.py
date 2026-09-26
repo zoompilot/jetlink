@@ -228,18 +228,19 @@ def test_a_coreml_artifact_from_before_the_weight_rewrite_is_artifact_invalid(tm
 def test_every_neural_engine_artifact_from_before_the_split_is_artifact_invalid(tmp_path):
   """One version mechanism: a load of an `ane` artifact prepared under an older
   version is refused, and the host rebuilds it from the ONNX. 1 is the one
-  session from before #8, 2 is #8's one session with Expand as Tile."""
+  session from before #8, 2 is #8's one session with Expand as Tile, 3 split
+  only a stateful graph."""
   ane = OrtBackend('ane', providers=['CoreMLExecutionProvider', 'CPUExecutionProvider'])
   d = tmp_path / 'old.ortcache'
   d.mkdir()
   (d / MANIFEST).write_text(json.dumps([{'model': 'model.onnx', 'units': 'ALL', 'cache': 'coreml'}]))
   sidecar = {'backend': 'ort', 'compile_bytes': 1}
-  for version in (None, 2):
+  for version in (None, 2, 3):
     d.with_suffix('.json').write_text(json.dumps(sidecar if version is None else {**sidecar, 'prepare': version}))
     with pytest.raises(ArtifactInvalid, match=f"prepared as version {version or 1}"):
       ane.load(d)
   # at the current version it gets past that, to the next thing it lacks
-  d.with_suffix('.json').write_text(json.dumps({**sidecar, 'prepare': 3}))
+  d.with_suffix('.json').write_text(json.dumps({**sidecar, 'prepare': 4}))
   with pytest.raises(ArtifactInvalid, match='model.onnx'):
     ane.load(d)
 
@@ -269,14 +270,12 @@ def test_an_empty_coreml_cache_is_artifact_invalid(backend, built):
 COREML_PROVIDERS = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
 
 
-def _staged_on_the_cpu(device, path, tmp_path, split=False):
+def _staged_on_the_cpu(device, path, tmp_path):
   """What `device` stages, loadable by the CPU backend: the same sessions with
-  CoreML's units and caches taken out. `split` stages the Neural Engine split
-  whatever the graph."""
+  CoreML's units and caches taken out."""
   artifact = tmp_path / f'{device}.ortcache'
   artifact.mkdir()
-  backend = OrtBackend(device, providers=COREML_PROVIDERS)
-  manifest = (backend._stage_split if split else backend._stage)(path, artifact, artifact)
+  manifest = OrtBackend(device, providers=COREML_PROVIDERS)._stage(path, artifact, artifact)
   for entry in manifest:
     (artifact / entry['cache']).rmdir()
     entry['units'] = entry['cache'] = None
@@ -293,7 +292,7 @@ def test_the_neural_engine_split_computes_what_the_gpu_graph_does(backend, tmp_p
   off by whole units, hundreds of steps."""
   path = tiny_model.write(tmp_path / 'tiny.onnx')
   whole = backend.load(_staged_on_the_cpu('coreml', path, tmp_path))
-  split = backend.load(_staged_on_the_cpu('ane', path, tmp_path, split=True))
+  split = backend.load(_staged_on_the_cpu('ane', path, tmp_path))
   try:
     assert len(split.providers) == 2
     assert set(split.inputs) == set(whole.inputs), 'the hand-off leaked into the staged inputs'
@@ -367,48 +366,38 @@ def _with_policy_layernorm(path):
   return path
 
 
-def _fp32_norms(model):
-  return [n for n in model.graph.node if n.op_type == 'Cast' and n.name.endswith('__cast_in')]
-
-
 def test_each_device_stages_its_sessions(tmp_path):
-  """`coreml` is one session on the GPU. `ane` is one session with every unit
-  allowed for a graph whose history the server queues, its policy's
-  LayerNormalizations in fp32 so CoreML keeps the policy on the GPU (#8). A
-  graph that keeps its own history is the trunk on the Neural Engine and the
-  policy on the GPU instead, each keyed for its own compile cache, with no
-  fp32 LayerNormalization: that is for a policy CoreML might otherwise put on
-  the Neural Engine, and this one never runs there."""
-  queued = _with_policy_layernorm(tiny_model.write(tmp_path / 'tiny.onnx'))
+  """`coreml` is one session on the GPU. `ane` is the trunk on the Neural
+  Engine and the rest on the GPU, whether the server queues the graph's
+  history or the graph keeps its own, each keyed for its own compile cache."""
+  queued = tiny_model.write(tmp_path / 'tiny.onnx')
   stateful = tiny_model.write_stateful(tmp_path / 'stateful.onnx')
+  split = [{'model': 'vision.onnx', 'units': 'CPUAndNeuralEngine', 'cache': 'coreml-vision'},
+           {'model': 'policy.onnx', 'units': 'CPUAndGPU', 'cache': 'coreml-policy'}]
   cases = [
-    ('coreml', queued, [{'model': 'model.onnx', 'units': 'CPUAndGPU', 'cache': 'coreml'}], 0),
-    ('ane', queued, [{'model': 'model.onnx', 'units': 'ALL', 'cache': 'coreml'}], 1),
-    ('ane', stateful, [{'model': 'vision.onnx', 'units': 'CPUAndNeuralEngine', 'cache': 'coreml-vision'},
-                       {'model': 'policy.onnx', 'units': 'CPUAndGPU', 'cache': 'coreml-policy'}], 0),
+    ('coreml', queued, [{'model': 'model.onnx', 'units': 'CPUAndGPU', 'cache': 'coreml-model'}]),
+    ('ane', queued, split),
+    ('ane', stateful, split),
   ]
-  for k, (device, path, manifest_want, fp32_want) in enumerate(cases):
+  for k, (device, path, manifest_want) in enumerate(cases):
     backend = OrtBackend(device, providers=COREML_PROVIDERS)
     staged = tmp_path / f'staged_{k}'
     staged.mkdir()
     out = tmp_path / f'{k}.ortcache'
     manifest = backend._stage(path, staged, out)
     assert manifest == manifest_want == json.loads((staged / MANIFEST).read_text()), (device, path.name)
-    fp32 = 0
     for entry in manifest:
       assert (staged / entry['cache']).is_dir()
       prepared = onnx.load(str(staged / entry['model']))
       assert _has_cache_key(prepared, _cache_key(out, entry['model'].removesuffix('.onnx')))
-      fp32 += len(_fp32_norms(prepared))
-    assert fp32 == fp32_want, (device, path.name)
 
 
 def test_the_split_keeps_the_images_in_the_trunk_and_the_norms_in_the_policy(tmp_path):
+  """The Neural Engine's fp16 LayerNormalization is not precise enough for
+  the residual MLP after the trunk, so a norm there goes with the policy."""
   path = _with_policy_layernorm(tiny_model.write(tmp_path / 'tiny.onnx'))
   staged = tmp_path / 'staged'
   staged.mkdir()
-  OrtBackend('ane', providers=COREML_PROVIDERS)._stage_split(path, staged, tmp_path / 'ane.ortcache')
+  OrtBackend('ane', providers=COREML_PROVIDERS)._stage(path, staged, tmp_path / 'ane.ortcache')
   assert [i.name for i in onnx.load(str(staged / 'vision.onnx')).graph.input] == ['img', 'big_img']
-  policy = onnx.load(str(staged / 'policy.onnx'))
-  assert 'LayerNormalization' in {n.op_type for n in policy.graph.node}
-  assert not _fp32_norms(policy)
+  assert 'LayerNormalization' in {n.op_type for n in onnx.load(str(staged / 'policy.onnx')).graph.node}

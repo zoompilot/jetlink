@@ -21,13 +21,11 @@ from jetlink.onnx_patch import (  # noqa: E402
   TINYGRAD_DOMAIN,
   expand_to_tile,
   gemm_with_transposed_weight,
-  layernorm_in_fp32,
   needs_patch,
   normalize_gather_indices,
   patch_uint8_inputs,
   split_vision_policy,
   strip_tinygrad_ops,
-  vision_nodes,
 )
 
 SHAPE = [1, 12, 128, 256]
@@ -280,103 +278,6 @@ class TestNegativeGatherIndices:
     after = ReferenceEvaluator(m).run(None, {'x': x})[0]
     np.testing.assert_array_equal(before, after)
     np.testing.assert_array_equal(after, x[:, -1, :])
-
-
-class TestLayerNormInFp32:
-  """The Neural Engine's fp16 LayerNormalization loses the parity gate on this
-  model's residual stream; in fp32 CoreML runs it elsewhere and exactly."""
-
-  def _model(self, dtype=TensorProto.FLOAT16, with_bias=True):
-    x = helper.make_tensor_value_info('x', dtype, [1, 4, 8])
-    y = helper.make_tensor_value_info('y', dtype, [1, 4, 8])
-    np_dtype = np.float16 if dtype == TensorProto.FLOAT16 else np.float32
-    inits = [numpy_helper.from_array(np.linspace(0.5, 1.5, 8).astype(np_dtype), 'scale')]
-    inputs = ['x', 'scale']
-    if with_bias:
-      inits.append(numpy_helper.from_array(np.linspace(-1, 1, 8).astype(np_dtype), 'bias'))
-      inputs.append('bias')
-    nodes = [helper.make_node('Identity', ['x'], ['h']),
-             helper.make_node('LayerNormalization', ['h'] + inputs[1:], ['n'], axis=-1, epsilon=1e-5, name='ln'),
-             helper.make_node('Identity', ['n'], ['y'])]
-    return helper.make_model(helper.make_graph(nodes, 'g', [x], [y], initializer=inits),
-                             opset_imports=[helper.make_opsetid('', 17)])
-
-  def test_the_node_runs_in_fp32_between_casts(self):
-    m = self._model()
-    assert layernorm_in_fp32(m) == 1
-    ops = [n.op_type for n in m.graph.node]
-    assert ops == ['Identity', 'Cast', 'LayerNormalization', 'Cast', 'Identity']
-    ln = m.graph.node[2]
-    init = {t.name: t for t in m.graph.initializer}
-    assert all(init[i].data_type == TensorProto.FLOAT for i in ln.input[1:])
-    assert init['scale'].data_type == TensorProto.FLOAT16, 'the original initializer must stay for anything else that reads it'
-    onnx.checker.check_model(m)
-
-  def test_values_match_an_fp32_layernorm_where_fp16_overflows(self):
-    """Residuals in the hundreds: their squares overflow fp16 inside the
-    normalisation, which is what the Neural Engine gets wrong. The fp32 node
-    matches numpy's float32 answer to fp16 output rounding."""
-    from onnx.reference import ReferenceEvaluator
-    m = self._model()
-    x = (np.random.default_rng(1).standard_normal((1, 4, 8)) * 300).astype(np.float16)
-    x32 = x.astype(np.float32)
-    mean = x32.mean(-1, keepdims=True)
-    var = ((x32 - mean) ** 2).mean(-1, keepdims=True)
-    want = (x32 - mean) / np.sqrt(var + 1e-5) * np.linspace(0.5, 1.5, 8, dtype=np.float32) + np.linspace(-1, 1, 8, dtype=np.float32)
-    with np.errstate(over='ignore'):
-      before = ReferenceEvaluator(m).run(None, {'x': x})[0].astype(np.float32)
-    assert not np.allclose(before, want, atol=0.05), 'fp16 should have overflowed here; the test proves nothing otherwise'
-    assert layernorm_in_fp32(m) == 1
-    after = ReferenceEvaluator(m).run(None, {'x': x})[0]
-    assert after.dtype == np.float16 and m.graph.output[0].type.tensor_type.elem_type == TensorProto.FLOAT16
-    np.testing.assert_allclose(after.astype(np.float32), want, atol=5e-3, rtol=5e-3)
-
-  def test_layernorms_sharing_an_input_share_one_cast(self):
-    """The driving model's five head MLPs each normalise the same selected
-    token; a cast per node would define the same name five times."""
-    m = self._model()
-    g = m.graph
-    g.node.append(helper.make_node('LayerNormalization', ['h', 'scale', 'bias'], ['n2'], axis=-1, epsilon=1e-5, name='ln2'))
-    g.node.append(helper.make_node('Add', ['n', 'n2'], ['y2']))
-    g.output[0].name = 'y2'
-    g.node[2].input[0] = 'n'   # the old Identity now unused; keep the graph simple
-    del g.node[2]
-    assert layernorm_in_fp32(m) == 2
-    casts_in = [n for n in g.node if n.op_type == 'Cast' and n.input[0] == 'h']
-    assert len(casts_in) == 1
-    onnx.checker.check_model(m)
-
-  def test_an_fp32_layernorm_and_one_without_a_bias_are_handled(self):
-    m = self._model(dtype=TensorProto.FLOAT)
-    assert layernorm_in_fp32(m) == 0
-    m = self._model(with_bias=False)
-    assert layernorm_in_fp32(m) == 1
-    onnx.checker.check_model(m)
-
-
-class TestVisionNodes:
-  def test_the_trunk_and_a_head_off_it_are_vision_and_the_rest_is_not(self, tmp_path):
-    from tests import tiny_model
-    model = onnx.load(str(tiny_model.write(tmp_path / 'tiny.onnx', with_contiguous=False)))
-    g = model.graph
-    for i, n in enumerate(g.node):
-      n.name = f'n{i}_{n.op_type}'
-    g.node.append(helper.make_node('Relu', ['img_mean'], ['head'], name='head'))
-    names = vision_nodes(model)
-    assert names == {'n0_Cast', 'n1_Cast', 'n2_Concat', 'n3_ReduceMean', 'head'}
-
-  def test_only_restricts_the_fp32_rewrite(self, tmp_path):
-    m = TestLayerNormInFp32()._model()
-    m.graph.node[1].name = 'ln'
-    assert layernorm_in_fp32(m, only={'somewhere else'}) == 0
-    assert layernorm_in_fp32(m, only={'ln'}) == 1
-
-  def test_a_model_without_image_inputs_says_so(self):
-    g = helper.make_graph([helper.make_node('Identity', ['x'], ['y'])], 'g',
-                          [helper.make_tensor_value_info('x', TensorProto.FLOAT16, [1])],
-                          [helper.make_tensor_value_info('y', TensorProto.FLOAT16, [1])])
-    with pytest.raises(ValueError, match='graph inputs'):
-      vision_nodes(helper.make_model(g, opset_imports=[helper.make_opsetid('', 17)]))
 
 
 class TestSplitVisionPolicy:

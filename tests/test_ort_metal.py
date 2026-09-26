@@ -116,8 +116,6 @@ def test_gpu_error_stops_optional_work_and_releases_resources(work, monkeypatch,
   ('darwin', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndGPU'})], True),
   ('darwin', True, [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndGPU'})], False),
   ('linux', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndGPU'})], False),
-  # the `ane` device: its policy runs on the GPU, and paced it needs the GPU awake
-  ('darwin', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'ALL'})], True),
   ('darwin', False, [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndNeuralEngine'})], False),
   ('darwin', False, ['CPUExecutionProvider'], False),
   ('darwin', False, ['CoreMLExecutionProvider'], False),

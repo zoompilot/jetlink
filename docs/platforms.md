@@ -72,7 +72,7 @@ JETLINK_BACKEND=tinygrad scripts/run-mac.sh
 scripts/run-mac.sh --build /path/to/big_driving_supercombo.onnx
 ```
 
-Measured on an M1 Pro: the default runs 29 to 32 ms per frame against a 50 ms
+Measured on an M1 Pro: the default runs 31 to 32 ms per frame against a 50 ms
 budget, the GPU alone 44 ms. Details in [backends and measurements](backends.md#mac-measured).
 
 ## Linux (NVIDIA GPU)

@@ -159,7 +159,7 @@ measurements](backends.md#mac-measured).
 
 | Backend | Frame time on an M1 Pro | Pick it when |
 | --- | --- | --- |
-| Automatic (recommended) | About 30 ms: 32 ms on Cinque Terre V3, 29 ms on V2 | Use this by default. |
+| Automatic (recommended) | About 31 ms on Cinque Terre V3 and V2 | Use this by default. |
 | CoreML on the GPU | About 44 ms | Another app keeps the Neural Engine busy. |
 | tinygrad on Metal | 66 ms, over the 50 ms budget every frame | Test tinygrad; it exceeds the driving frame budget on this Mac. |
 

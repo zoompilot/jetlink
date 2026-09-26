@@ -16,22 +16,21 @@ only thing using it. tinygrad exceeds the budget.
 
 | | Default: Neural Engine and GPU | GPU only (`--device coreml`) | tinygrad METAL |
 | --- | ---: | ---: | ---: |
-| V3 round trip at 20 Hz through the server, mean / p99 / max | 31.6 / 37.0 / 54.4 ms | 43.7 / 47.5 / 58.7 ms | not measured |
-| V2 round trip at 20 Hz through the server, mean / p99 / max | 28.6 / 32.3 / 45.0 ms | 43.7 / 47.9 / 65.8 ms | not measured |
-| frames over the 50 ms budget | V3 1 of 900, V2 0 of 1,200 | V3 7 of 900, V2 6 of 900 | 390 of 390 |
+| V3 round trip at 20 Hz through the server, mean / p99 / max | 31.7 / 35.2 to 37.5 / 53.4 ms | 43.8 / 45.0 to 48.8 / 54.1 ms | not measured |
+| V2 round trip at 20 Hz through the server, mean / p99 / max | 30.7 / 32.1 to 37.2 / 39.7 ms | 44.7 / 46.4 to 47.0 / 50.6 ms | not measured |
+| frames over the 50 ms budget | V3 1 of 1,160, V2 0 of 1,160 | V3 2 of 1,160, V2 1 of 1,160 | 390 of 390 |
 | parity gate, worst column (V3 / V2) | 0.99957 / 0.99957 pass | 0.99957 pass, earlier model | 0.99954 pass |
-| build / load in a fresh process | about 20 s / 0.8 to 11 s | about 10 s / 1.8 to 4.7 s | 13 s / 1.1 s |
+| build / load in a fresh process | about 20 s / 0.6 to 11 s | about 10 s / 1.8 to 4.7 s | 13 s / 1.1 s |
 | artifact on disk | 2.1 GB | 2.3 GB | 777 MB |
 
 The tinygrad column is an earlier measurement of Cinque Terre at 20 Hz: 66.2 ms
 mean, 67.6 ms p99, against 43.3 ms and 44.4 ms for the GPU in the same run. The
-default and GPU columns were measured on 2026-09-25 in 300-frame blocks, one
-server at a time, alternating between the options and the variants below so that
-each saw the same conditions. The first table is the shipped code, measured last
-and with the Mac busier than during the comparisons below, which is why its GPU
-p99 is higher than their 44.7 ms. A load of the default takes under a second
-when the same model was the last one loaded, and 5 to 11 s after another, while
-macOS prepares the Neural Engine's part again.
+default and GPU columns were measured on 2026-09-26 in four 300-frame blocks
+each, one server at a time, alternating between the two, with another process
+busy on the Mac throughout. The p99 is the range over the four blocks. A load
+of the default takes under a second when the same model was the last one
+loaded, and 5 to 11 s after another, while macOS prepares the Neural Engine's
+part again.
 
 The mean is the average frame time. The p99 is the time at or below which 99% of
 frames complete. The maximum is the slowest frame.
@@ -40,47 +39,36 @@ frames complete. The maximum is the slowest frame.
 
 The default (`--device ane`, which `auto` picks on Apple silicon) runs the
 convolutional trunk, which reads the camera frames, on the Neural Engine in
-about 20 ms, where the GPU takes 31 ms, and the rest on the GPU. How it gets
-there depends on the model:
+about 20 ms, where the GPU takes 31 ms, and everything after it on the GPU.
+Jetlink cuts the model where the trunk ends and runs it as two CoreML
+sessions, which exchange 32 KB per frame. It does this for every model: V3's
+policy and history, and V2's policy with the history the server keeps.
 
-- A model that keeps its own history, such as Cinque Terre V3, runs as two
-  CoreML sessions: the trunk on the Neural Engine, then everything after it,
-  including the policy and its history, on the GPU. The two halves exchange
-  32 KB per frame. One session that lets CoreML choose among all compute
-  units measured 115 ms on V3, because the Neural Engine cannot run its
-  stateful policy efficiently.
-- A model whose history the server keeps, such as V1 and V2, runs as one
-  session that lets CoreML choose among all compute units. Its policy's
-  LayerNormalizations run in fp32, which the Neural Engine cannot do, so
-  CoreML keeps the policy on the GPU. One CPU core is kept busy while frames
-  arrive, for CoreML's own work in each frame.
-
-Mean / p99 in ms at 20 Hz, from the interleaved runs:
+The alternative is one session that lets CoreML choose among all compute
+units. Mean / p99 in ms at 20 Hz, interleaved on 2026-09-25:
 
 | | V3 | V2 |
 | --- | ---: | ---: |
 | two sessions, trunk on the Neural Engine | **32.2 / 36.6** | 29.7 / 33.5 |
-| one session, every compute unit, one core kept busy | 114.8 / 123.2 | **28.6 / 31.5** |
+| one session, every compute unit | 114.8 / 123.2 | 28.6 / 31.5 |
 | GPU only | 43.1 / 44.7 | 43.6 / 46.2 |
 
-The two-session split keeps the Neural Engine's fp16 LayerNormalization out
-of the layers after the trunk: with them on the Neural Engine,
-`road_transform` fell to a correlation of 0.9988 over 32 frames and failed
-the parity gate.
+One session is unusable on V3, because the Neural Engine cannot run its
+stateful policy efficiently. On V2 it was about 1 ms faster, but only with the
+policy's LayerNormalizations forced into fp32 to keep them off the Neural
+Engine and one CPU core kept spinning for CoreML's work in each frame. One
+layout for every model is worth more than that millisecond.
 
-Both layouts rewrite two Expand operations CoreML will not take as the
+The cut also keeps the Neural Engine's fp16 LayerNormalization out of the
+layers after the trunk: with them on the Neural Engine, `road_transform` fell
+to a correlation of 0.9988 over 32 frames and failed the parity gate.
+
+Jetlink also rewrites two Expand operations CoreML will not take as the
 equivalent Tiles, so the policy stays one CoreML program instead of two with a
-CPU step between them (worth 3.7 ms mean and 9 ms p99 on V3), ask CoreML for its
-FastPrediction specialization, and run the Metal keep-alive described below for
-their GPU work (without it the split measured 46.4 ms mean and 53.5 ms p99).
-
-The busy CPU core helps only the one-session layout: on V2 it took that session
-from 29.2 ms mean and 32.3 ms p99 to 28.7 ms and 31.9 ms, over 1,200 frames
-each. With the split it changed neither the mean nor the p99, so the split does
-not spin a core. Spinning only in the 10 ms before each expected frame spun a
-tenth as much and matched the mean, but one of its three blocks reached a 38 ms
-p99, so the core spins for as long as frames arrive. The core stops spinning
-within a second of the last frame.
+CPU step between them (worth 3.7 ms mean and 9 ms p99 on V3), asks CoreML for
+its FastPrediction specialization, and runs the Metal keep-alive described
+below for the GPU half (without it the split measured 46.4 ms mean and 53.5 ms
+p99).
 
 Other apps can use the Neural Engine too, and the default slows down when they
 do: with another process running a model on it back to back, the split measured
@@ -153,7 +141,6 @@ cached model takes minutes to load, remove its prepared engine and prepare it
 again.
 
 For the default, Jetlink normalizes negative Gather indices, which the Neural
-Engine mishandles, rewrites the two Expands as Tiles, and either splits the model
-after the trunk or runs its policy's LayerNormalizations in fp32, as above. It
-takes about 20 seconds to build. An engine prepared for the Neural Engine by an earlier
+Engine mishandles, rewrites the two Expands as Tiles, and splits the model after
+the trunk, as above. It takes about 20 seconds to build. An engine prepared for the Neural Engine by an earlier
 version is rebuilt automatically.

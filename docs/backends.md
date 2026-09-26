@@ -37,7 +37,7 @@ See [performance and operating limits](status.md) for timing and power considera
 
 ## Mac, measured
 
-On a 16 GB M1 Pro, the default Neural Engine/GPU backend averaged 29 to 32 ms
+On a 16 GB M1 Pro, the default Neural Engine/GPU backend averaged 31 to 32 ms
 per frame in paced 20 Hz tests. GPU-only averaged 44 ms. tinygrad averaged
 66 ms and missed every 50 ms deadline in its test.
 

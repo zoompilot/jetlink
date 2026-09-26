@@ -20,7 +20,7 @@ import numpy as np
 import onnx
 from onnx import TensorProto, helper, numpy_helper
 
-# where vision_nodes starts: img and big_img in a queued graph, the newest
+# where the vision trunk starts: img and big_img in a queued graph, the newest
 # frame and the frame queue in a stateful one (openpilot #38916). The uint8
 # patch needs no names; it starts from whatever inputs are uint8.
 IMG_INPUTS = ('img', 'big_img', 'new_img', 'state_img_q')
@@ -136,8 +136,11 @@ def normalize_gather_indices(model: onnx.ModelProto) -> int:
 
 
 def _vision_mask(model: onnx.ModelProto) -> list[bool]:
-  """Per node, in graph order: whether it is vision (see `vision_nodes`).
-  By position, because an exporter need not name its nodes."""
+  """Per node, in graph order: whether it depends on the image inputs alone,
+  the vision trunk and the heads that hang off it. Found by dataflow: a node
+  is vision when every tensor it reads is an image input, an initializer, or
+  another vision node's output. Nodes reading only initializers count as
+  neither. By position, because an exporter need not name its nodes."""
   g = model.graph
   init = {t.name for t in g.initializer}
   image_inputs = {vi.name for vi in g.input if vi.name in IMG_INPUTS}
@@ -152,14 +155,6 @@ def _vision_mask(model: onnx.ModelProto) -> list[bool]:
       vision_tensors.update(node.output)
     mask.append(vision)
   return mask
-
-
-def vision_nodes(model: onnx.ModelProto) -> set[str]:
-  """Names of the nodes that depend on the image inputs alone: the vision
-  trunk and the heads that hang off it. Found by dataflow: a node is vision
-  when every tensor it reads is an image input, an initializer, or another
-  vision node's output. Nodes reading only initializers count as neither."""
-  return {n.name for n, vision in zip(model.graph.node, _vision_mask(model), strict=True) if vision}
 
 
 def _trunk_end(g, mask: list[bool], images: list[str], handed: list[str]) -> str | None:
@@ -209,11 +204,11 @@ def split_vision_policy(model: onnx.ModelProto) -> tuple[onnx.ModelProto, onnx.M
   The cut is where the trunk narrows to one tensor before fanning out into
   heads: on the driving models the last conv's output, 32 KB a frame, so the
   hand-off costs nothing. Everything after it goes with the policy, including
-  the image-only heads `vision_nodes` counts as vision: they are a residual
+  the image-only heads `_vision_mask` counts as vision: they are a residual
   MLP whose LayerNormalizations lose too much in the Neural Engine's fp16
   (Cinque Terre V3's road_transform at corr 0.9988 over 32 frames with them
   on it, under the parity gate's 0.999). A graph without such a tensor is cut
-  at `vision_nodes`' whole boundary instead.
+  at `_vision_mask`'s whole boundary instead.
   """
   from onnx.shape_inference import infer_shapes
   from onnx.utils import Extractor
@@ -238,66 +233,6 @@ def split_vision_policy(model: onnx.ModelProto) -> tuple[onnx.ModelProto, onnx.M
   vision_model = extractor.extract_model(images, ends + [o for o in outputs if o in made])
   policy_model = extractor.extract_model(ends + others, [o for o in outputs if o not in made])
   return vision_model, policy_model
-
-
-def layernorm_in_fp32(model: onnx.ModelProto, only: set[str] | None = None) -> int:
-  """Run LayerNormalization in fp32: cast its input up, its scale and bias to
-  fp32, its output back down. Every node, or only the names in `only`. In
-  place, returns how many.
-
-  Apple's Neural Engine computes LayerNormalization in fp16, and on this
-  model's residual stream, values in the hundreds, that loses enough that
-  the small heads fail the parity gate (policy output error 0.0021 against
-  0.0003 on the GPU). In fp32 the Neural Engine cannot run the node, so
-  CoreML places it elsewhere, and the policy came out as precise as on the
-  GPU and faster (8.9 ms against 14.1). Not every node, though: each fp32
-  node is a compute-unit switch, and with the vision trunk's 41 included the
-  frame went from 28 ms to 70. The trunk is precise enough in fp16, so the
-  backend passes the policy's nodes only. Measured 2026-09-08,
-  docs/platforms.md.
-
-  Nothing else changes: a LayerNormalization that was fp32 already is left
-  alone, and an input that is not fp16 is not cast.
-  """
-  g = model.graph
-  init = {t.name: t for t in g.initializer}
-  _, dtypes = _static_info(model, {n.input[0] for n in g.node if n.op_type == 'LayerNormalization'})
-  done = 0
-  new_nodes = []
-  cast_up: dict[str, str] = {}   # one up-cast per input: the head MLPs share theirs
-  for node in g.node:
-    if (node.op_type != 'LayerNormalization' or dtypes.get(node.input[0]) != TensorProto.FLOAT16
-        or (only is not None and node.name not in only)):
-      new_nodes.append(node)
-      continue
-    x = node.input[0]
-    if x not in cast_up:
-      cast_up[x] = f"{x}__fp32"
-      new_nodes.append(helper.make_node('Cast', [x], [cast_up[x]], to=TensorProto.FLOAT, name=f"{node.name}__cast_in"))
-    node.input[0] = cast_up[x]
-    for i in range(1, len(node.input)):
-      name = node.input[i]
-      if name in init and init[name].data_type == TensorProto.FLOAT16:
-        wide = numpy_helper.from_array(numpy_helper.to_array(init[name]).astype(np.float32), f"{name}__fp32")
-        if wide.name not in init:
-          g.initializer.append(wide)
-          init[wide.name] = wide
-        node.input[i] = wide.name
-    out = node.output[0]
-    node.output[0] = f"{out}__fp32"
-    new_nodes.append(node)
-    new_nodes.append(helper.make_node('Cast', [node.output[0]], [out], to=TensorProto.FLOAT16, name=f"{node.name}__cast_out"))
-    done += 1
-  if done:
-    del g.node[:]
-    g.node.extend(new_nodes)
-    # the file's own shape record for the retyped output is stale; drop it
-    # rather than leave a lie the checker would trip on
-    stale = {n.input[0] for n in g.node if n.op_type == 'Cast' and n.input[0].endswith('__fp32')}
-    for i in reversed(range(len(g.value_info))):
-      if g.value_info[i].name in stale:
-        del g.value_info[i]
-  return done
 
 
 def expand_to_tile(model: onnx.ModelProto) -> int:

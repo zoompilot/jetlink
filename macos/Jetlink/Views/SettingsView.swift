@@ -157,7 +157,7 @@ struct ServerSettingsView: View {
   static func backendCaption(_ backend: BackendChoice) -> String {
     switch backend {
     case .auto:
-      "Recommended. About 30 ms a frame on an M1 Pro. Preparing takes about 20 seconds the first time."
+      "Recommended. About 31 ms a frame on an M1 Pro. Preparing takes about 20 seconds the first time."
     case .coreml:
       "About 44 ms a frame on an M1 Pro. Use it if another app keeps the Neural Engine busy."
     case .tinygrad:

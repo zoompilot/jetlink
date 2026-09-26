@@ -17,7 +17,7 @@ gather straight into the shared block, the child runs, and the reply is a
 few bytes. Tens of microseconds a frame on top of the model.
 
 A frame may be a chain of sessions: `--device ane` runs the vision trunk on
-the Neural Engine and the policy on the GPU (see the backend), and the
+the Neural Engine and the rest on the GPU (see the backend), and the
 trunk's outputs feed the policy by name. The frame's outputs are whatever no
 later session reads, from any session: a stateful graph's image queue comes
 out of the trunk. One session is a chain of one.
@@ -35,7 +35,6 @@ from multiprocessing import shared_memory
 
 import numpy as np
 
-from jetlink.server.backends.ort.cpuwarm import create_cpu_keepwarm
 from jetlink.server.backends.ort.metal import create_keepalive
 
 # One block, laid out as the child reports it: every input, then every output.
@@ -74,7 +73,6 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
   """
   block = None
   keepalive = None
-  cpuwarm = None
   try:
     import onnxruntime as ort
 
@@ -121,7 +119,6 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
     sinks = views(block, laid_out)
     plan = [([i.name for i in s.get_inputs()], [o.name for o in s.get_outputs()]) for s in chain]
     keepalive = create_keepalive(sessions)
-    cpuwarm = create_cpu_keepwarm(sessions)
     conn.send(('ready', [list(s.get_providers()) for s in chain]))
 
     while True:
@@ -134,8 +131,6 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
       try:
         if keepalive is not None:
           keepalive.pulse()
-        if cpuwarm is not None:
-          cpuwarm.pulse()
         t0 = time.perf_counter()
         between: dict[str, np.ndarray] = {}
         for s, (in_names, out_names) in zip(chain, plan, strict=True):
@@ -156,8 +151,6 @@ def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
   finally:
     if keepalive is not None:
       keepalive.close()
-    if cpuwarm is not None:
-      cpuwarm.close()
     if block is not None:
       block.close()
     conn.close()
