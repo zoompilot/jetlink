@@ -31,7 +31,6 @@ case "$name" in
   systemctl)
     case "${1:-}" in
       is-active)
-        [ "${FAKE_DOCKER_DOWN:-0}" = 1 ] && [ "${*: -1}" = docker ] && exit 3
         quiet=0; [[ " $* " == *" --quiet "* ]] && quiet=1
         [ -f "$state/stopped-${*: -1}" ] && { [ "$quiet" = 1 ] || echo inactive; exit 3; }
         [ "$quiet" = 1 ] || echo active ;;
@@ -39,9 +38,8 @@ case "$name" in
       start|restart) rm -f "$state/stopped-${*: -1}" ;;
       is-enabled) if [ -f "$state/masked-${*: -1}" ]; then echo masked; else echo enabled; fi ;;
       list-unit-files)
-        for u in ${FAKE_UNITS:-systemd-networkd-wait-online.service}; do
-          [ "$u" = "${*: -1}" ] && echo "$u enabled enabled"
-        done ;;
+        u=systemd-networkd-wait-online.service
+        [ "$u" = "${*: -1}" ] && echo "$u enabled enabled" ;;
       mask) for u in "${@:2}"; do touch "$state/masked-$u"; done ;;
       unmask) for u in "${@:2}"; do rm -f "$state/masked-$u"; done ;;
       show)
@@ -72,7 +70,7 @@ case "$name" in
   docker)
     case "${1:-}" in
       --version) echo "Docker version 29.1.0, build fake" ;;
-      info) if [ -f "$state/nvidia-runtime" ] || [ "${FAKE_NVIDIA_RUNTIME:-0}" = 1 ]; then
+      info) if [ -f "$state/nvidia-runtime" ]; then
               echo '{"nvidia":{"path":"nvidia-container-runtime"},"runc":{"path":"runc"}}'
             else echo '{"runc":{"path":"runc"}}'; fi ;;
       manifest)
@@ -124,7 +122,7 @@ case "$name" in
     case "${1:-}" in
       -q) echo "NV Power Mode: $(cat "$state/pm" 2>/dev/null || echo 15W)"; echo 0 ;;
       -m) read -r _ || true
-          if [ "${FAKE_PM_REBOOT:-0}" = 1 ]; then echo "reboot required"; else echo "${FAKE_PM_NAME:-MAXN_SUPER}" >"$state/pm"; fi ;;
+          if [ "${FAKE_PM_REBOOT:-0}" = 1 ]; then echo "reboot required"; else echo MAXN_SUPER >"$state/pm"; fi ;;
     esac ;;
 
   nvidia-smi)

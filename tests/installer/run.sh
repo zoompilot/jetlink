@@ -10,16 +10,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-releases=("${@:-24.04 22.04}")
-# shellcheck disable=SC2206
-[ $# -eq 0 ] && releases=(24.04 22.04)
+[ $# -gt 0 ] || set -- 24.04 22.04
 
 tree="$(mktemp -d)"
 trap 'rm -rf "$tree"' EXIT
 git ls-files -z --cached --others --exclude-standard | xargs -0 tar -cf - | tar -xf - -C "$tree"
 
 status=0
-for release in "${releases[@]}"; do
+for release in "$@"; do
   image="jetlink-installer-test:$release"
   if ! docker image inspect "$image" >/dev/null 2>&1; then
     printf 'FROM ubuntu:%s\nRUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*\n' "$release" \

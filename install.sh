@@ -23,8 +23,8 @@
 set -Eeuo pipefail
 
 REPO_URL="${JETLINK_REPO_URL:-https://github.com/zoompilot/jetlink.git}"
-RAW_URL="${JETLINK_RAW_URL:-https://raw.githubusercontent.com/zoompilot/jetlink}"
-REGISTRY="${JETLINK_REGISTRY:-ghcr.io/zoompilot/jetlink}"
+RAW_URL=https://raw.githubusercontent.com/zoompilot/jetlink
+REGISTRY=ghcr.io/zoompilot/jetlink
 ETC_DIR=/etc/jetlink
 CONF="$ETC_DIR/install.conf"
 ENV_FILE="$ETC_DIR/server.env"
@@ -391,8 +391,12 @@ detect_power_modes() {
       best_rank=$rank PM_BEST_ID=$id PM_BEST_NAME=$name
     fi
   done < <(sed -n 's/.*POWER_MODEL ID=\([0-9]*\) NAME=\([^ >]*\).*/\1 \2/p' "$conf")
-  PM_CURRENT="$(nvpmodel -q 2>/dev/null | sed -n 's/^NV Power Mode: *//p' | head -n 1)"
+  PM_CURRENT="$(power_mode_now)"
   return 0
+}
+
+power_mode_now() {
+  nvpmodel -q 2>/dev/null | sed -n 's/^NV Power Mode: *//p' | head -n 1
 }
 
 detect_pc() {
@@ -430,10 +434,10 @@ detect_pc() {
 # ---------------------------------------------------------------------------
 # Answers, saved in install.conf so an update asks nothing
 
-POWER='' SLEEP_AFTER=0 POWEROFF_WITH_COMMA=0 FAST_MODE=0 ADD_SWAP=0 AUTOSTART=1
+POWER='' SLEEP_AFTER=0 POWEROFF_WITH_COMMA=0 ADD_SWAP=0 AUTOSTART=1
 CACHE_DIR='' REF='' SOURCE='' SOURCE_DIR='' COMMIT=''
 SWAP_FILE='' MASKED_UNITS='' JOURNALD_CAPPED=0 NEED_REBOOT=0
-IMAGE_REF='' IMAGE_ID='' IMAGE_SOURCE='' GPU_ARGS='' GPU_REPORT=''
+IMAGE_REF='' IMAGE_ID='' GPU_ARGS='' GPU_REPORT=''
 HAD_INSTALL=0
 
 load_previous() {
@@ -441,23 +445,28 @@ load_previous() {
   HAD_INSTALL=1
   # shellcheck disable=SC1090
   . "$CONF"
+  # what the server runs with, the sleep delay and the cache among it
+  # shellcheck disable=SC1090
+  [ -r "$ENV_FILE" ] && . "$ENV_FILE"
   POWER="${JETLINK_POWER:-}"
   SLEEP_AFTER="${JETLINK_SLEEP_AFTER:-0}"
   POWEROFF_WITH_COMMA="${JETLINK_POWEROFF_WITH_COMMA:-0}"
-  FAST_MODE="${JETLINK_FAST_MODE:-0}"
   AUTOSTART="${JETLINK_AUTOSTART:-1}"
   CACHE_DIR="${JETLINK_CACHE_DIR:-}"
   SWAP_FILE="${JETLINK_SWAP_FILE:-}"
   MASKED_UNITS="${JETLINK_MASKED_UNITS:-}"
   JOURNALD_CAPPED="${JETLINK_JOURNALD_CAPPED:-0}"
   REF="${JETLINK_REF:-}"
-  [ -n "$SWAP_FILE" ] && ADD_SWAP=1
   return 0
 }
 
+# Without a terminal every question takes its default, which is the
+# recommended answer, or the saved one on a reinstall.
 ask_questions() {
-  heading "A few questions"
-  say "  Press Enter to take the recommended answer."
+  if [ "$INTERACTIVE" = 1 ]; then
+    heading "A few questions"
+    say "  Press Enter to take the recommended answer."
+  fi
 
   if [ "$JETSON" = 1 ]; then
     # always on is the recommended wiring, for a Jetson that can deep-sleep
@@ -482,8 +491,9 @@ ask_questions() {
 
     AUTOSTART=1
   else
-    local auto
-    ask_yn auto y "Start Jetlink automatically when this computer starts?" \
+    local auto autodef=y
+    [ "$AUTOSTART" = 0 ] && autodef=n
+    ask_yn auto "$autodef" "Start Jetlink automatically when this computer starts?" \
       "If you say no, start it yourself with: jetlink start"
     if [ "$auto" = y ]; then AUTOSTART=1; else AUTOSTART=0; fi
   fi
@@ -498,26 +508,11 @@ set_always_on() {
   fi
 }
 
-take_defaults() {
-  # --yes on a fresh install: the recommended answers
-  if [ "$JETSON" = 1 ] && [ -z "$POWER" ]; then
-    if [ "$DEEP_SLEEP" = 1 ]; then
-      set_always_on
-      POWEROFF_WITH_COMMA=1
-    else
-      POWER=switched SLEEP_AFTER=0 POWEROFF_WITH_COMMA=0
-    fi
-  fi
-  return 0
-}
-
 # Not questions: the large models need both, so every Jetson install gets
 # them, updates included.
 jetson_musts() {
   [ "$JETSON" = 1 ] || return 0
-  FAST_MODE=0
   if [ -n "$PM_BEST_NAME" ]; then
-    FAST_MODE=1
     if [ "$PM_BEST_NAME" != MAXN_SUPER ] && [[ "$MODEL" == *"Orin Nano"* ]]; then
       note "This JetPack install does not offer the Orin Nano's Super modes; JetPack 7.2.1's"
       note "installer sets them up. Jetlink still works, a little slower, in $PM_BEST_NAME."
@@ -654,7 +649,7 @@ show_plan() {
     if [ "$POWEROFF_WITH_COMMA" = 1 ]; then
       say "  • Let the comma shut down the Jetson to protect the car battery"
     fi
-    if [ "$FAST_MODE" = 1 ] && [ "$PM_CURRENT" != "$PM_BEST_NAME" ]; then
+    if [ -n "$PM_BEST_ID" ] && [ "$PM_CURRENT" != "$PM_BEST_NAME" ]; then
       say "  • Switch to the fastest power mode, $PM_BEST_NAME, which the large models need ${D}(may need a restart)${N}"
     fi
     if [ "$ADD_SWAP" = 1 ] && [ -z "$SWAP_FILE" ]; then
@@ -668,7 +663,7 @@ show_plan() {
 # ---------------------------------------------------------------------------
 # Doing it
 
-prepare_source() {
+detect_source() {
   local here=''
   if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
     here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -677,11 +672,16 @@ prepare_source() {
       && [ -f "$here/docker/Dockerfile" ] && [ -f "$here/scripts/jetlink-run-server" ]; then
     # run from a checkout: install exactly what is in it
     SOURCE=local SOURCE_DIR="$here"
-    COMMIT="$(git -C "$here" rev-parse --short HEAD 2>/dev/null || echo local)"
+  else
+    SOURCE=git SOURCE_DIR="$SRC_ROOT/src"
+  fi
+}
+
+prepare_source() {
+  if [ "$SOURCE" = local ]; then
+    COMMIT="$(git -C "$SOURCE_DIR" rev-parse --short HEAD 2>/dev/null || echo local)"
     return 0
   fi
-  SOURCE=git SOURCE_DIR="$SRC_ROOT/src"
-  [ "$OPT_DRY_RUN" = 1 ] && { COMMIT=''; return 0; }
   if [ -d "$SOURCE_DIR/.git" ]; then
     step "Getting Jetlink ($REF)" as_root sh -c "git -C '$SOURCE_DIR' fetch --depth 1 origin '$REF' && git -C '$SOURCE_DIR' reset --hard FETCH_HEAD"
   else
@@ -842,7 +842,7 @@ published_tag() {
 
 get_image() {
   if [ -n "$OPT_IMAGE" ]; then
-    IMAGE_REF="$OPT_IMAGE" IMAGE_SOURCE=given
+    IMAGE_REF="$OPT_IMAGE"
     if ! as_root docker image inspect "$IMAGE_REF" >/dev/null 2>&1; then
       step "Downloading $IMAGE_REF" pull_image "$IMAGE_REF"
     fi
@@ -851,7 +851,7 @@ get_image() {
   else
     local tag
     if tag="$(published_tag)" && try_pull "$REGISTRY:$tag"; then
-      IMAGE_REF="$REGISTRY:$tag" IMAGE_SOURCE=pull
+      IMAGE_REF="$REGISTRY:$tag"
     else
       note "There is no ready-made Jetlink server for this computer yet, so it will be built here."
       build_image
@@ -893,7 +893,7 @@ pull_image() {
 build_image() {
   local file=docker/Dockerfile
   [ "$FLAVOR" = jetpack6 ] && file=docker/Dockerfile.jetpack6
-  IMAGE_REF="jetlink:local-$FLAVOR" IMAGE_SOURCE=build
+  IMAGE_REF="jetlink:local-$FLAVOR"
   # host networking: Docker 28 on a JetPack 6 kernel cannot give a build step
   # a bridge network
   step "Building the Jetlink server (5 to 30 minutes)" \
@@ -934,7 +934,7 @@ check_gpu() {
 
 configure_jetson() {
   [ "$JETSON" = 1 ] || return 0
-  if [ "$FAST_MODE" = 1 ] && [ -n "$PM_BEST_ID" ] && [ "$PM_CURRENT" != "$PM_BEST_NAME" ]; then
+  if [ -n "$PM_BEST_ID" ] && [ "$PM_CURRENT" != "$PM_BEST_NAME" ]; then
     set_power_mode
   fi
   if [ "$ADD_SWAP" = 1 ] && [ -z "$SWAP_FILE" ]; then
@@ -967,7 +967,7 @@ set_power_mode() {
   # and tell the user at the end
   printf 'no\n' | as_root nvpmodel -m "$PM_BEST_ID" >>"$LOG" 2>&1 || true
   local now
-  now="$(nvpmodel -q 2>/dev/null | sed -n 's/^NV Power Mode: *//p' | head -n 1)"
+  now="$(power_mode_now)"
   if [ "$now" = "$PM_BEST_NAME" ]; then
     good "Power mode set to $PM_BEST_NAME"
     PM_CURRENT="$now"
@@ -1041,14 +1041,10 @@ write_conf() {
     printf 'JETLINK_SOURCE=%q\n' "$SOURCE"
     printf 'JETLINK_SOURCE_DIR=%q\n' "$SOURCE_DIR"
     printf 'JETLINK_COMMIT=%q\n' "$COMMIT"
-    printf 'JETLINK_IMAGE_SOURCE=%q\n' "$IMAGE_SOURCE"
     printf 'JETLINK_PLATFORM_NAME=%q\n' "$PLATFORM_NAME"
     printf 'JETLINK_POWER=%q\n' "$POWER"
-    printf 'JETLINK_SLEEP_AFTER=%q\n' "$SLEEP_AFTER"
     printf 'JETLINK_POWEROFF_WITH_COMMA=%q\n' "$POWEROFF_WITH_COMMA"
-    printf 'JETLINK_FAST_MODE=%q\n' "$FAST_MODE"
     printf 'JETLINK_AUTOSTART=%q\n' "$AUTOSTART"
-    printf 'JETLINK_CACHE_DIR=%q\n' "$CACHE_DIR"
     printf 'JETLINK_SWAP_FILE=%q\n' "$SWAP_FILE"
     printf 'JETLINK_MASKED_UNITS=%q\n' "$MASKED_UNITS"
     printf 'JETLINK_JOURNALD_CAPPED=%q\n' "$JOURNALD_CAPPED"
@@ -1243,8 +1239,8 @@ main() {
   load_previous
   REF="${OPT_REF:-${REF:-main}}"
   if [ -z "$CACHE_DIR" ]; then
-    CACHE_DIR="${JETLINK_CACHE_DIR:-/var/lib/jetlink}"
-    [ "$JETSON" = 1 ] && CACHE_DIR="${JETLINK_CACHE_DIR:-/mnt/data/jetlink}"
+    CACHE_DIR=/var/lib/jetlink
+    [ "$JETSON" = 1 ] && CACHE_DIR=/mnt/data/jetlink
   fi
   show_found
   preflight
@@ -1254,20 +1250,12 @@ main() {
     ask_yn keep y "Jetlink is already installed. Keep your current settings and update it?"
     [ "$keep" = y ] && OPT_UPDATE=1
   fi
-  if [ "$OPT_UPDATE" = 1 ] && [ "$HAD_INSTALL" = 1 ]; then
-    : # the saved answers stand
-  elif [ "$INTERACTIVE" = 1 ]; then
-    ask_questions
-  else
-    take_defaults
+  if [ "$OPT_UPDATE" = 0 ] || [ "$HAD_INSTALL" = 0 ]; then
+    ask_questions   # on an update the saved answers stand
   fi
   jetson_musts
 
-  local here=''
-  [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ] && here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [ -n "$here" ] && [ "$here" != "$SRC_ROOT/src" ] && [ -f "$here/scripts/jetlink-run-server" ]; then
-    SOURCE=local
-  fi
+  detect_source
   show_plan
 
   if [ "$OPT_UPDATE" = 0 ] || [ "$HAD_INSTALL" = 0 ]; then

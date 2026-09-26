@@ -64,7 +64,7 @@ reset_box() {
       swapoff jetson_clocks curl gpg; do
     ln -sf "$SRC/tests/installer/fake.sh" "$FAKE_BIN/$c"
   done
-  unset FAKE_ARCH FAKE_SMI FAKE_GPU_OK FAKE_PUBLISHED FAKE_PM_REBOOT FAKE_NVIDIA_RUNTIME FAKE_NV_DOCKER_POLLS \
+  unset FAKE_ARCH FAKE_SMI FAKE_GPU_OK FAKE_PUBLISHED FAKE_PM_REBOOT FAKE_NV_DOCKER_POLLS \
     FAKE_PULL_FAILS FAKE_MANIFEST_HANGS FAKE_SERVER_BROKEN FAKE_RESTARTS
 }
 
@@ -89,6 +89,10 @@ pc() {  # pc DRIVER
 }
 
 with_docker() { ln -sf "$SRC/tests/installer/fake.sh" "$FAKE_BIN/docker"; }
+
+piped() {  # piped [installer args...]: as curl | bash runs it, the script on stdin
+  bash </src/install.sh -s -- "$@" >"$OUT" 2>&1; RC=$?
+}
 
 install() {  # install "answers" [installer args...]; answers "" means none (no terminal)
   local answers=$1
@@ -262,7 +266,7 @@ show_on_failure "$f"
 scenario "curl | bash from the repository, with a published image"
 reset_box; jetson 39 2.1; with_docker; f=$FAILED
 export FAKE_PUBLISHED=1 JETLINK_REPO_URL=file:///tmp/repo
-bash </src/install.sh -s -- --yes >"$OUT" 2>&1; RC=$?
+piped --yes
 expect_rc 0
 expect_ran "docker pull ghcr.io/zoompilot/jetlink:edge-cuda"
 expect_not_ran "docker build"
@@ -290,7 +294,7 @@ show_on_failure "$f"
 scenario "a download cut off part way is tried again"
 reset_box; jetson 39 2.1; with_docker; f=$FAILED
 export FAKE_PUBLISHED=1 FAKE_PULL_FAILS=2 JETLINK_REPO_URL=file:///tmp/repo
-bash </src/install.sh -s -- --yes >"$OUT" 2>&1; RC=$?
+piped --yes
 expect_rc 0
 expect_out "Downloading the Jetlink server"
 expect_in /var/log/jetlink-install.log "the download was interrupted; trying again"
@@ -332,7 +336,7 @@ expect_in /etc/fstab "/mnt/data/jetlink-swapfile none swap sw 0 0"
 expect_no_file /etc/systemd/system/jetlink-poweroff.path
 expect_no_file /etc/udev/rules.d/99-jetlink-usb-wakeup.rules
 JETLINK_DRY_RUN=1 /usr/local/lib/jetlink/run-server >/tmp/cmd.txt 2>&1
-if grep -q -- "--sleep-after" /tmp/cmd.txt; then fail "switched power should not sleep"; else ok; fi
+refute "switched power should not sleep" grep -qF -- "--sleep-after" /tmp/cmd.txt
 refute "switched power needs no AppArmor exception" grep -qF -- "apparmor=unconfined" /tmp/cmd.txt
 show_on_failure "$f"
 
