@@ -206,24 +206,45 @@ struct FormattingTests {
     #expect(FrameTimeChart.agoText(12) == "12 s ago")
   }
 
-  @Test("One action takes a model from wherever it is to loaded")
-  func prepareAction() {
+  @Test("The toolbar names the backend in a word or two")
+  func backendShortName() {
+    #expect(StatusView.backendShortName(backend: "ort", device: "ane-Apple_M1_Pro") == "Neural Engine")
+    #expect(StatusView.backendShortName(backend: "ort", device: "coreml-Apple_M1_Pro") == "CoreML GPU")
+    #expect(StatusView.backendShortName(backend: "tinygrad", device: "METAL-Apple_M1_Pro") == "tinygrad")
+    #expect(BackendChoice.auto.shortTitle == "Neural Engine")
+  }
+
+  @Test("Use Model takes a model from wherever it is to in use")
+  func useAction() {
     var notDownloaded = PreviewData.loadedRow
     notDownloaded.status = .notDownloaded
-    #expect(ModelStore.canPrepare(notDownloaded))
-    #expect(ModelsView.prepareTitle(notDownloaded) == "Prepare")
-    #expect(ModelsView.prepareHelp(notDownloaded).hasPrefix("Download the model"))
-    #expect(!ModelStore.canPrepare(PreviewData.loadedRow))
+    #expect(ModelStore.canUse(notDownloaded))
+    #expect(ModelsView.useHelp(notDownloaded) == "Downloads 766 MB, prepares it for this Mac and starts using it")
+    #expect(!ModelStore.canUse(PreviewData.loadedRow))
     var prepared = PreviewData.loadedRow
     prepared.status = .prepared
-    #expect(ModelStore.canPrepare(prepared))
-    #expect(ModelsView.prepareTitle(prepared) == "Load")
+    #expect(ModelStore.canUse(prepared))
+    #expect(ModelsView.useHelp(prepared).hasPrefix("Starts using it"))
     var downloading = PreviewData.loadedRow
     downloading.status = .downloading(frac: 0.4, rateBps: 1)
-    #expect(!ModelStore.canPrepare(downloading))
+    #expect(!ModelStore.canUse(downloading))
     // The catalog has not resolved its checksum yet, so there is nothing to ask for.
     #expect(PreviewData.notDownloadedRow.sha256 == nil)
-    #expect(!ModelStore.canPrepare(PreviewData.notDownloadedRow))
+    #expect(!ModelStore.canUse(PreviewData.notDownloadedRow))
+  }
+
+  @Test("A row's second line is its date, size and what is on disk")
+  func detailLine() {
+    #expect(ModelsView.detailLine(PreviewData.loadedRow) == "\(BuildTime.text(PreviewData.loadedRow.buildTime)) · 766 MB · Prepared for CoreML")
+    #expect(ModelsView.detailLine(PreviewData.localRow) == "766 MB · Downloaded")
+    var notDownloaded = PreviewData.loadedRow
+    notDownloaded.status = .notDownloaded
+    notDownloaded.preparedFor = []
+    #expect(!ModelsView.detailLine(notDownloaded).contains("Prepared"))
+    #expect(ModelsView.diskSummary(models: 2_300_000_000, engines: 6_900_000_000, free: 13_600_000_000)
+      == "Downloads 2.3 GB · Prepared engines 6.9 GB · 13.6 GB available")
+    #expect(ModelListRow.downloadCaption(frac: 0.421, rateBps: 0) == "Downloading 42%")
+    #expect(ModelListRow.downloadCaption(frac: 0.421, rateBps: 41_000_000).hasPrefix("Downloading 42%, 41"))
   }
 
   @Test("Prepared backends are listed once each, in plain names")

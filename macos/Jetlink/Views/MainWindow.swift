@@ -37,6 +37,7 @@ final class Navigation {
 
 struct MainWindow: View {
   @Environment(ServerStore.self) private var server
+  @Environment(ModelStore.self) private var models
   @Environment(Navigation.self) private var navigation
 
   var body: some View {
@@ -69,6 +70,17 @@ struct MainWindow: View {
         }
     }
     .frame(minWidth: 860, minHeight: 540)
+    // A command the server refused, such as Use Model on a model it cannot
+    // find, from whichever screen sent it.
+    .alert("Couldn't complete the action", isPresented: modelErrorPresented) {
+      Button("OK") { models.clearError() }
+    } message: {
+      Text(models.lastError ?? "")
+    }
+  }
+
+  private var modelErrorPresented: Binding<Bool> {
+    Binding(get: { models.lastError != nil }, set: { if !$0 { models.clearError() } })
   }
 
   @ViewBuilder
@@ -85,10 +97,10 @@ struct MainWindow: View {
   private var runButton: some View {
     switch server.runState {
     case .stopped, .failed:
-      Button("Start server", systemImage: "play.fill") { server.start() }
+      Button("Start Server", systemImage: "play.fill") { server.start() }
         .help("Start the server")
     case .serving:
-      Button("Stop server", systemImage: "stop.fill") { server.stop() }
+      Button("Stop Server", systemImage: "stop.fill") { server.stop() }
         .help("Stop the server")
     case .starting, .stopping:
       Button {

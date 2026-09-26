@@ -16,23 +16,13 @@ struct StatusView: View {
       commaSection
       frameBudgetSection
       engineSection
-      Section {
-        HStack {
-          Button("Reveal cache in Finder") {
-            NSWorkspace.shared.activateFileViewerSelecting([cacheURL])
-          }
-          if server.engine.state == .ready {
-            Button("Unload model") { confirmingUnload = true }
-          }
-        }
-      }
     }
     .formStyle(.grouped)
-    .confirmationDialog("Unload the model?", isPresented: $confirmingUnload) {
-      Button("Unload model") { models.unload() }
+    .confirmationDialog("Stop using the model?", isPresented: $confirmingUnload) {
+      Button("Stop Using Model") { models.unload() }
       Button("Cancel", role: .cancel) {}
     } message: {
-      Text("The comma drives on its small model until one is loaded again.")
+      Text("The comma drives on its small model until a model is in use again.")
     }
   }
 
@@ -78,7 +68,7 @@ struct StatusView: View {
               }
             }
           }
-          Button("Show logs") { selection = .logs }
+          Button("Show Logs") { selection = .logs }
         }
       }
     }
@@ -149,7 +139,7 @@ struct StatusView: View {
       Section {
         FrameBudgetView(stats: stats, history: server.statsHistory)
       } header: {
-        Text("Frame budget")
+        Text("Frame Budget")
       } footer: {
         Text("Measured on this Mac, from a frame's arrival to its reply leaving. The comma's own work and the transfer to the Mac use the same 50 ms, so leave room.")
           .font(.callout)
@@ -196,12 +186,12 @@ struct StatusView: View {
 
   @ViewBuilder
   private var engineSection: some View {
-    Section("Engine") {
+    Section("Model") {
       if showsEmptyState {
         VStack(alignment: .leading, spacing: 8) {
-          Label("No model prepared", systemImage: "shippingbox")
+          Label("No model in use", systemImage: "shippingbox")
             .font(.headline)
-          Text("Prepare the model your comma uses and leave Jetlink running. Otherwise the comma sends its model when it connects, and drives on its small model until the Mac is ready.")
+          Text("Use the model your comma drives with, and leave Jetlink running. Otherwise the comma sends its model when it connects, and drives on its small model until the Mac is ready.")
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -231,6 +221,15 @@ struct StatusView: View {
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
         }
+        HStack {
+          Spacer()
+          Button("Show Cache in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([cacheURL])
+          }
+          if server.engine.state == .ready {
+            Button("Stop Using Model") { confirmingUnload = true }
+          }
+        }
       }
     }
   }
@@ -242,11 +241,11 @@ struct StatusView: View {
     if let row = defaultRow, case .downloading = row.status {
       ModelStatusLabel(row.status)
         .frame(maxWidth: 260, alignment: .leading)
-    } else if let row = defaultRow, ModelStore.canPrepare(row) {
+    } else if let row = defaultRow, ModelStore.canUse(row) {
       HStack {
-        Button("Prepare \(row.displayName)") { models.prepare(row) }
+        Button("Use \(row.displayName)") { models.use(row) }
           .buttonStyle(.borderedProminent)
-          .help(ModelsView.prepareHelp(row))
+          .help(ModelsView.useHelp(row))
         Button("Choose Another Model…") { selection = .models }
       }
     } else {
@@ -269,10 +268,10 @@ struct StatusView: View {
 
   private var engineStateText: String {
     switch server.engine.state {
-    case .none: "None"
+    case .none: "Not in use"
     case .building: "Preparing"
     case .loading: "Loading"
-    case .ready: "Ready"
+    case .ready: "In use"
     case .failed: "Failed"
     }
   }
@@ -334,6 +333,19 @@ struct StatusView: View {
     hardware = hardware.replacingOccurrences(of: "_", with: " ")
     let head = version.isEmpty ? runtime : "\(runtime) \(version)"
     return hardware.isEmpty ? head : "\(head), \(hardware)"
+  }
+
+  /// "Neural Engine", "CoreML GPU", "tinygrad": the backend in a word or two,
+  /// for the toolbar's activity view.
+  static func backendShortName(backend: String?, device: String?) -> String {
+    let device = device ?? ""
+    if device.hasPrefix("ane") || backend == "ane" { return "Neural Engine" }
+    switch backend {
+    case "ort": return device.hasPrefix("coreml") || device.isEmpty ? "CoreML GPU" : "onnxruntime"
+    case "tinygrad": return "tinygrad"
+    case let other?: return other
+    case nil: return "Unknown"
+    }
   }
 
   /// "CoreML on the GPU", "CoreML with the Neural Engine", "tinygrad on Metal",

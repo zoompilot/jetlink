@@ -19,7 +19,7 @@ struct LogsView: View {
     .searchable(text: $filter, placement: .toolbar, prompt: "Filter")
     .toolbar {
       ToolbarItem {
-        Button("Copy all", systemImage: "doc.on.doc") { copyAll() }
+        Button("Copy All", systemImage: "doc.on.doc") { copyAll() }
           .help("Copy the shown lines")
       }
       ToolbarItem {
@@ -27,7 +27,7 @@ struct LogsView: View {
           .help("Clear the view. The log file keeps everything.")
       }
       ToolbarItem {
-        Button("Reveal log file", systemImage: "folder") {
+        Button("Show Log File", systemImage: "folder") {
           NSWorkspace.shared.activateFileViewerSelecting([LogsView.logFileURL])
         }
         .help("Show server.log in the Finder")
@@ -37,7 +37,7 @@ struct LogsView: View {
 
   private var bottomBar: some View {
     HStack {
-      Toggle("Follow new lines", isOn: $autoScroll)
+      Toggle("Follow New Lines", isOn: $autoScroll)
         .toggleStyle(.checkbox)
       Spacer()
       Text("\(logs.lines.count.formatted()) lines")

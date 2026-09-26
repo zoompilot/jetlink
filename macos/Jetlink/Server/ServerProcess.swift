@@ -32,6 +32,14 @@ enum BackendChoice: String, CaseIterable, Codable, Sendable {
     case .tinygrad: return "tinygrad on Metal"
     }
   }
+
+  var shortTitle: String {
+    switch self {
+    case .auto: return "Neural Engine"
+    case .coreml: return "CoreML GPU"
+    case .tinygrad: return "tinygrad"
+    }
+  }
 }
 
 enum TransportChoice: String, CaseIterable, Codable, Sendable {

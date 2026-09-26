@@ -49,8 +49,8 @@ struct ModelStatusLabel: View {
     case .prepared:
       Text("Prepared")
     case .loaded:
-      Text("Loaded")
-        .fontWeight(.bold)
+      Label("In Use", systemImage: "checkmark.circle.fill")
+        .fontWeight(.medium)
         .foregroundStyle(.green)
     case let .failed(detail):
       Text("Failed")

@@ -16,11 +16,11 @@ struct MenuBarView: View {
     Divider()
     switch server.runState {
     case .stopped, .failed:
-      Button("Start server") { server.start() }
+      Button("Start Server") { server.start() }
     case .serving:
-      Button("Stop server") { server.stop() }
+      Button("Stop Server") { server.stop() }
     case .starting, .stopping:
-      Button("Start server") {}
+      Button("Start Server") {}
         .disabled(true)
     }
     Button("Open Jetlink") {
@@ -45,12 +45,12 @@ struct MenuBarView: View {
     let engine = server.engine
     switch engine.state {
     case .none:
-      return "No model"
+      return "No model in use"
     case .building, .loading:
       let name = engine.state == .building ? "Preparing model" : "Loading model"
       return "\(name), \(Int((engine.frac * 100).rounded()))%"
     case .ready:
-      return "Loaded: \(loadedName)"
+      return "In use: \(loadedName)"
     case .failed:
       return "Model failed"
     }

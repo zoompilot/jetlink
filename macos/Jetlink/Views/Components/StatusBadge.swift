@@ -51,17 +51,13 @@ struct StatusBadge: View {
     }
   }
 
-  /// Liquid Glass takes the tint where the system has it, a plain fill before that.
+  /// A plain tinted fill. The badge sits in a form row, which is content, and
+  /// Liquid Glass belongs to the controls and bars that float above content.
   private struct PillBackground: ViewModifier {
     let tone: Tone
 
-    @ViewBuilder
     func body(content: Content) -> some View {
-      if #available(macOS 26, *) {
-        content.glassEffect(.regular.tint(tone.color.opacity(0.35)), in: .capsule)
-      } else {
-        content.background(Capsule().fill(tone.color.opacity(0.12)))
-      }
+      content.background(Capsule().fill(tone.color.opacity(0.14)))
     }
   }
 

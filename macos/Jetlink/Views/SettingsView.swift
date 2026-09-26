@@ -42,7 +42,7 @@ struct GeneralSettingsView: View {
         }
       }
 
-      Section("Cache folder") {
+      Section("Cache Folder") {
         VStack(alignment: .leading, spacing: 8) {
           Text(settings.cacheDirectory.path(percentEncoded: false))
             .font(.system(.callout, design: .monospaced))
@@ -50,14 +50,14 @@ struct GeneralSettingsView: View {
             .fixedSize(horizontal: false, vertical: true)
           HStack {
             Button("Choose…") { chooseCacheDirectory() }
-            Button("Reveal") {
+            Button("Show in Finder") {
               NSWorkspace.shared.activateFileViewerSelecting([settings.cacheDirectory])
             }
             if needsRestart {
-              Button("Restart now") { server.restart() }
+              Button("Restart Now") { server.restart() }
             }
           }
-          Text("Models and prepared engines. A CoreML engine is about 10 GB. Takes effect when the server restarts.")
+          Text("Models and prepared engines. A CoreML engine is about 2 GB. Takes effect when the server restarts.")
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -125,7 +125,7 @@ struct ServerSettingsView: View {
             .font(.callout)
             .foregroundStyle(.secondary)
           Spacer()
-          Button("Restart server") { server.restart() }
+          Button("Restart Server") { server.restart() }
             .disabled(server.runState != .serving)
         }
       }

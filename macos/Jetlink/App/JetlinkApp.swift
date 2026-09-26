@@ -79,20 +79,20 @@ struct AppCommands: Commands {
         .keyboardShortcut("3", modifiers: .command)
     }
     CommandMenu("Server") {
-      Button("Start server") { appState.server.start() }
+      Button("Start Server") { appState.server.start() }
         .keyboardShortcut("r", modifiers: .command)
         .disabled(!canStart)
-      Button("Stop server") { appState.server.stop() }
+      Button("Stop Server") { appState.server.stop() }
         .keyboardShortcut(".", modifiers: .command)
         .disabled(appState.server.runState != .serving)
-      Button("Restart server") { appState.server.restart() }
+      Button("Restart Server") { appState.server.restart() }
         .disabled(appState.server.runState != .serving)
       Divider()
-      Button("Refresh model list") { appState.models.refreshCatalog() }
+      Button("Refresh Model List") { appState.models.refreshCatalog() }
         .keyboardShortcut("r", modifiers: [.command, .shift])
         .disabled(appState.server.runState != .serving)
       Divider()
-      Button("Reveal cache in Finder") {
+      Button("Show Cache in Finder") {
         NSWorkspace.shared.activateFileViewerSelecting([cacheURL])
       }
     }

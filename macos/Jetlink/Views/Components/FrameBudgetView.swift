@@ -452,7 +452,7 @@ extension Color {
 
 #Preview("Room to spare") {
   Form {
-    Section("Frame budget") {
+    Section("Frame Budget") {
       FrameBudgetView(stats: PreviewData.stats, history: PreviewData.statsHistory)
     }
   }
@@ -467,7 +467,7 @@ extension Color {
     stagesMs: StatsEvent.Stages(queue: 0.7, gpu: 43.7, other: 2.7, send: 1.4),
     servedMs: StatsEvent.Total(mean: 48.5, p99: 59.1, max: 72.4))
   return Form {
-    Section("Frame budget") {
+    Section("Frame Budget") {
       FrameBudgetView(stats: stats, history: [])
     }
   }

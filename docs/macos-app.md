@@ -80,34 +80,33 @@ then turns green. For driving behavior, see the
 
 Keep the Mac powered and awake. You can close the window; the server keeps
 running and the menu bar icon stays. Quitting Jetlink stops the server.
-The next launch loads the prepared engine again.
+The next launch uses the same model again.
 
-## Prepare a model before you drive
+## Use a model before you drive
 
 This is optional. The comma can send the model when it connects, but it then
-drives on its small model until the Mac has prepared it. Preparing it on the
+drives on its small model until the Mac has prepared it. Using the model on the
 Mac first avoids that wait.
 
-If you have not changed the model on the comma, click **Prepare** on the
-Status screen. It names the default model, and one click downloads it, prepares
-it for this Mac and loads it.
+If you have not changed the model on the comma, click **Use** with the default
+model's name on the Status screen. One click downloads it, prepares it for this
+Mac and starts using it.
 
 For another model, open **Models**. The list is the same one the comma shows
-under **Settings > Models > Big Model**, in the same order. Click **Prepare**
-in the model's row, or **Load** if it was prepared before. The Status column
-shows the download, then the preparation, then **Loaded**. **Cancel** stops a
-download.
+under **Settings > Models > Big Model**, in the same order. Click **Use Model**
+in its row, or double-click the row. The row shows the download, then the
+preparation, then **In Use**. The cancel button next to a download stops it.
+Right-click a model for everything else: **Stop Using Model**, **Show in
+Finder**, and deleting its download or its prepared engines. **Inspector**
+(Command-I) shows its checksum, files and engines.
 
-What the Status column says:
+Under each model's name are its date, its size, and what is on this Mac:
 
-| Status | What is happening |
+| Line under the name | What it means |
 | --- | --- |
-| Not downloaded | The model is in the list, but its file is not on your Mac. |
-| Downloading | The Mac is downloading the ONNX model file. |
-| Downloaded | The file is on disk and can be prepared. |
-| Preparing | The Mac is compiling the model for its own hardware. |
-| Prepared | A compiled engine is on disk, but it is not loaded. |
-| Loaded | The model is in memory and ready for the comma. |
+| Date and size only | The model's file is not on this Mac yet. Use Model downloads it first. |
+| Downloaded | The file is on this Mac but has not been prepared. Use Model prepares it. |
+| Prepared for CoreML | A compiled engine is on disk. Use Model only has to load it. |
 
 Preparing takes about 20 seconds the first time on an M1 Pro, and loading a
 prepared engine takes under a second when it was the last model loaded and up to about
@@ -136,7 +135,7 @@ These screenshots show an earlier app build.
 
 The cache folder defaults to `~/Library/Application Support/Jetlink/cache`. If
 you already used `scripts/run-mac.sh`, you have a `models_cache/` folder in a
-checkout. Point the cache folder at it with **Choose**, and nothing is
+checkout. Point the cache folder at it with **Choose…**, and nothing is
 downloaded or prepared again.
 
 **Server**
@@ -149,7 +148,7 @@ downloaded or prepared again.
 | Log level | **Normal (INFO)** or **Verbose (DEBUG)**. Use verbose when reporting a problem. |
 | Python interpreter override | For development only. Leave it empty to use the bundled runtime. |
 
-Click **Restart server** to apply these settings.
+Click **Restart Server** to apply these settings.
 
 ## Backends
 
@@ -175,7 +174,7 @@ about 2 GB, a tinygrad engine is 777 MB.
 | --- | --- |
 | The server failed to start | Open **Logs**. The last lines say why. The usual causes are another server already holding the USB device, and a cache folder that is not writable. |
 | The app stays on Waiting for comma | Use a USB-A port on a hub, dock or adapter, use a USB 3 data cable, and check that **Accelerator Link** is on under Settings > Models on the comma. |
-| Preparing takes a long time | CoreML should take about 20 seconds to prepare and up to about 10 seconds to load. If it takes minutes, remove the prepared engine under **Models** and prepare it again. Close other large applications to free memory. |
+| Use Model takes a long time | CoreML should take about 20 seconds to prepare and up to about 10 seconds to load. If it takes minutes, right-click the model in **Models**, choose **Delete Prepared Engines…**, then use it again. Close other large applications to free memory. |
 | The comma says **Big Model Lost** | Check the cable first. Then check that the Mac did not sleep: turn on **Keep the Mac awake while serving** and keep the Mac on power. |
 | Everything rebuilt after an update | A new runtime version means a new prepared engine, so the model is prepared again. The download is kept and is not fetched twice. |
 | The model list is empty | The Mac needs internet for the list. Open **Models** and choose **Refresh**. |

@@ -113,9 +113,9 @@ final class ModelStore {
     perform("cancel that download") { try await $0.send(.cancelDownload(sha256: sha)) }
   }
 
-  /// True when there is something left to do before this model is loaded:
-  /// downloading, preparing or loading it, or trying again after a failure.
-  static func canPrepare(_ row: ModelRow) -> Bool {
+  /// True when Use Model has something to do: download the model, prepare
+  /// it, load it, or try again after a failure.
+  static func canUse(_ row: ModelRow) -> Bool {
     guard row.sha256 != nil else { return false }
     switch row.status {
     case .notDownloaded, .downloaded, .prepared, .failed: return true
@@ -123,34 +123,34 @@ final class ModelStore {
     }
   }
 
-  /// True when preparing this model would interrupt the comma that is driving:
-  /// a comma is connected and a different model is loaded or being prepared.
-  func prepareNeedsConfirmation(_ row: ModelRow) -> Bool {
+  /// True when using this model would interrupt the comma that is driving:
+  /// a comma is connected and a different model is in use or being prepared.
+  func useNeedsConfirmation(_ row: ModelRow) -> Bool {
     guard server.link.state == .connected else { return false }
     guard let inFlight = server.engine.sha256, server.engine.state != .none else { return false }
     return inFlight != row.sha256
   }
 
-  func prepare(_ row: ModelRow) {
-    prepare(row, confirmedInterruption: false)
+  func use(_ row: ModelRow) {
+    use(row, confirmedInterruption: false)
   }
 
-  /// Everything it takes to have this model loaded, in one step: the server
-  /// downloads it first when it is not on disk, then prepares and loads it.
-  func prepare(_ row: ModelRow, confirmedInterruption: Bool) {
+  /// Use Model, in one step: the server downloads the model when it is not on
+  /// disk, prepares it when it has no engine, and loads it.
+  func use(_ row: ModelRow, confirmedInterruption: Bool) {
     guard let sha = row.sha256 else {
       lastError = "Jetlink does not know that model's checksum yet. Refresh the model list and try again."
       return
     }
-    if prepareNeedsConfirmation(row) && !confirmedInterruption {
-      log.debug("prepare needs confirmation while the comma is connected")
+    if useNeedsConfirmation(row) && !confirmedInterruption {
+      log.debug("using another model needs confirmation while the comma is connected")
       return
     }
-    perform("prepare that model") { try await $0.send(.prepare(sha256: sha, frameSkip: ModelStore.defaultFrameSkip)) }
+    perform("use that model") { try await $0.send(.prepare(sha256: sha, frameSkip: ModelStore.defaultFrameSkip)) }
   }
 
   func unload() {
-    perform("unload the engine") { try await $0.send(.unload) }
+    perform("stop using the model") { try await $0.send(.unload) }
   }
 
   func forget(_ row: ModelRow, artifacts: Bool, model: Bool) {

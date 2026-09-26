@@ -31,11 +31,11 @@ struct ModelsView: View {
   @State private var actionError: String?
 
   enum Confirmation: Identifiable {
-    case deleteDownload(ModelRow), deleteEngines(ModelRow), prepareSwitch(ModelRow)
+    case deleteDownload(ModelRow), deleteEngines(ModelRow), switchModel(ModelRow)
 
     var row: ModelRow {
       switch self {
-      case let .deleteDownload(row), let .deleteEngines(row), let .prepareSwitch(row): row
+      case let .deleteDownload(row), let .deleteEngines(row), let .switchModel(row): row
       }
     }
 
@@ -43,7 +43,7 @@ struct ModelsView: View {
       switch self {
       case .deleteDownload: "download-\(row.id)"
       case .deleteEngines: "engines-\(row.id)"
-      case .prepareSwitch: "prepare-\(row.id)"
+      case .switchModel: "use-\(row.id)"
       }
     }
   }
@@ -51,14 +51,18 @@ struct ModelsView: View {
   var body: some View {
     content
       .toolbar {
+        // Apart from the window's Start/Stop Server: these act on the list.
+        if #available(macOS 26, *) {
+          ToolbarSpacer(.fixed)
+        }
         ToolbarItem {
           Button("Refresh", systemImage: "arrow.clockwise") { models.refreshCatalog() }
             .keyboardShortcut("r", modifiers: [.command, .shift])
             .help("Refresh the model list")
         }
         ToolbarItem {
-          Button("Add ONNX…", systemImage: "plus") { importing = true }
-            .help("Add a model file from this Mac")
+          Button("Add Model File…", systemImage: "plus") { importing = true }
+            .help("Add an ONNX model file from this Mac")
         }
         ToolbarItem {
           Menu {
@@ -72,8 +76,9 @@ struct ModelsView: View {
           .help("Actions for the selected model")
         }
         ToolbarItem {
-          Button("Show details", systemImage: "sidebar.trailing") { inspectorPresented.toggle() }
-            .help("Show the details of the selected model")
+          Button("Inspector", systemImage: "info.circle") { inspectorPresented.toggle() }
+            .keyboardShortcut("i", modifiers: .command)
+            .help(inspectorPresented ? "Hide the model's details" : "Show the model's details")
         }
       }
       .inspector(isPresented: $inspectorPresented) {
@@ -81,9 +86,7 @@ struct ModelsView: View {
           if let row = selectedRow {
             ModelDetailView(row: row)
           } else {
-            Text("Select a model to see its details.")
-              .foregroundStyle(.secondary)
-              .padding()
+            ContentUnavailableView("No Model Selected", systemImage: "shippingbox", description: Text("Select a model to see its details."))
           }
         }
         .inspectorColumnWidth(min: 280, ideal: 320, max: 440)
@@ -113,97 +116,92 @@ struct ModelsView: View {
   private var content: some View {
     if models.catalog == nil, server.runState != .serving, server.runState != .starting {
       ContentUnavailableView {
-        Label("Server not running", systemImage: "cable.connector.slash")
+        Label("Server Not Running", systemImage: "cable.connector.slash")
       } description: {
         Text("Start the server to load the model list.")
       } actions: {
-        Button("Start server") { server.start() }
+        Button("Start Server") { server.start() }
       }
     } else if models.catalog == nil, models.rows.isEmpty {
       ProgressView("Loading model list…")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else {
-      VStack(spacing: 0) {
-        table
-        Divider()
+      listWithBar
+    }
+  }
+
+  /// On macOS 26 the bar sits over the list's own scroll edge, the way the
+  /// system's bars do, rather than on a slab of material of its own.
+  @ViewBuilder
+  private var listWithBar: some View {
+    if #available(macOS 26, *) {
+      // The hard edge Apple suggests on macOS for a bar that carries text.
+      list
+        .safeAreaBar(edge: .bottom, spacing: 0) { bottomBar }
+        .scrollEdgeEffectStyle(.hard, for: .bottom)
+    } else {
+      list.safeAreaInset(edge: .bottom, spacing: 0) {
         bottomBar
+          .background(.bar)
+          .overlay(alignment: .top) { Divider() }
       }
     }
   }
 
-  private var table: some View {
-    Table(models.rows, selection: $selection) {
-      TableColumn("Model") { row in
-        modelCell(row)
+  private var list: some View {
+    List(selection: $selection) {
+      Section {
+        rows(models.rows.filter { !$0.isLocal && !$0.isOrphan })
       }
-      .width(min: 220, ideal: 320)
-      TableColumn("Built") { row in
-        Text(BuildTime.text(row.buildTime))
+      let local = models.rows.filter { $0.isLocal && !$0.isOrphan }
+      if !local.isEmpty {
+        Section("Added From This Mac") { rows(local) }
       }
-      .width(min: 90, ideal: 100)
-      TableColumn("Size") { row in
-        ByteCount(row.bytes)
+      let orphans = models.rows.filter(\.isOrphan)
+      if !orphans.isEmpty {
+        Section("Unrecognized Files") { rows(orphans) }
       }
-      .width(min: 70, ideal: 80)
-      TableColumn("Status") { row in
-        ModelStatusLabel(row.status, isCheckingCatalog: models.catalog == nil)
-      }
-      .width(min: 150, ideal: 170)
-      TableColumn("Prepared for") { row in
-        Text(ModelsView.preparedForText(row))
-      }
-      .width(min: 110, ideal: 130)
-      TableColumn("") { row in
-        rowAction(row)
-      }
-      .width(min: 80, ideal: 90)
     }
+    .listStyle(.inset(alternatesRowBackgrounds: true))
+    // Double-click or Return uses the model, as it opens a document in Finder.
     .contextMenu(forSelectionType: ModelRow.ID.self) { ids in
       if let row = models.rows.first(where: { ids.contains($0.id) }) {
         actionButtons(for: row)
       }
-    }
-  }
-
-  private func modelCell(_ row: ModelRow) -> some View {
-    VStack(alignment: .leading, spacing: 2) {
-      HStack(spacing: 6) {
-        Text(row.displayName)
-        if row.isDefault { tag("Default", tone: .accentColor) }
-        if row.isRequestedByComma { tag("Comma", tone: .green) }
-        if row.isLocal { tag("Local", tone: .secondary) }
+    } primaryAction: { ids in
+      if let row = models.rows.first(where: { ids.contains($0.id) }), ModelStore.canUse(row) {
+        startUse(row)
       }
-      Text(row.ref.map { String($0.prefix(10)) } ?? row.sha256.map { String($0.prefix(16)) } ?? "")
-        .font(.system(.caption, design: .monospaced))
-        .foregroundStyle(.secondary)
     }
   }
 
-  private func tag(_ text: String, tone: Color) -> some View {
-    Text(text)
-      .font(.caption2)
-      .padding(.horizontal, 5)
-      .padding(.vertical, 1)
-      .background(Capsule().fill(tone.opacity(0.15)))
-      .foregroundStyle(tone)
+  private func rows(_ rows: [ModelRow]) -> some View {
+    ForEach(rows) { row in
+      ModelListRow(
+        row: row,
+        isCheckingCatalog: models.catalog == nil,
+        use: { startUse(row) },
+        cancel: { models.cancelDownload(row) })
+    }
   }
 
   private var bottomBar: some View {
-    HStack {
+    HStack(spacing: 12) {
       Text(diskSummary)
-        .font(.callout)
         .foregroundStyle(.secondary)
       Spacer()
       if let error = models.catalog?.error, !error.isEmpty {
-        Label(catalogErrorTitle, systemImage: "exclamationmark.triangle")
-          .font(.callout)
+        Label(catalogErrorTitle, systemImage: "exclamationmark.triangle.fill")
           .foregroundStyle(.orange)
           .lineLimit(1)
           .help(error)
       }
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 6)
+    .font(.callout)
+    // Lines up with the text of the rows above it.
+    .padding(.horizontal, 20)
+    .padding(.vertical, 8)
+    .frame(maxWidth: .infinity)
   }
 
   /// The fetch failed. The cached list still drives the table, unless there is
@@ -215,7 +213,7 @@ struct ModelsView: View {
 
   private var diskSummary: String {
     guard let disk = models.inventory?.disk else { return "" }
-    return "Models \(ByteCount.string(disk.modelsBytes)), engines \(ByteCount.string(disk.enginesBytes)), \(ByteCount.string(disk.freeBytes)) free"
+    return ModelsView.diskSummary(models: disk.modelsBytes, engines: disk.enginesBytes, free: disk.freeBytes)
   }
 
   // MARK: Actions
@@ -225,58 +223,39 @@ struct ModelsView: View {
     return models.rows.first { $0.id == selection }
   }
 
-  /// The one thing to do next, in the row itself: prepare it (downloading it
-  /// first if need be), stop its download, or nothing once it is loaded.
-  @ViewBuilder
-  private func rowAction(_ row: ModelRow) -> some View {
-    if canCancelDownload(row) {
-      Button("Cancel") { models.cancelDownload(row) }
-        .controlSize(.small)
-        .help("Stop the download")
-    } else if ModelStore.canPrepare(row) {
-      Button(ModelsView.prepareTitle(row)) { startPrepare(row) }
-        .controlSize(.small)
-        .help(ModelsView.prepareHelp(row))
-    }
-  }
-
+  /// Only what applies to this model, as a context menu should be.
   @ViewBuilder
   private func actionButtons(for row: ModelRow) -> some View {
-    Button(ModelsView.prepareTitle(row)) { startPrepare(row) }
-      .disabled(!ModelStore.canPrepare(row))
-    Button("Cancel download") { models.cancelDownload(row) }
-      .disabled(!canCancelDownload(row))
-    Button("Unload") { models.unload() }
-      .disabled(!canUnload(row))
-    Divider()
-    Button("Reveal in Finder") {
-      if let url = revealURL(row) {
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-      }
+    if ModelStore.canUse(row) {
+      Button("Use Model") { startUse(row) }
     }
-    .disabled(revealURL(row) == nil)
-    Divider()
-    Button("Delete download…", role: .destructive) { confirmation = .deleteDownload(row) }
-      .disabled(!hasModelFile(row))
-    Button("Delete prepared engines…", role: .destructive) { confirmation = .deleteEngines(row) }
-      .disabled(row.preparedFor.isEmpty)
+    if case .downloading = row.status {
+      Button("Cancel Download") { models.cancelDownload(row) }
+    }
+    if row.status == .loaded {
+      Button("Stop Using Model") { models.unload() }
+    }
+    if let url = revealURL(row) {
+      Divider()
+      Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+    }
+    if hasModelFile(row) || !row.preparedFor.isEmpty {
+      Divider()
+    }
+    if hasModelFile(row) {
+      Button("Delete Download…", role: .destructive) { confirmation = .deleteDownload(row) }
+    }
+    if !row.preparedFor.isEmpty {
+      Button("Delete Prepared Engines…", role: .destructive) { confirmation = .deleteEngines(row) }
+    }
   }
 
-  private func startPrepare(_ row: ModelRow) {
-    if models.prepareNeedsConfirmation(row) {
-      confirmation = .prepareSwitch(row)
+  private func startUse(_ row: ModelRow) {
+    if models.useNeedsConfirmation(row) {
+      confirmation = .switchModel(row)
     } else {
-      models.prepare(row)
+      models.use(row)
     }
-  }
-
-  private func canCancelDownload(_ row: ModelRow) -> Bool {
-    if case .downloading = row.status { return true }
-    return false
-  }
-
-  private func canUnload(_ row: ModelRow) -> Bool {
-    row.status == .loaded
   }
 
   private func hasModelFile(_ row: ModelRow) -> Bool {
@@ -298,7 +277,7 @@ struct ModelsView: View {
     switch item {
     case let .deleteDownload(row): models.forget(row, artifacts: false, model: true)
     case let .deleteEngines(row): models.forget(row, artifacts: true, model: false)
-    case let .prepareSwitch(row): models.prepare(row, confirmedInterruption: true)
+    case let .switchModel(row): models.use(row, confirmedInterruption: true)
     }
   }
 
@@ -316,7 +295,7 @@ struct ModelsView: View {
     switch confirmation {
     case .deleteDownload: "Delete the download?"
     case .deleteEngines: "Delete the prepared engines?"
-    case let .prepareSwitch(row): "\(ModelsView.prepareTitle(row)) \(row.displayName)?"
+    case let .switchModel(row): "Use \(row.displayName)?"
     case nil: ""
     }
   }
@@ -324,14 +303,14 @@ struct ModelsView: View {
   private func confirmButtonTitle(_ item: Confirmation) -> String {
     switch item {
     case .deleteDownload, .deleteEngines: "Delete"
-    case let .prepareSwitch(row): ModelsView.prepareTitle(row)
+    case .switchModel: "Use Model"
     }
   }
 
   private func isDestructive(_ item: Confirmation) -> Bool {
     switch item {
     case .deleteDownload, .deleteEngines: true
-    case .prepareSwitch: false
+    case .switchModel: false
     }
   }
 
@@ -342,37 +321,56 @@ struct ModelsView: View {
       return "Deletes the \(size)model file for \(row.displayName). The prepared engine stays, so the comma can still use this model."
     case let .deleteEngines(row):
       let bytes = row.preparedFor.reduce(Int64(0)) { $0 + $1.bytes }
-      var text = "Deletes every prepared engine for \(row.displayName), \(ByteCount.string(bytes)) in all. Preparing it again takes as long as the first time."
+      var text = "Deletes every prepared engine for \(row.displayName), \(ByteCount.string(bytes)) in all. Using it again prepares it again, which takes as long as the first time."
       if row.isLoaded {
-        text += " The model is unloaded first."
+        text += " Jetlink stops using it first."
       }
       return text
-    case let .prepareSwitch(row):
+    case let .switchModel(row):
       let current = models.rows.first { $0.isLoaded }?.displayName ?? "another model"
-      return "The comma is using \(current). Switching drops it to its small model until \(row.displayName) is loaded and the comma reconnects."
+      return "The comma is using \(current). Switching drops it to its small model until \(row.displayName) is ready and the comma reconnects."
     }
   }
 
   // MARK: Formatting
 
-  /// "Load" when a prepared engine is already on disk and loading is all that
-  /// is left; "Prepare" otherwise, which downloads the model first if need be.
-  static func prepareTitle(_ row: ModelRow) -> String {
-    row.status == .prepared ? "Load" : "Prepare"
-  }
-
-  static func prepareHelp(_ row: ModelRow) -> String {
+  /// What Use Model is about to do, for its tooltip.
+  static func useHelp(_ row: ModelRow) -> String {
     switch row.status {
     case .notDownloaded:
-      let size = row.bytes.map { " (\(ByteCount.string($0)))" } ?? ""
-      return "Download the model\(size), prepare it for this Mac, and load it"
+      let size = row.bytes.map { " \(ByteCount.string($0))" } ?? ""
+      return "Downloads\(size), prepares it for this Mac and starts using it"
     case .prepared:
-      return "Load the prepared engine"
+      return "Starts using it. It is prepared already, so this takes seconds."
     case .failed:
-      return "Try again"
+      return "Tries again"
     default:
-      return "Prepare the model for this Mac and load it"
+      return "Prepares it for this Mac and starts using it"
     }
+  }
+
+  /// "Sep 1, 2026 · 766 MB · Prepared for CoreML": everything but the name and
+  /// what is happening right now, on one line under the name.
+  static func detailLine(_ row: ModelRow) -> String {
+    var parts: [String] = []
+    let built = BuildTime.text(row.buildTime)
+    if !built.isEmpty { parts.append(built) }
+    if let bytes = row.bytes { parts.append(ByteCount.string(bytes)) }
+    let prepared = preparedForText(row)
+    if !prepared.isEmpty {
+      parts.append("Prepared for \(prepared)")
+    } else if row.status == .downloaded {
+      parts.append("Downloaded")
+    }
+    if parts.isEmpty, row.isOrphan, let sha = row.sha256 {
+      parts.append(String(sha.prefix(16)))
+    }
+    return parts.joined(separator: " · ")
+  }
+
+  /// "Downloads 2.3 GB · Prepared engines 6.9 GB · 13.6 GB available".
+  static func diskSummary(models: Int64, engines: Int64, free: Int64) -> String {
+    "Downloads \(ByteCount.string(models)) · Prepared engines \(ByteCount.string(engines)) · \(ByteCount.string(free)) available"
   }
 
   static let onnxType = UTType(filenameExtension: "onnx") ?? .data
@@ -394,6 +392,152 @@ struct ModelsView: View {
     case "tinygrad": "tinygrad"
     default: backend
     }
+  }
+}
+
+/// One model in the list: its name and tags, one line of facts, and on the
+/// trailing edge whatever applies now: Use Model, progress, or In Use.
+struct ModelListRow: View {
+  let row: ModelRow
+  let isCheckingCatalog: Bool
+  let use: () -> Void
+  let cancel: () -> Void
+
+  @Environment(\.backgroundProminence) private var prominence
+
+  var body: some View {
+    HStack(spacing: 12) {
+      VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 6) {
+          Text(row.displayName)
+            .lineLimit(1)
+            .truncationMode(.middle)
+          if row.isDefault { ModelTag("Default", tone: .accentColor) }
+          if row.isRequestedByComma { ModelTag("Comma", tone: .green) }
+        }
+        let detail = ModelsView.detailLine(row)
+        if !detail.isEmpty {
+          Text(detail)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+      }
+      .layoutPriority(1)
+      Spacer(minLength: 12)
+      accessory
+    }
+    .padding(.vertical, 5)
+    .padding(.horizontal, 4)
+    .contentShape(Rectangle())
+  }
+
+  @ViewBuilder
+  private var accessory: some View {
+    switch row.status {
+    case .loaded:
+      Label {
+        Text("In Use")
+      } icon: {
+        Image(systemName: "checkmark.circle.fill")
+          .foregroundStyle(onSelection(.green))
+      }
+      .font(.callout.weight(.medium))
+      .help("Jetlink is using this model")
+    case let .downloading(frac, rateBps):
+      HStack(spacing: 8) {
+        progress(frac: frac, caption: ModelListRow.downloadCaption(frac: frac, rateBps: rateBps))
+        Button(action: cancel) {
+          Image(systemName: "xmark.circle.fill")
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .help("Cancel the download")
+      }
+    case let .preparing(stage, frac, msg):
+      HStack(spacing: 8) {
+        progress(frac: frac, caption: ProgressRow.stageName(stage))
+          .help(msg)
+        // Where a download's cancel button sits, so the two bars line up.
+        Image(systemName: "xmark.circle.fill")
+          .hidden()
+      }
+    case .unresolved:
+      Text(isCheckingCatalog ? "Checking…" : "Unavailable")
+        .font(.callout)
+        .foregroundStyle(.secondary)
+    case let .failed(detail):
+      HStack(spacing: 10) {
+        Label {
+          Text("Failed")
+        } icon: {
+          Image(systemName: "exclamationmark.triangle.fill")
+            .foregroundStyle(onSelection(.orange))
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .help(detail)
+        useButton
+      }
+    case .notDownloaded, .downloaded, .prepared:
+      useButton
+    }
+  }
+
+  private var useButton: some View {
+    Button("Use Model", action: use)
+      .buttonStyle(.bordered)
+      .buttonBorderShape(.capsule)
+      .controlSize(.small)
+      .help(ModelsView.useHelp(row))
+  }
+
+  private func progress(frac: Double, caption: String) -> some View {
+    VStack(alignment: .trailing, spacing: 3) {
+      ProgressView(value: min(max(frac, 0), 1))
+        .controlSize(.small)
+        .frame(width: 140)
+      Text(caption)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+        .lineLimit(1)
+    }
+  }
+
+  /// A status colour, or the selection's own text colour on a selected row,
+  /// where the colour would sit on the accent and vanish.
+  private func onSelection(_ color: Color) -> AnyShapeStyle {
+    prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(color)
+  }
+
+  /// "Downloading 42%, 41 MB/s".
+  static func downloadCaption(frac: Double, rateBps: Double) -> String {
+    let percent = "Downloading \(Int((min(max(frac, 0), 1) * 100).rounded()))%"
+    return rateBps > 0 ? "\(percent), \(ByteCount.rate(rateBps))" : percent
+  }
+}
+
+/// A small capsule label next to a model's name. On a selected row it turns
+/// to the selection's text colour, so an accent tag never sits on the accent.
+struct ModelTag: View {
+  let text: String
+  let tone: Color
+  @Environment(\.backgroundProminence) private var prominence
+
+  init(_ text: String, tone: Color) {
+    self.text = text
+    self.tone = tone
+  }
+
+  var body: some View {
+    let selected = prominence == .increased
+    Text(text)
+      .font(.caption.weight(.medium))
+      .padding(.horizontal, 6)
+      .padding(.vertical, 1)
+      .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(tone))
+      .background(Capsule().fill(selected ? AnyShapeStyle(.white.opacity(0.2)) : AnyShapeStyle(tone.opacity(0.14))))
   }
 }
 

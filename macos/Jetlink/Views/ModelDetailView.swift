@@ -28,7 +28,7 @@ struct ModelDetailView: View {
         }
       }
 
-      Section("Prepared engines") {
+      Section("Prepared Engines") {
         if row.preparedFor.isEmpty {
           Text("No prepared engine yet.")
             .foregroundStyle(.secondary)
@@ -48,11 +48,10 @@ struct ModelDetailView: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-              Button("Delete…", role: .destructive) { confirmingDelete = true }
-                .padding(.top, 2)
             }
             .padding(.vertical, 2)
           }
+          Button("Delete Prepared Engines…", role: .destructive) { confirmingDelete = true }
         }
       }
     }
@@ -61,7 +60,7 @@ struct ModelDetailView: View {
       Button("Delete", role: .destructive) { models.forget(row, artifacts: true, model: false) }
       Button("Cancel", role: .cancel) {}
     } message: {
-      Text("Deletes every prepared engine for \(row.displayName). Preparing it again takes as long as the first time.")
+      Text("Deletes every prepared engine for \(row.displayName). Using it again prepares it again, which takes as long as the first time.")
     }
     .frame(minWidth: 280)
   }

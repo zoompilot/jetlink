@@ -102,9 +102,10 @@ struct ToolbarActivityView: View {
     return models.rows.first { $0.sha256 == sha }?.displayName ?? "Model \(sha.prefix(8))"
   }
 
+  /// Short enough for the crumb; Status has the full description.
   private var backendName: String {
-    guard let info = server.info else { return settings.backend.title }
-    return StatusView.backendDescription(backend: info.backend, device: info.device)
+    guard let info = server.info else { return settings.backend.shortTitle }
+    return StatusView.backendShortName(backend: info.backend, device: info.device)
   }
 
   private var statusColor: Color {
