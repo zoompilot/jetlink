@@ -99,9 +99,8 @@ struct ServerSettingsView: View {
       Section {
         VStack(alignment: .leading, spacing: 4) {
           Picker("Backend", selection: $settings.backend) {
-            Text("Automatic (CoreML on the GPU)").tag(BackendChoice.auto)
+            Text("Automatic (CoreML with the Neural Engine)").tag(BackendChoice.auto)
             Text("CoreML on the GPU").tag(BackendChoice.coreml)
-            Text("CoreML with the Neural Engine").tag(BackendChoice.ane)
             Text("tinygrad on Metal").tag(BackendChoice.tinygrad)
           }
           Text(ServerSettingsView.backendCaption(settings.backend))
@@ -158,11 +157,9 @@ struct ServerSettingsView: View {
   static func backendCaption(_ backend: BackendChoice) -> String {
     switch backend {
     case .auto:
-      "Recommended. About 43 ms a frame on an M1 Pro. Preparing takes about 10 seconds the first time and a couple of seconds for each later load."
+      "Recommended. About 30 ms a frame on an M1 Pro. Preparing takes about 20 seconds the first time."
     case .coreml:
-      "About 43 ms a frame on an M1 Pro. Preparing takes about 10 seconds the first time and a couple of seconds for each later load."
-    case .ane:
-      "About 36 ms a frame on an M1 Pro, 7 ms faster than the GPU alone, if nothing else on the Mac is using the Neural Engine. Preparing takes about 16 seconds the first time."
+      "About 44 ms a frame on an M1 Pro. Use it if another app keeps the Neural Engine busy."
     case .tinygrad:
       "Loads in a second. About 66 ms a frame on an M1 Pro, over the 50 ms budget; a newer Mac may be under it."
     }

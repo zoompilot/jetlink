@@ -29,7 +29,6 @@ struct ServerConfigurationTests {
   @Test(arguments: [
     (BackendChoice.auto, "auto", String?.none),
     (BackendChoice.coreml, "ort", String?.some("coreml")),
-    (BackendChoice.ane, "ort", String?.some("ane")),
     (BackendChoice.tinygrad, "tinygrad", String?.some("METAL")),
   ])
   func backendMapping(choice: BackendChoice, backend: String, device: String?) {
@@ -39,6 +38,17 @@ struct ServerConfigurationTests {
     if device == nil {
       #expect(!arguments.contains("--device"))
     }
+  }
+
+  @MainActor @Test func aStoredNeuralEngineChoiceReadsAsAutomatic() throws {
+    // Automatic runs on the Neural Engine now; an explicit GPU choice stays.
+    let suite = "io.zoompilot.jetlink.tests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set("ane", forKey: AppSettings.Key.backend)
+    #expect(AppSettings(defaults: defaults).backend == .auto)
+    defaults.set("coreml", forKey: AppSettings.Key.backend)
+    #expect(AppSettings(defaults: defaults).backend == .coreml)
   }
 
   @Test func usbTransportHasNoHostOrPort() {
