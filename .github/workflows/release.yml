@@ -467,27 +467,27 @@ jobs:
           # shellcheck disable=SC2016
           {
             printf '%s\n\n' "$NOTES"
-            printf '## Container images\n\n'
-            printf 'On a Jetson or a Linux PC with an NVIDIA GPU, the installer picks the right image and sets everything up:\n\n'
+            printf '## Install\n\n'
+            printf 'Jetson or Linux PC:\n\n'
             printf '```bash\ncurl -fsSL https://raw.githubusercontent.com/zoompilot/jetlink/%s/install.sh | bash -s -- --ref %s\n```\n\n' "$GITHUB_REF_NAME" "$GITHUB_REF_NAME"
-            printf 'The images themselves, tagged by platform:\n\n'
+            printf 'Images:\n\n'
             if [ "${CUDA_PUSHED:-}" = "true" ]; then
-              printf -- '- NVIDIA PCs (amd64, driver 580 or newer) and Jetsons on JetPack 7.2 or newer (arm64): `ghcr.io/zoompilot/jetlink:%s-cuda`\n' "$VERSION"
+              printf -- '- `ghcr.io/zoompilot/jetlink:%s-cuda`: NVIDIA PCs (amd64, driver 580+) and JetPack 7.2 (arm64)\n' "$VERSION"
             else
-              printf -- '- The CUDA image build failed for this tag; no `ghcr.io/zoompilot/jetlink:%s-cuda` was pushed. The installer builds it instead (`--build`).\n' "$VERSION"
+              printf -- '- `%s-cuda` failed to build. The installer builds it locally (`--build`).\n' "$VERSION"
             fi
             if [ "${JETPACK6_PUSHED:-}" = "true" ]; then
-              printf -- '- Jetsons on JetPack 6: `ghcr.io/zoompilot/jetlink:%s-jetpack6` (also `-jetson`)\n\n' "$VERSION"
+              printf -- '- `ghcr.io/zoompilot/jetlink:%s-jetpack6`: JetPack 6 (also `-jetson`)\n\n' "$VERSION"
             else
-              printf -- '- The JetPack 6 image build failed for this tag; no `ghcr.io/zoompilot/jetlink:%s-jetpack6` was pushed. The installer builds it instead (`--build`).\n\n' "$VERSION"
+              printf -- '- `%s-jetpack6` failed to build. The installer builds it locally (`--build`).\n\n' "$VERSION"
             fi
             if ls artifacts/macos-app/*-unsigned.zip >/dev/null 2>&1; then
-              printf '## The macOS app is not signed\n\n'
-              printf 'This build was made without signing secrets, so macOS refuses to open it the first time. Right-click Jetlink in Applications, choose **Open**, and confirm, or open **System Settings > Privacy & Security** and click **Open Anyway**. Removing the quarantine flag works too:\n\n'
+              printf '## Mac app is unsigned\n\n'
+              printf 'macOS blocks the first open. Right-click Jetlink in Applications > **Open**, or **System Settings > Privacy & Security > Open Anyway**. Or:\n\n'
               printf '```bash\nxattr -d com.apple.quarantine /Applications/Jetlink.app\n```\n\n'
-              printf 'It is Apple silicon only.\n'
+              printf 'Apple silicon only.\n'
             else
-              printf 'The macOS app is Apple silicon only.\n'
+              printf 'Mac app: Apple silicon only.\n'
             fi
           } > notes.md
           gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
