@@ -67,9 +67,8 @@ class TinygradEngine:
   def _run(self) -> dict[str, np.ndarray]:
     t0 = time.perf_counter()
     out = self.jit(**self._tensors)
-    # a tuple, driving output first; a format-1 pickle from before stateful
-    # graphs returns the driving output alone
-    for dest, t in zip(self._out.values(), out if isinstance(out, tuple) else (out,), strict=True):
+    # a tuple, driving output first
+    for dest, t in zip(self._out.values(), out, strict=True):
       dest[...] = t.numpy().reshape(dest.shape)
     self.last_gpu_us = int((time.perf_counter() - t0) * 1e6)
     return self._out

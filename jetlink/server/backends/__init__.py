@@ -29,7 +29,6 @@ import logging
 import sys
 
 from jetlink.server.backends.base import Backend
-from jetlink.server.platform import is_apple_silicon
 
 log = logging.getLogger('jetlink.backends')
 
@@ -71,24 +70,12 @@ def available() -> list[str]:
 
 
 def _candidates(device: str) -> list[tuple[str, str]]:
-  """(backend, device) pairs auto tries, in order. On a Mac the first try is
-  CoreML by name, the Neural Engine split on Apple silicon, so a Mac whose
+  """(backend, device) pairs auto tries, in order: every installed backend,
+  each given the --device the user gave, which the ones it means nothing to
+  skip. On a Mac onnxruntime's auto is CoreML or nothing, so a Mac whose
   onnxruntime has no CoreML provider falls through to tinygrad rather than
-  serving off the CPU; a --device the user gave goes to every candidate, and
-  the ones it means nothing to skip."""
-  out = []
-  for name in available():
-    if name == 'ort' and sys.platform == 'darwin' and device == 'auto':
-      out.append(('ort', 'ane' if is_apple_silicon() else 'coreml'))
-      out.append(('tinygrad', device))
-      continue
-    out.append((name, device))
-  seen, unique = set(), []
-  for pair in out:
-    if pair not in seen and pair[0] in available():
-      seen.add(pair)
-      unique.append(pair)
-  return unique
+  serving off the CPU."""
+  return [(name, device) for name in available()]
 
 
 def select(name: str = 'auto', device: str = 'auto') -> Backend:

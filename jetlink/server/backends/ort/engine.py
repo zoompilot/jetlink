@@ -61,7 +61,7 @@ class OrtEngine:
     self._proc = None
     ctx = mp.get_context('spawn')
     self._conn, child_conn = ctx.Pipe()
-    self._proc = ctx.Process(target=worker.main, args=(child_conn, [(str(m), p) for m, p in sessions], log_severity),
+    self._proc = ctx.Process(target=worker.run, args=(child_conn, [(str(m), p) for m, p in sessions], log_severity),
                              name='jetlink-ort', daemon=True)
     self._proc.start()
     child_conn.close()

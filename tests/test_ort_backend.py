@@ -28,16 +28,18 @@ from onnx import numpy_helper  # noqa: E402
 
 from jetlink.server.backends.base import ArtifactInvalid, infer  # noqa: E402
 from jetlink.server.backends.ort import (  # noqa: E402
+  COREML_CACHE_KEY,
   MANIFEST,
+  PREPARE_VERSION,
   OrtBackend,
   _cache_key,
-  _has_cache_key,
   _pick_device,
   available_providers,
-  repair_coreml_cache,
   runtime_version,
 )
 from tests import tiny_model  # noqa: E402
+
+COREML_PROVIDERS = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
 
 
 @pytest.fixture(scope='module')
@@ -56,6 +58,7 @@ def built(backend, tmp_path_factory):
 
 
 def test_device_selection(monkeypatch):
+  monkeypatch.setattr('jetlink.server.backends.ort.sys.platform', 'linux')
   cpu_only = ['CPUExecutionProvider']
   assert _pick_device(cpu_only, 'cpu') == 'cpu'
   with pytest.raises(ValueError, match='one of'):
@@ -67,12 +70,15 @@ def test_device_selection(monkeypatch):
   with_coreml = cpu_only + ['CoreMLExecutionProvider']
   assert _pick_device(with_coreml, 'ane') == 'ane'
   assert _pick_device(with_coreml, 'coreml') == 'coreml'
-  # auto on a Mac: the Neural Engine split on Apple silicon, the GPU on Intel
+  # auto on a Mac: the Neural Engine split on Apple silicon, the GPU on
+  # Intel, and never the CPU, so auto moves on to tinygrad instead
   monkeypatch.setattr('jetlink.server.backends.ort.sys.platform', 'darwin')
   monkeypatch.setattr('jetlink.server.backends.ort.is_apple_silicon', lambda: True)
   assert _pick_device(with_coreml, 'auto') == 'ane'
   monkeypatch.setattr('jetlink.server.backends.ort.is_apple_silicon', lambda: False)
   assert _pick_device(with_coreml, 'auto') == 'coreml'
+  with pytest.raises(RuntimeError, match='none of'):
+    _pick_device(cpu_only, 'auto')
 
 
 def test_providers_are_probed_in_a_child_and_the_version_read_from_metadata():
@@ -114,74 +120,6 @@ def test_build_makes_a_directory_with_the_prepared_model(built):
   assert [s for s, _, _ in stages][0] == 'patch' and stages[-1][1] == 1.0
 
 
-class TestRepairCoreMLCache:
-  """An artifact built under the old metadata key carries two compiles, one
-  under a hash of the build's temp path and one under a hash of the final
-  path, and neither is found by key. The repair renames the one that belongs
-  to this artifact and drops the rest, without a rebuild. CoreML is not
-  needed to check any of that, only the directory layout it leaves behind.
-  """
-
-  @staticmethod
-  def _layout(tmp_path, compiles):
-    """An artifact whose coreml/ holds `{dir name: what model.txt says}`."""
-    artifact = tmp_path / 'a086.ort1.29.0.coreml-Apple_M1_Pro.ortcache'
-    artifact.mkdir()
-    onnx.save(onnx.load(str(tiny_model.write(tmp_path / 'src.onnx'))), str(artifact / 'model.onnx'))
-    cache = artifact / 'coreml'
-    cache.mkdir()
-    for name, recorded in compiles.items():
-      d = cache / name
-      (d / '0_dynamic_mlprogram' / 'model' / 'compiled_model.mlmodelc' / 'weights').mkdir(parents=True)
-      (d / '0_dynamic_mlprogram' / 'model' / 'compiled_model.mlmodelc' / 'model.mil').write_text('program(1.3)')
-      (d / 'model.txt').write_text(str(recorded))
-    return artifact, cache, _cache_key(artifact, 'model')
-
-  def test_the_compile_for_this_artifact_is_kept_under_the_key(self, tmp_path):
-    artifact, cache, key = self._layout(tmp_path, {
-      '9229090538059370699': tmp_path / 'tmpzr7xwcwm' / 'artifact' / 'model.onnx',
-      '15625364929042385060': tmp_path / 'a086.ort1.29.0.coreml-Apple_M1_Pro.ortcache' / 'model.onnx',
-    })
-    repair_coreml_cache(artifact, 'model.onnx', cache, key)
-    assert [d.name for d in sorted(cache.iterdir())] == [key], 'one directory, named by the key'
-    mil = cache / key / '0_dynamic_mlprogram' / 'model' / 'compiled_model.mlmodelc' / 'model.mil'
-    assert mil.read_text() == 'program(1.3)', 'the compiled program was rebuilt, not renamed'
-
-  def test_the_key_is_written_into_the_model(self, tmp_path):
-    artifact, cache, key = self._layout(tmp_path, {})
-    model = onnx.load(str(artifact / 'model.onnx'))
-    assert not _has_cache_key(model, key)
-    repair_coreml_cache(artifact, 'model.onnx', cache, key)
-    assert _has_cache_key(onnx.load(str(artifact / 'model.onnx')), key)
-
-  def test_a_compile_for_another_artifact_is_removed(self, tmp_path):
-    artifact, cache, key = self._layout(tmp_path, {'999': tmp_path / 'somewhere' / 'else.onnx'})
-    repair_coreml_cache(artifact, 'model.onnx', cache, key)
-    assert list(cache.iterdir()) == [], 'a stale compile was left to be loaded'
-
-  def test_a_second_repair_changes_nothing(self, tmp_path):
-    artifact, cache, key = self._layout(tmp_path, {
-      '15625364929042385060': tmp_path / 'a086.ort1.29.0.coreml-Apple_M1_Pro.ortcache' / 'model.onnx',
-    })
-    repair_coreml_cache(artifact, 'model.onnx', cache, key)
-    before = sorted(p.name for p in cache.rglob('*'))
-    repair_coreml_cache(artifact, 'model.onnx', cache, key)
-    assert sorted(p.name for p in cache.rglob('*')) == before
-
-  def test_a_compile_already_under_the_key_survives_a_stale_neighbour(self, tmp_path):
-    artifact, cache, key = self._layout(tmp_path, {'999': tmp_path / 'somewhere' / 'else.onnx'})
-    (cache / key).mkdir()
-    (cache / key / 'model.txt').write_text(str(artifact / 'model.onnx'))
-    repair_coreml_cache(artifact, 'model.onnx', cache, key)
-    assert [d.name for d in cache.iterdir()] == [key]
-
-  def test_a_compile_with_no_model_txt_is_treated_as_stale(self, tmp_path):
-    artifact, cache, key = self._layout(tmp_path, {'999': tmp_path / 'x.onnx'})
-    (cache / '999' / 'model.txt').unlink()
-    repair_coreml_cache(artifact, 'model.onnx', cache, key)
-    assert list(cache.iterdir()) == []
-
-
 def test_the_loaded_session_agrees_with_numpy(backend, built):
   engine = backend.load(built[0])
   try:
@@ -212,47 +150,33 @@ def test_a_directory_without_a_manifest_is_artifact_invalid(backend, tmp_path):
     backend.load(d)
 
 
-def test_a_coreml_artifact_from_before_the_weight_rewrite_is_artifact_invalid(tmp_path):
-  """Its MIL carries the weights as text and a load parsed it for minutes; the
-  host rebuilds an invalid artifact in seconds instead. The sidecar of a build
-  since the rewrite records compile_bytes, so its absence is the marker."""
-  coreml = OrtBackend('coreml', providers=['CoreMLExecutionProvider', 'CPUExecutionProvider'])
-  d = tmp_path / 'old.ortcache'
-  d.mkdir()
-  (d / MANIFEST).write_text(json.dumps([{'model': 'model.onnx', 'units': 'CPUAndGPU', 'cache': 'coreml'}]))
-  d.with_suffix('.json').write_text(json.dumps({'backend': 'ort', 'build_seconds': 526.4}))
-  with pytest.raises(ArtifactInvalid, match='weight rewrite'):
-    coreml.load(d)
-
-
-def test_every_neural_engine_artifact_from_before_the_split_is_artifact_invalid(tmp_path):
-  """One version mechanism: a load of an `ane` artifact prepared under an older
-  version is refused, and the host rebuilds it from the ONNX. 1 is the one
-  session from before #8, 2 is #8's one session with Expand as Tile, 3 split
-  only a stateful graph."""
-  ane = OrtBackend('ane', providers=['CoreMLExecutionProvider', 'CPUExecutionProvider'])
+def test_a_coreml_artifact_prepared_under_another_version_is_artifact_invalid(tmp_path):
+  """One version for every CoreML build: a load of an artifact prepared under
+  another is refused, and the host rebuilds it from the ONNX in seconds. That
+  covers every older layout, and the builds from before the Gemm weight
+  rewrite whose loads took minutes."""
   d = tmp_path / 'old.ortcache'
   d.mkdir()
   (d / MANIFEST).write_text(json.dumps([{'model': 'model.onnx', 'units': 'ALL', 'cache': 'coreml'}]))
-  sidecar = {'backend': 'ort', 'compile_bytes': 1}
-  for version in (None, 2, 3):
-    d.with_suffix('.json').write_text(json.dumps(sidecar if version is None else {**sidecar, 'prepare': version}))
-    with pytest.raises(ArtifactInvalid, match=f"prepared as version {version or 1}"):
-      ane.load(d)
-  # at the current version it gets past that, to the next thing it lacks
-  d.with_suffix('.json').write_text(json.dumps({**sidecar, 'prepare': 4}))
-  with pytest.raises(ArtifactInvalid, match='model.onnx'):
-    ane.load(d)
+  for device in ('coreml', 'ane'):
+    backend = OrtBackend(device, providers=COREML_PROVIDERS)
+    for version in (None, 2, 3, 4):
+      d.with_suffix('.json').write_text(json.dumps({'backend': 'ort'} if version is None else {'prepare': version}))
+      with pytest.raises(ArtifactInvalid, match=f"prepared as version {version or 1}"):
+        backend.load(d)
+    # at the current version it gets past that, to the next thing it lacks
+    d.with_suffix('.json').write_text(json.dumps({'prepare': PREPARE_VERSION}))
+    with pytest.raises(ArtifactInvalid, match='model.onnx'):
+      backend.load(d)
 
 
-def test_the_ane_session_asks_for_fast_prediction():
-  ane = OrtBackend('ane', providers=['CoreMLExecutionProvider', 'CPUExecutionProvider'])
-  coreml = OrtBackend('coreml', providers=['CoreMLExecutionProvider', 'CPUExecutionProvider'])
-  assert ane._providers(None, None)[0][1]['SpecializationStrategy'] == 'FastPrediction'
-  assert 'SpecializationStrategy' not in coreml._providers(None, None)[0][1]
+def test_coreml_sessions_ask_for_fast_prediction():
+  for device in ('coreml', 'ane'):
+    opts = OrtBackend(device, providers=COREML_PROVIDERS)._providers('CPUAndGPU', None)[0][1]
+    assert opts['SpecializationStrategy'] == 'FastPrediction'
 
 
-def test_an_empty_coreml_cache_is_artifact_invalid(backend, built):
+def test_a_coreml_cache_without_its_compile_is_artifact_invalid(backend, built):
   """Otherwise onnxruntime recompiles for minutes under 'loading engine'."""
   out = built[0]
   manifest = json.loads((out / MANIFEST).read_text())
@@ -260,14 +184,11 @@ def test_an_empty_coreml_cache_is_artifact_invalid(backend, built):
   (out / 'coreml').mkdir(exist_ok=True)
   (out / MANIFEST).write_text(json.dumps(manifest))
   try:
-    with pytest.raises(ArtifactInvalid, match='CoreML cache'):
+    with pytest.raises(ArtifactInvalid, match='no CoreML compile'):
       backend.load(out)
   finally:
     manifest[0]['cache'] = None
     (out / MANIFEST).write_text(json.dumps(manifest))
-
-
-COREML_PROVIDERS = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
 
 
 def _staged_on_the_cpu(device, path, tmp_path):
@@ -389,7 +310,8 @@ def test_each_device_stages_its_sessions(tmp_path):
     for entry in manifest:
       assert (staged / entry['cache']).is_dir()
       prepared = onnx.load(str(staged / entry['model']))
-      assert _has_cache_key(prepared, _cache_key(out, entry['model'].removesuffix('.onnx')))
+      key = _cache_key(out, entry['model'].removesuffix('.onnx'))
+      assert (COREML_CACHE_KEY, key) in {(p.key, p.value) for p in prepared.metadata_props}
 
 
 def test_the_split_keeps_the_images_in_the_trunk_and_the_norms_in_the_policy(tmp_path):

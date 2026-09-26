@@ -46,7 +46,7 @@ log = logging.getLogger('jetlink.tinygrad')
 
 # Bumped when what the pickle contains changes shape; an older pickle is
 # ArtifactInvalid and rebuilt.
-FORMAT = 1
+FORMAT = 2
 
 # Everything the JIT is fed with during the capture calls, so the pruned graph
 # and the replay check see values a road could produce rather than zeros that

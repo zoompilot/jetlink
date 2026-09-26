@@ -29,6 +29,8 @@ and pytest are; a session fed on stdin cannot start a worker.
 """
 from __future__ import annotations
 
+import os
+import sys
 import time
 import traceback
 from multiprocessing import shared_memory
@@ -55,6 +57,30 @@ def layout(entries: list[tuple[str, tuple[int, ...], str]]) -> tuple[list[tuple[
 def views(block, laid: list[tuple[str, tuple[int, ...], str, int]]) -> dict[str, np.ndarray]:
   return {name: np.ndarray(shape, np.dtype(dtype), buffer=block.buf, offset=offset)
           for name, shape, dtype, offset in laid}
+
+
+def exit_without_teardown() -> None:
+  """Leave a process that imported onnxruntime without the C++ teardown.
+
+  The macOS wheel uploads telemetry from a thread of its own, and a response
+  that lands while the process exits is handled through a mutex static
+  destruction has already torn down: `recursive_mutex lock failed`, an
+  abort, and macOS's "Python quit unexpectedly" dialog, most often as a
+  build's worker exits (2026-09-26). `quiet` stops new events but not an
+  upload already under way. os._exit skips the static destructors; the
+  caller has closed its pipe and shared memory already.
+  """
+  sys.stdout.flush()
+  sys.stderr.flush()
+  os._exit(0)
+
+
+def run(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:
+  """The worker process's target: main(), then out without the teardown."""
+  try:
+    main(conn, sessions, log_severity)
+  finally:
+    exit_without_teardown()
 
 
 def main(conn, sessions: list[tuple[str, list]], log_severity: int) -> None:

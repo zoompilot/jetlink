@@ -97,12 +97,11 @@ COREML_SESSIONS = {
 }
 PLAIN_SESSION = (('model', None),)
 
-# What a device's preparation is at, recorded in the sidecar. A load of an
-# artifact prepared under another version is refused as invalid, and the host
-# rebuilds it from the ONNX. `ane` 2: one session, Expand rewritten as Tile
-# (#8); 3: a stateful graph split between the Neural Engine and the GPU; 4:
-# every graph split.
-PREPARE_VERSIONS = {'ane': 4}
+# What a CoreML build writes, recorded in the sidecar. A load of an artifact
+# prepared under another version is refused as invalid, and the host rebuilds
+# it from the ONNX in seconds. Bump it with anything that changes the
+# preparation; 5 is every graph split on `ane` and Expand as Tile on both.
+PREPARE_VERSION = 5
 
 # The last resort for the compile stage's fraction: only a first build of a
 # model, whose sidecar records nothing yet, and only if the compile writes
@@ -131,7 +130,9 @@ def quiet(ort) -> None:
   the server process never imports onnxruntime at all: the version comes
   from the package metadata and the providers from a probe in a child
   (`available_providers`). The worker calls this, and a car has no business
-  making the request in the first place.
+  making the request in the first place. The children that do import it
+  leave through `worker.exit_without_teardown`, for an upload already under
+  way when they exit.
   """
   disable = getattr(ort, 'disable_telemetry_events', None)
   if disable is not None:
@@ -140,6 +141,7 @@ def quiet(ort) -> None:
 
 def _probe_providers(conn) -> None:
   # runs in a child: the one import of onnxruntime the server never makes
+  from jetlink.server.backends.ort.worker import exit_without_teardown
   try:
     import onnxruntime as ort
     quiet(ort)
@@ -148,6 +150,7 @@ def _probe_providers(conn) -> None:
     conn.send(e)
   finally:
     conn.close()
+    exit_without_teardown()
 
 
 def available_providers() -> list[str]:
@@ -178,8 +181,10 @@ def runtime_version() -> str:
 def _pick_device(providers: list[str], device: str) -> str:
   have = set(providers)
   if device in ('auto', '', None):
-    # `ane` on Apple silicon, the fastest there; see the module docstring
-    order = (('ane' if is_apple_silicon() else 'coreml', 'cuda', 'cpu') if sys.platform == 'darwin'
+    # On a Mac, CoreML or nothing, so auto moves on to tinygrad rather than
+    # serving off the CPU: `ane` on Apple silicon, the fastest there (see the
+    # module docstring), the GPU on Intel.
+    order = (('ane' if is_apple_silicon() else 'coreml',) if sys.platform == 'darwin'
              else ('cuda', 'cpu'))
     for d in order:
       if PROVIDERS[d] in have:
@@ -198,7 +203,7 @@ def _cache_key(out_path: Path, part: str) -> str:
   return re.sub(r'[^A-Za-z0-9]', '', out_path.stem + part)[:63]
 
 
-def _prepared_model(onnx_path: Path, for_coreml: bool = False, tile: bool = False):
+def _prepared_model(onnx_path: Path, for_coreml: bool = False):
   """The ONNX as onnxruntime will see it, in memory."""
   import onnx
 
@@ -216,13 +221,13 @@ def _prepared_model(onnx_path: Path, for_coreml: bool = False, tile: bool = Fals
   if patched:
     patch_uint8_inputs(model)
   gathers = normalize_gather_indices(model)
-  # Only for CoreML: it is what puts the weights in the weight file instead of
-  # the MIL text. The CUDA and CPU providers are happy with the transB=0 Gemm
-  # onnxruntime's own fusion makes, and gain nothing from the rewrite.
+  # Only for CoreML, the two ops its provider takes in another form. The Gemm
+  # rewrite puts the weights in the weight file instead of the MIL text; the
+  # CUDA and CPU providers are happy with the transB=0 Gemm onnxruntime's own
+  # fusion makes. Two Expands in the policy CoreML will not take would split
+  # it into two CoreML programs with a CPU step between them (#8).
   gemms = gemm_with_transposed_weight(model) if for_coreml else 0
-  # Two Expands in the policy CoreML will not take would otherwise split it
-  # into two CoreML programs with a CPU step between them (#8).
-  tiles = expand_to_tile(model) if tile else 0
+  tiles = expand_to_tile(model) if for_coreml else 0
   log.info("prepared %s: stripped %d tinygrad op(s), %s, %d negative Gather index(es) normalized, "
            "%d MatMul+Add rewritten as Gemm(transB=1), %d Expand(s) as Tile",
            onnx_path.name, stripped,
@@ -246,48 +251,6 @@ def _with_cache_key(model, key: str):
   entry = model.metadata_props.add()
   entry.key, entry.value = COREML_CACHE_KEY, key
   return model
-
-
-def _has_cache_key(model, key: str) -> bool:
-  return any(p.key == COREML_CACHE_KEY and p.value == key for p in model.metadata_props)
-
-
-def repair_coreml_cache(artifact: Path, model_name: str, cache: Path, key: str) -> None:
-  """Bring an artifact built under the wrong metadata key up to date, in place.
-
-  onnxruntime keyed those caches on the model path: one compile sits under a
-  hash of the build's temp path, never to be found again, and after the first
-  load another sits under a hash of the final path. The second is the same
-  compiled program the key would name, so it is renamed rather than rebuilt;
-  everything else in the cache directory is stale and goes. The model gets the
-  key written in so the next load hits the renamed directory.
-  """
-  import onnx
-
-  model_path = artifact / model_name
-  model = onnx.load(str(model_path), load_external_data=False)
-  if not _has_cache_key(model, key):
-    log.info("writing the CoreML cache key into %s", model_path.name)
-    onnx.save(_with_cache_key(model, key), str(model_path))
-  for entry in sorted(cache.iterdir()):
-    if not entry.is_dir() or entry.name == key:
-      continue
-    recorded = ''
-    try:
-      recorded = (entry / 'model.txt').read_text().strip()
-    except OSError:
-      pass
-    compiled_here = False
-    try:
-      compiled_here = bool(recorded) and Path(recorded).resolve() == model_path.resolve()
-    except OSError:
-      pass
-    if compiled_here and not (cache / key).exists():
-      log.info("keeping the CoreML compile for this artifact as %s (was %s)", key, entry.name)
-      entry.rename(cache / key)
-    else:
-      log.info("removing a stale CoreML compile %s (compiled for %s)", entry.name, recorded or 'unknown')
-      shutil.rmtree(entry, ignore_errors=True)
 
 
 def tree_bytes(root: Path, split: str | None = None) -> tuple[int, int]:
@@ -484,10 +447,8 @@ class OrtBackend:
 
   def _providers(self, units: str | None, compiled_dir: Path | None) -> list:
     if self._on_coreml:
-      opts = {'ModelFormat': 'MLProgram', 'MLComputeUnits': units}
-      if self.device == 'ane':
-        # Apple's hint for a model that is predicted many times
-        opts['SpecializationStrategy'] = 'FastPrediction'
+      # FastPrediction: Apple's hint for a model that is predicted many times
+      opts = {'ModelFormat': 'MLProgram', 'MLComputeUnits': units, 'SpecializationStrategy': 'FastPrediction'}
       if compiled_dir is not None:
         opts['ModelCacheDirectory'] = str(compiled_dir)
       return [(PROVIDERS['coreml'], opts), PROVIDERS['cpu']]
@@ -516,16 +477,16 @@ class OrtBackend:
     import onnx
 
     from jetlink.onnx_patch import split_vision_policy
-    ane = self.device == 'ane'
-    model = _prepared_model(onnx_path, for_coreml=self._on_coreml, tile=ane)
-    parts = split_vision_policy(model) if ane else (model,)
+    sessions = COREML_SESSIONS.get(self.device, PLAIN_SESSION)
+    model = _prepared_model(onnx_path, for_coreml=self._on_coreml)
+    parts = split_vision_policy(model) if len(sessions) > 1 else (model,)
     del model
     # What the convert stage is working towards: onnxruntime writes the
     # initializers out as the MLProgram's weight file, so their size is the
     # total the bytes on disk can honestly be reported against.
     self._weights_bytes = sum(len(t.raw_data) for part in parts for t in part.graph.initializer)
     manifest = []
-    for (name, units), part in zip(COREML_SESSIONS.get(self.device, PLAIN_SESSION), parts, strict=True):
+    for (name, units), part in zip(sessions, parts, strict=True):
       onnx.save(_with_cache_key(part, _cache_key(out_path, name)), str(staged / f'{name}.onnx'))
       cache = f'coreml-{name}' if units else None
       if cache:
@@ -602,7 +563,7 @@ class OrtBackend:
       'providers': providers,
       'build_seconds': round(time.time() - t0, 1),
       'onnx': onnx_path.name,
-      'prepare': PREPARE_VERSIONS.get(self.device, 1),
+      'prepare': PREPARE_VERSION,
       'built_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
       **stages,
       **(meta_extra or {}),
@@ -622,31 +583,17 @@ class OrtBackend:
     if not isinstance(manifest, list) or not manifest:
       raise ArtifactInvalid(f"{artifact}: {MANIFEST} names no sessions")
     sidecar = self._sidecar(artifact)
-    if self._on_coreml and 'compile_bytes' not in sidecar:
-      # Built before the Gemm weights were handed over transposed: its MIL
-      # carries the weights as text and a load parses gigabytes of it, 465 s
-      # on an M1 Pro against 1.8 s for the same model built since. The host
-      # replaces an invalid artifact from the ONNX, and that build is 5 s.
-      raise ArtifactInvalid(f"{artifact}: built before the weight rewrite; loads took minutes, a rebuild takes seconds")
-    want = PREPARE_VERSIONS.get(self.device, 1)
-    if sidecar.get('prepare', 1) != want:
-      raise ArtifactInvalid(f"{artifact}: prepared as version {sidecar.get('prepare', 1)} for {self.device}, "
-                            f"which is now at {want}; rebuilding")
+    if self._on_coreml and sidecar.get('prepare', 1) != PREPARE_VERSION:
+      raise ArtifactInvalid(f"{artifact}: prepared as version {sidecar.get('prepare', 1)}, "
+                            f"CoreML builds are now at {PREPARE_VERSION}; rebuilding")
     for entry in manifest:
       if not (artifact / entry['model']).is_file():
         raise ArtifactInvalid(f"{artifact}: no {entry['model']} inside")
-      cache = artifact / entry['cache'] if entry.get('cache') else None
-      if cache is not None and cache.is_dir():
-        key = _cache_key(artifact, Path(entry['model']).stem)
-        if not (cache / key).is_dir():
-          if report is not None:
-            report('load', 0.0, 'bringing the compiled model cache up to date')
-          repair_coreml_cache(artifact, entry['model'], cache, key)
-      # An empty cache would make onnxruntime recompile for minutes under a
+      # Without its compile onnxruntime would recompile for minutes under a
       # "loading engine" that never moves. Rebuild instead, which reports
-      # progress and ends with a cache.
-      if cache is not None and (not cache.is_dir() or not any(cache.iterdir())):
-        raise ArtifactInvalid(f"{artifact}: the CoreML cache for {entry['model']} is empty")
+      # progress and ends with a compile.
+      if entry.get('cache') and not (artifact / entry['cache'] / _cache_key(artifact, Path(entry['model']).stem)).is_dir():
+        raise ArtifactInvalid(f"{artifact}: no CoreML compile for {entry['model']}")
     t0 = time.time()
     progress = None
     if self._on_coreml:
