@@ -99,9 +99,9 @@ struct ServerSettingsView: View {
       Section {
         VStack(alignment: .leading, spacing: 4) {
           Picker("Backend", selection: $settings.backend) {
-            Text("Automatic (\(BackendChoice.auto.title))").tag(BackendChoice.auto)
-            Text(BackendChoice.coreml.title).tag(BackendChoice.coreml)
-            Text(BackendChoice.tinygrad.title).tag(BackendChoice.tinygrad)
+            ForEach(BackendChoice.allCases, id: \.self) { choice in
+              Text(choice == .auto ? "Automatic (\(choice.title))" : choice.title).tag(choice)
+            }
           }
           Text(ServerSettingsView.backendCaption(settings.backend))
             .font(.callout)
@@ -157,11 +157,11 @@ struct ServerSettingsView: View {
   static func backendCaption(_ backend: BackendChoice) -> String {
     switch backend {
     case .auto:
-      "Recommended. About 31 ms a frame on an M1 Pro. Preparing takes about 20 seconds the first time."
+      "Recommended: the fastest on Apple silicon. Preparing takes about 20 seconds the first time."
     case .coreml:
-      "About 44 ms a frame on an M1 Pro. Use it if another app keeps the Neural Engine busy."
+      "Slower. Use it if another app keeps the Neural Engine busy."
     case .tinygrad:
-      "Loads in a second. About 66 ms a frame on an M1 Pro, over the 50 ms budget; a newer Mac may be under it."
+      "Loads in a second, but misses the 50 ms frame budget on an M1 Pro; a newer Mac may make it."
     }
   }
 

@@ -10,35 +10,25 @@ On Apple silicon the default is `--device ane`: the graph is cut where the
 vision trunk ends (`onnx_patch.split_vision_policy`) and runs as a chain of
 two CoreML sessions, the trunk on the Neural Engine and everything after it
 (the heads, the policy, a stateful graph's feature and desire queues) on the
-GPU. `--device coreml` runs the whole graph on the GPU, for a Mac where
-another process keeps the Neural Engine busy.
-
-Measured 2026-09-26 on a 16 GB M1 Pro through the server at 20 Hz, in
-300-frame blocks interleaved with the GPU: Cinque Terre V3 at 31.7 ms mean,
-p99 35 to 38, against 43.8; V2 at 30.7 ms, p99 32 to 37, against 44.7. The
-parity gate passes over 32 frames on both, and the link returns the
-engine's output bit for bit.
+GPU. It is the fastest way on a Mac, about a third faster than `--device
+coreml`, the whole graph on the GPU, which is for a Mac where another process
+keeps the Neural Engine busy: the default assumes nothing else predicts on
+it. The measurements, and how they were taken, are in docs/mac-performance.md.
 
 Why the cut. The Neural Engine runs the trunk in about 20 ms where the GPU
 takes 31, but not what follows it: one session with every unit allowed ran
 V3's stateful policy in 115 ms, and the Neural Engine's fp16
 LayerNormalization is not precise enough for the residual MLP after the
-trunk (road_transform at 0.9988 over 32 frames with it there). On V2 that
-one session, its policy's LayerNormalizations moved to fp32 and a CPU core
-kept spinning, was about 1 ms mean faster than the split; one layout for
-every graph is worth more than that.
+trunk. On V2 that one session was about 1 ms faster with its policy's norms
+forced to fp32 and a CPU core spinning; one layout for every graph is worth
+more than that.
 
-The split writes two Expands CoreML will not take as the equivalent Tiles
-(`onnx_patch.expand_to_tile`, from #8): left as they are, they split the
-policy into two CoreML programs with a CPU step between, 3.7 ms a frame on
-V3. It runs the Metal keep-alive (metal.py) for the policy's GPU work:
-without it the split measured 46.4 ms, p99 53. And a negative Gather index
+Every CoreML build rewrites two Expands CoreML will not take as the
+equivalent Tiles (`onnx_patch.expand_to_tile`, from #8), or the policy
+splits into two CoreML programs with a CPU step between, and the GPU work
+runs beside the Metal keep-alive (metal.py). A negative Gather index
 gathers garbage on the Neural Engine, so `normalize_gather_indices` writes
 every index from the front.
-
-The default assumes the Mac runs nothing else on the Neural Engine: with
-another process predicting on it back to back the split measured 52.5 ms,
-p99 65, where the GPU path stayed at 43.5.
 
 Elsewhere it is one session with the plain graph. The ONNX gets the same
 surgery TensorRT's build does: the `org.tinygrad` layout op stripped,

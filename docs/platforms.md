@@ -62,18 +62,17 @@ Options:
 # Serve a test client over TCP instead of the comma (see Test without a comma)
 JETLINK_TRANSPORT=tcp scripts/run-mac.sh
 
-# The GPU only, if another app keeps the Neural Engine busy: 44 ms a frame
+# The GPU only, if another app keeps the Neural Engine busy
 scripts/run-mac.sh --device coreml
 
-# tinygrad on Metal: 66 ms a frame on an M1 Pro
+# tinygrad on Metal: over the frame budget on an M1 Pro
 JETLINK_BACKEND=tinygrad scripts/run-mac.sh
 
 # Prepare a model ahead of time, then exit
 scripts/run-mac.sh --build /path/to/big_driving_supercombo.onnx
 ```
 
-Measured on an M1 Pro: the default runs 31 to 32 ms per frame against a 50 ms
-budget, the GPU alone 44 ms. Details in [backends and measurements](backends.md#mac-measured).
+How fast each one runs: [backends and measurements](backends.md#mac-measured).
 
 ## Linux (NVIDIA GPU)
 

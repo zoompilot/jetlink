@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Serve from a Mac. Makes a venv on first run, then serves the comma over USB
 # with CoreML through onnxruntime: on Apple silicon the vision layers run on the
-# Neural Engine and the rest on the GPU, 31 to 32 ms a frame on an M1 Pro
-# (docs/backends.md). If another app keeps the Neural Engine busy, pass
-# --device coreml for the GPU alone, 44 ms. JETLINK_BACKEND=tinygrad picks
-# tinygrad on Metal instead: 66 ms a frame there. JETLINK_TRANSPORT=tcp serves a
-# bench client on port 5599 instead of the comma.
+# Neural Engine and the rest on the GPU, the fastest way (docs/mac-performance.md).
+# If another app keeps the Neural Engine busy, pass --device coreml for the GPU
+# alone. JETLINK_BACKEND=tinygrad picks tinygrad on Metal instead, over the
+# frame budget on an M1 Pro. JETLINK_TRANSPORT=tcp serves a bench client on
+# port 5599 instead of the comma.
 #
 # USB is the default because the comma is the only client that matters and it
 # only speaks USB in the car. Plug it into a USB-A port on a hub or dock with an

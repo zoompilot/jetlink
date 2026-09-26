@@ -157,11 +157,11 @@ the GPU, the fastest way on a Mac. The measurements below use an M1 Pro;
 performance on other Macs may differ. See [backends and
 measurements](backends.md#mac-measured).
 
-| Backend | Frame time on an M1 Pro | Pick it when |
+| Backend | On an M1 Pro | Pick it when |
 | --- | --- | --- |
-| Automatic (recommended) | About 31 ms on Cinque Terre V3 and V2 | Use this by default. |
-| CoreML on the GPU | About 44 ms | Another app keeps the Neural Engine busy. |
-| tinygrad on Metal | 66 ms, over the 50 ms budget every frame | Test tinygrad; it exceeds the driving frame budget on this Mac. |
+| Automatic (recommended) | The fastest | Use this by default. |
+| CoreML on the GPU | About a third slower | Another app keeps the Neural Engine busy. |
+| tinygrad on Metal | Over the 50 ms budget every frame | Test tinygrad; it exceeds the driving frame budget on this Mac. |
 
 Automatic assumes Jetlink is the only app using the Neural Engine. If you
 chose **CoreML on the GPU** in an earlier version, it stays selected; choose
