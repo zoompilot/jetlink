@@ -21,7 +21,10 @@
 name: Docker images
 
 on:
+  # main only: a branch with a pull request would otherwise build every image
+  # twice, and tag pushes (which ignore path filters) would repeat release.yml
   push:
+    branches: [main]
     paths:
       - 'docker/**'
       - 'jetlink/**'
