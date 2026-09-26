@@ -21,8 +21,8 @@ git push origin v0.3.0
 3. Watch **Actions > Release**. The macOS job takes about 20 minutes (the
    embedded runtime, the build, notarization); each image builds on a native
    runner for its architecture.
-4. Check the release page. It should include `Jetlink-0.3.0.dmg`,
-   `Jetlink-0.3.0.zip`, `SHA256SUMS`, the sdist and the wheel, and notes that
+4. Check the release page. It should include `Jetlink-0.3.0-macOS.dmg`,
+   `Jetlink-0.3.0-macOS.zip`, `SHA256SUMS`, the sdist and the wheel, and notes that
    are the changelog section followed by the installer command and the GHCR
    image lines.
 
@@ -70,7 +70,7 @@ notes then say which, and `install.sh --build` still works.
 ## Signing secrets
 
 Without these secrets, the app is signed ad hoc and published as
-`Jetlink-X.Y.Z-unsigned.zip` with no DMG, so forks can publish unsigned builds.
+`Jetlink-X.Y.Z-macOS.zip` with no DMG, so forks can publish unsigned builds.
 The workflow log's "Report the signing mode" step says which mode it ran in, and
 the release notes carry the Gatekeeper instructions for an unsigned one.
 

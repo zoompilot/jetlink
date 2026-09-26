@@ -2,9 +2,11 @@
 #
 # Build the release artifacts from a signed (and ideally stapled) app:
 #
-#   build/Jetlink-<version>.dmg   a compressed image with an /Applications link
-#   build/Jetlink-<version>.zip   the same app, for an appcast or a direct download
-#   build/SHA256SUMS              checksums of both
+#   build/Jetlink-<version>-macOS.dmg   a compressed image with an /Applications link
+#   build/Jetlink-<version>-macOS.zip   the same app, for an appcast or a direct download
+#   build/SHA256SUMS                    checksums of both
+#
+# "-macOS" tells them apart from the Python wheel and sdist on a release page.
 #
 # No third party tooling: hdiutil and ditto only.
 set -euo pipefail
@@ -18,8 +20,8 @@ APP="${1:-$MACOS_DIR/build/Jetlink.app}"
 VERSION="${JETLINK_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo 0.0.0)}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 OUT_DIR="$MACOS_DIR/build"
-DMG="$OUT_DIR/Jetlink-$VERSION.dmg"
-ZIP="$OUT_DIR/Jetlink-$VERSION.zip"
+DMG="$OUT_DIR/Jetlink-$VERSION-macOS.dmg"
+ZIP="$OUT_DIR/Jetlink-$VERSION-macOS.zip"
 STAGE="$OUT_DIR/dmg-stage"
 
 echo "==> staging"

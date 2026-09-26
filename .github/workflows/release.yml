@@ -162,12 +162,11 @@ jobs:
         run: |
           # An ad hoc signature cannot be notarized, so a DMG of it would only
           # invite people to install something Gatekeeper refuses. Ship the zip
-          # alone, named for what it is.
+          # alone; the release job reads a missing DMG as an unsigned build.
           cd macos/build
           VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Jetlink.app/Contents/Info.plist)"
-          rm -f "Jetlink-$VERSION.dmg"
-          mv "Jetlink-$VERSION.zip" "Jetlink-$VERSION-unsigned.zip"
-          shasum -a 256 "Jetlink-$VERSION-unsigned.zip" > SHA256SUMS
+          rm -f "Jetlink-$VERSION-macOS.dmg"
+          shasum -a 256 "Jetlink-$VERSION-macOS.zip" > SHA256SUMS
           cat SHA256SUMS
 
       - name: Delete the temporary keychain
@@ -467,7 +466,13 @@ jobs:
           # shellcheck disable=SC2016
           {
             printf '%s\n\n' "$NOTES"
+            # The DMG when signed, else the zip; either way the first asset
+            # on the page, since "-macOS" sorts ahead of the wheel's "-py3".
+            MAC="$(find artifacts/macos-app -name 'Jetlink-*-macOS.dmg' | head -1)"
+            [ -n "$MAC" ] || MAC="$(find artifacts/macos-app -name 'Jetlink-*-macOS.zip' | head -1)"
+            MAC="$(basename "$MAC")"
             printf '## Install\n\n'
+            printf 'Mac (Apple silicon): [%s](https://github.com/%s/releases/download/%s/%s)\n\n' "$MAC" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$MAC"
             printf 'Jetson or Linux PC:\n\n'
             printf '```bash\ncurl -fsSL https://raw.githubusercontent.com/zoompilot/jetlink/%s/install.sh | bash -s -- --ref %s\n```\n\n' "$GITHUB_REF_NAME" "$GITHUB_REF_NAME"
             printf 'Images:\n\n'
@@ -481,13 +486,10 @@ jobs:
             else
               printf -- '- `%s-jetpack6` failed to build. The installer builds it locally (`--build`).\n\n' "$VERSION"
             fi
-            if ls artifacts/macos-app/*-unsigned.zip >/dev/null 2>&1; then
+            if [ "${MAC%.zip}" != "$MAC" ]; then
               printf '## Mac app is unsigned\n\n'
               printf 'macOS blocks the first open. Right-click Jetlink in Applications > **Open**, or **System Settings > Privacy & Security > Open Anyway**. Or:\n\n'
-              printf '```bash\nxattr -d com.apple.quarantine /Applications/Jetlink.app\n```\n\n'
-              printf 'Apple silicon only.\n'
-            else
-              printf 'Mac app: Apple silicon only.\n'
+              printf '```bash\nxattr -d com.apple.quarantine /Applications/Jetlink.app\n```\n'
             fi
           } > notes.md
           gh release edit "$GITHUB_REF_NAME" --notes-file notes.md

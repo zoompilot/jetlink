@@ -59,8 +59,8 @@ nested Python binaries are signed individually with
 
 Everything lands in `macos/build/`: `Jetlink.app`, `python/` (the runtime
 before it is copied into the bundle), `downloads/` (the interpreter tarball and
-the wheels), `DerivedData/`, and from `make dmg` the `Jetlink-<version>.dmg`,
-`Jetlink-<version>.zip` and `SHA256SUMS`. None of it is committed.
+the wheels), `DerivedData/`, and from `make dmg` the `Jetlink-<version>-macOS.dmg`,
+`Jetlink-<version>-macOS.zip` and `SHA256SUMS`. None of it is committed.
 
 The app icon is generated once by `scripts/make-icon.swift` and its output is
 committed under `Resources/Assets.xcassets`.
