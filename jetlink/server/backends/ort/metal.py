@@ -222,12 +222,14 @@ class MetalKeepAlive:
 def create_keepalive(sessions: list[tuple[str, list]]) -> MetalKeepAlive | None:
   if sys.platform != 'darwin' or os.environ.get('JETLINK_METAL_KEEPALIVE', '1') == '0':
     return None
-  # The ANE path has different power/performance behavior. Only enable this
-  # for the CPUAndGPU configuration measured with a paced frame stream.
+  # Whenever a session runs on the GPU, the ANE split's second half included.
+  # On an M1 Pro through the server at 20 Hz (2026-09-25) Cinque Terre V3 split
+  # between the Neural Engine and the GPU ran 35.6 to 35.9 ms mean, p99 40 to
+  # 40.5 with it, and 46.3 to 46.5, p99 53.5, 13 % over budget, without.
   units = [p[1].get('MLComputeUnits') if isinstance(p, tuple) else None
            for _, providers in sessions for p in providers
            if (p[0] if isinstance(p, tuple) else p) == 'CoreMLExecutionProvider']
-  if not units or any(unit != 'CPUAndGPU' for unit in units):
+  if 'CPUAndGPU' not in units:
     return None
   try:
     return MetalKeepAlive()

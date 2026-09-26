@@ -121,7 +121,7 @@ def test_gpu_error_stops_optional_work_and_releases_resources(work, monkeypatch,
   ('darwin', False, ['CPUExecutionProvider'], False),
   ('darwin', False, ['CoreMLExecutionProvider'], False),
 ])
-def test_only_coreml_gpu_sessions_enable_keepalive(monkeypatch, platform, disabled, providers, enabled):
+def test_coreml_gpu_sessions_enable_keepalive(monkeypatch, platform, disabled, providers, enabled):
   monkeypatch.setattr(metal.sys, 'platform', platform)
   monkeypatch.delenv('JETLINK_METAL_KEEPALIVE', raising=False)
   if disabled:
@@ -145,15 +145,14 @@ def test_initialization_failure_is_optional(monkeypatch, caplog):
   assert not any(t.name == 'jetlink-metal-keepalive' for t in threading.enumerate())
 
 
-def test_ane_trunk_with_gpu_policy_does_not_enable_keepalive(monkeypatch):
+def test_ane_trunk_with_gpu_policy_enables_keepalive(monkeypatch):
+  # The split's policy runs on the GPU a frame after the trunk; measured
+  # without the keep-alive it was slower than the GPU path alone.
   monkeypatch.setattr(metal.sys, 'platform', 'darwin')
   monkeypatch.delenv('JETLINK_METAL_KEEPALIVE', raising=False)
-
-  def unexpected():
-    pytest.fail('the mixed ANE/GPU chain must not start a keep-alive')
-
-  monkeypatch.setattr(metal, 'MetalKeepAlive', unexpected)
+  sentinel = object()
+  monkeypatch.setattr(metal, 'MetalKeepAlive', lambda: sentinel)
   assert metal.create_keepalive([
-    ('trunk.onnx', [('CoreMLExecutionProvider', {'MLComputeUnits': 'ALL'})]),
+    ('vision.onnx', [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndNeuralEngine'})]),
     ('policy.onnx', [('CoreMLExecutionProvider', {'MLComputeUnits': 'CPUAndGPU'})]),
-  ]) is None
+  ]) is sentinel

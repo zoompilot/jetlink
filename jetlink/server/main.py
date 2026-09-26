@@ -249,8 +249,8 @@ def main(argv=None) -> int:
                       'CPU), tinygrad. auto takes the first that comes up, in that order')
   p.add_argument('--device', default='auto',
                  help='backend-specific: a CUDA device index for trt; METAL, CUDA, NV, AMD or '
-                      'CPU for tinygrad; coreml (the GPU), ane (every unit, the Neural Engine '
-                      'included; measure it first, docs/platforms.md), cuda or cpu for ort')
+                      'CPU for tinygrad; coreml (the GPU), ane (the vision trunk on the Neural '
+                      'Engine, the rest on the GPU; docs/backends.md), cuda or cpu for ort')
   p.add_argument('--list-backends', action='store_true',
                  help='print the backends whose runtime is installed here, and exit')
   p.add_argument('--transport', choices=('tcp', 'usb', 'ffs'), default='tcp',

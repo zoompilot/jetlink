@@ -234,24 +234,72 @@ def test_an_empty_coreml_cache_is_artifact_invalid(backend, built):
     (out / MANIFEST).write_text(json.dumps(manifest))
 
 
-def test_a_model_that_keeps_its_history_is_prepared_for_the_gpu_on_the_neural_engine(tmp_path):
-  """The Neural Engine cannot compile a stateful graph's queues, so `ane` gets
-  the GPU's units and none of the Neural Engine rewrites for one."""
-  providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
+COREML_PROVIDERS = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
+
+
+def _staged_on_the_cpu(device, path, tmp_path):
+  """What `device` stages, loadable by the CPU backend: the same sessions with
+  CoreML's units and caches taken out."""
+  artifact = tmp_path / f'{device}.ortcache'
+  artifact.mkdir()
+  manifest = OrtBackend(device, providers=COREML_PROVIDERS)._stage(path, artifact, artifact)
+  for entry in manifest:
+    (artifact / entry['cache']).rmdir()
+    entry['units'] = entry['cache'] = None
+  (artifact / MANIFEST).write_text(json.dumps(manifest))
+  return artifact
+
+
+def test_the_neural_engine_split_computes_what_the_gpu_graph_does(backend, tmp_path):
+  """Bit for bit, on the same provider: the cut changes where the graph runs,
+  never what it computes."""
+  path = tiny_model.write(tmp_path / 'tiny.onnx')
+  whole = backend.load(_staged_on_the_cpu('coreml', path, tmp_path))
+  split = backend.load(_staged_on_the_cpu('ane', path, tmp_path))
+  try:
+    assert len(split.providers) == 2
+    assert set(split.inputs) == set(whole.inputs), 'the hand-off leaked into the staged inputs'
+    assert set(split.outputs) == set(whole.outputs) == {'outputs'}
+    for seed in range(3):
+      inputs = tiny_model.random_inputs(seed)
+      np.testing.assert_array_equal(np.asarray(infer(split, inputs)['outputs']),
+                                    np.asarray(infer(whole, inputs)['outputs']))
+  finally:
+    split.close()
+    whole.close()
+
+
+def test_the_neural_engine_split_of_a_stateful_graph_loops_its_state(tmp_path):
+  """The image queue comes out of the first session and the other queues out
+  of the second; the StateLoop has to find all three, frame after frame."""
+  from jetlink.spec import spec_from_onnx
+  from tests.test_stateful import drive, reference
   path = tiny_model.write_stateful(tmp_path / 'stateful.onnx')
-  backend = OrtBackend('ane', providers=providers)
-  staged = tmp_path / 'staged'
-  staged.mkdir()
-  manifest = backend._stage(path, staged, tmp_path / 'ane.ortcache')
-  assert manifest[0]['units'] == 'CPUAndGPU'
-  prepared = onnx.load(str(staged / 'model.onnx'))
-  assert not [n for n in prepared.graph.node if n.name.endswith('__cast_in')]
+  engine = OrtBackend('cpu').load(_staged_on_the_cpu('ane', path, tmp_path))
+  try:
+    assert set(engine.outputs) == {'outputs', *tiny_model.STATE_PAIRS.values()}
+    frames = tiny_model.stateful_frames(7, seed=5)
+    got = drive(engine, spec_from_onnx(str(path)), frames, reset_at=(4,))
+    for g, want in zip(got, reference(frames[:4]) + reference(frames[4:]), strict=True):
+      np.testing.assert_allclose(g, want, atol=0.02, rtol=0.02)
+  finally:
+    engine.close()
+
+
+def test_a_neural_engine_artifact_from_before_the_split_is_artifact_invalid(tmp_path):
+  """One session with every unit allowed; the host rebuilds it as the split."""
+  ane = OrtBackend('ane', providers=COREML_PROVIDERS)
+  d = tmp_path / 'old.ortcache'
+  d.mkdir()
+  (d / MANIFEST).write_text(json.dumps([{'model': 'model.onnx', 'units': 'ALL', 'cache': 'coreml'}]))
+  d.with_suffix('.json').write_text(json.dumps({'backend': 'ort', 'compile_bytes': 1}))
+  with pytest.raises(ArtifactInvalid, match='vision/policy split'):
+    ane.load(d)
 
 
 def test_a_manifest_of_two_sessions_runs_as_a_chain(tmp_path):
   """The worker runs sessions back to back, feeding one's outputs to the next
-  by name; a split graph was measured through this and lost on a Mac, but the
-  chain stays generic and this keeps it honest."""
+  by name; any manifest may be a chain, not only the Neural Engine's."""
   import onnx.utils
   backend = OrtBackend('cpu')
   model = tiny_model.write(tmp_path / 'tiny.onnx', with_contiguous=False)
@@ -275,10 +323,11 @@ def test_a_manifest_of_two_sessions_runs_as_a_chain(tmp_path):
     engine.close()
 
 
-def test_the_neural_engine_device_gets_the_rewrites_and_the_gpu_does_not(tmp_path):
-  """The two graph rewrites exist for the Neural Engine; the GPU path ships
-  the graph as exported apart from what TensorRT also does to it."""
-  providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
+def test_the_neural_engine_device_splits_the_graph_and_the_gpu_does_not(tmp_path):
+  """`coreml` is one session on the GPU. `ane` is the trunk on the Neural
+  Engine and the policy on the GPU, each keyed for its own compile cache, and
+  no LayerNormalization goes to fp32: that was for a policy on the Neural
+  Engine, and this one never runs there."""
   path = tiny_model.write(tmp_path / 'tiny.onnx')
   # a LayerNormalization on the policy side, over the concatenated features
   m = onnx.load(str(path))
@@ -290,12 +339,24 @@ def test_the_neural_engine_device_gets_the_rewrites_and_the_gpu_does_not(tmp_pat
                 onnx.helper.make_node('LayerNormalization', [src, 'ln_scale'], ['normed'], axis=-1, name='ln_policy'))
   matmul.input[0] = 'normed'
   onnx.save(m, str(path))
-  for device, want_units, want_casts in (('coreml', 'CPUAndGPU', 0), ('ane', 'ALL', 1)):
-    backend = OrtBackend(device, providers=providers)
+  want = {
+    'coreml': [{'model': 'model.onnx', 'units': 'CPUAndGPU', 'cache': 'coreml'}],
+    'ane': [{'model': 'vision.onnx', 'units': 'CPUAndNeuralEngine', 'cache': 'coreml-vision'},
+            {'model': 'policy.onnx', 'units': 'CPUAndGPU', 'cache': 'coreml-policy'}],
+  }
+  for device, manifest_want in want.items():
+    backend = OrtBackend(device, providers=COREML_PROVIDERS)
     staged = tmp_path / f'staged_{device}'
     staged.mkdir()
-    manifest = backend._stage(path, staged, tmp_path / f'{device}.ortcache')
-    assert manifest[0]['units'] == want_units
-    prepared = onnx.load(str(staged / 'model.onnx'))
-    casts = [n for n in prepared.graph.node if n.op_type == 'Cast' and n.name.endswith('__cast_in')]
-    assert len(casts) == want_casts, device
+    out = tmp_path / f'{device}.ortcache'
+    manifest = backend._stage(path, staged, out)
+    assert manifest == manifest_want == json.loads((staged / MANIFEST).read_text())
+    for entry in manifest:
+      assert (staged / entry['cache']).is_dir()
+      prepared = onnx.load(str(staged / entry['model']))
+      assert _has_cache_key(prepared, _cache_key(out, entry['model'].removesuffix('.onnx')))
+      assert not [n for n in prepared.graph.node if n.name.endswith('__cast_in')], device
+    if device == 'ane':
+      vision = onnx.load(str(staged / 'vision.onnx'))
+      assert [i.name for i in vision.graph.input] == ['img', 'big_img']
+      assert 'LayerNormalization' in {n.op_type for n in onnx.load(str(staged / 'policy.onnx')).graph.node}

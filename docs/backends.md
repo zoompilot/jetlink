@@ -34,24 +34,59 @@ Macs may differ.
 
 The frame budget is 50 ms at 20 frames per second (20 Hz). CoreML on the GPU is
 the default because it meets this budget on the M1 Pro. tinygrad exceeds the
-budget. The Neural Engine option (`--device ane`) has more frames over budget at
-20 Hz, even though it is faster with no pause between requests.
+budget. The Neural Engine option (`--device ane`) is about 7 ms faster at 20 Hz,
+but it depends on nothing else using the Neural Engine; see
+[the Neural Engine option](#the-neural-engine-option).
 
-| | tinygrad METAL | CoreML, GPU (`--device coreml`, default) | CoreML, all compute units (`--device ane`) |
+| | tinygrad METAL | CoreML, GPU (`--device coreml`, default) | CoreML, Neural Engine and GPU (`--device ane`) |
 | --- | ---: | ---: | ---: |
-| round trip at 20 Hz through the server, mean / p99 / max | 66.2 / 67.6 / 67.9 ms | 43.3 / 44.4 / 44.5 ms | 44.6 / 58.8 / 68.9 ms |
-| frames over the 50 ms budget, of 390 | 390 | 0 | 69 |
-| round trip with no pause between requests through the server, mean / p99 | 66.2 / 67.6 ms | 39.9 ms server side | 32.6 / 38.7 ms |
+| round trip at 20 Hz through the server, mean / p99 / max | 66.2 / 67.6 / 67.9 ms | 43.3 / 44.4 / 44.5 ms | 36.5 / 40.6 / 42.1 ms |
+| frames over the 50 ms budget | 390 of 390 | 0 of 390 | 0 of 1,740 |
+| round trip with no pause between requests through the server, mean / p99 | 66.2 / 67.6 ms | 39.9 ms server side | not measured |
 | parity gate, worst column | 0.99954 pass | 0.99957 pass | 0.99957 pass |
-| parity, mean error on `plan` / `lead_prob` | 0.0060 / 0.0156 | 0.0046 / 0.0150 | 0.0057 / 0.0138 |
-| build / load in a fresh process | 13 s / 1.1 s | 8.2 s / 2.0 s | not measured |
-| artifact on disk | 777 MB | 2.3 GB | not measured |
+| parity, mean error on `plan` / `lead_prob` | 0.0060 / 0.0156 | 0.0046 / 0.0150 | 0.0057 / 0.0140 |
+| build / load in a fresh process | 13 s / 1.1 s | 8.2 s / 2.0 s | 16 s / 0.6 s |
+| artifact on disk | 777 MB | 2.3 GB | 2.1 GB |
 | peak memory use while building | 0.6 GB | 3.0 GB | not measured |
-| peak memory use while loading | not measured | 2.5 GB | not measured |
+| peak memory use while loading | not measured | 2.5 GB | 1.6 GB, worker only |
 
 Memory figures include the server and its worker process, sampled once per
-second. Build and load times for the Neural Engine option are not measured with
-the current model preparation code.
+second, except where noted. The Neural Engine column is the 766 MB Cinque
+Terre V3 model, measured 2026-09-25 in six 300-frame blocks alternating with
+the GPU option, which measured 43.2 to 43.4 ms mean and p99 44.0 to 44.1 in
+the same run. Cinque Terre V1 measured 35.3 to 35.7 ms against 41.8 to 42.0.
+
+### The Neural Engine option
+
+`--device ane` runs the model as two CoreML sessions. The convolutional
+trunk, which reads the camera frames, runs on the Neural Engine in about
+20 ms, where the GPU takes 31 ms. Everything after it, including the heads,
+the policy and a stateful model's history, runs on the GPU in about 12 ms.
+The two halves exchange 32 KB per frame.
+
+The split is placed where it is for accuracy and speed:
+
+- The Neural Engine computes LayerNormalization in fp16, which is not precise
+  enough for the layers after the trunk. With them on the Neural Engine,
+  `road_transform` fell to a correlation of 0.9988 over 32 frames and failed
+  the parity gate.
+- The Neural Engine cannot run the stateful policy efficiently: it took
+  83 ms there.
+- A single session that lets CoreML choose among all compute units measured
+  45 ms for Cinque Terre V1, with 55 of 300 frames over budget, and 107 ms
+  for V3.
+
+The option depends on the Metal keep-alive described below. Without it the
+same split measured 46.4 ms mean and 53.5 ms p99.
+
+It is not the default because other processes share the Neural Engine.
+While another process ran a model on the Neural Engine back to back, the
+split measured 52.5 ms mean and 65 ms p99, with 28% of frames over budget;
+the GPU option measured 43.5 ms and 45 ms. With the other process busy half
+the time, the split averaged 34.5 ms but one block reached a 49 ms p99.
+Photos' media analysis can use the Neural Engine on an idle Mac. With all CPU
+cores saturated, both options missed the budget (49 to 51 ms mean, 60 to
+65 ms p99).
 
 The mean is the average frame time. The p99 is the time at or below which 99% of
 frames complete. The maximum is the slowest frame.
@@ -96,7 +131,8 @@ The helper uses a separate 128-byte buffer, with one finite command in flight
 at a time on its own thread. It does not change model inputs, hidden state,
 precision, or CoreML compute units. It stops submitting work after one second
 without an inference request, on inference errors, or when the worker exits.
-CPU and Neural Engine sessions do not start it. If Metal initialization or a
+It runs whenever a session uses the GPU, including the GPU half of the Neural
+Engine option; CPU sessions do not start it. If Metal initialization or a
 helper command fails, inference continues without the helper and logs a warning.
 
 This trades additional GPU activity and power consumption for lower latency;
@@ -120,9 +156,10 @@ takes about 8 seconds to build, and loads in about 2 seconds on the M1 Pro. If a
 cached model takes minutes to load, remove its prepared engine and prepare it
 again.
 
-For the Neural Engine option, Jetlink normalizes negative Gather indices and
-runs the policy's LayerNormalization operations in fp32 for accuracy. The trunk
-uses fp16.
+For the Neural Engine option, Jetlink normalizes negative Gather indices,
+which the Neural Engine mishandles, and splits the model after the trunk. An
+engine prepared by an earlier version as a single session is rebuilt
+automatically.
 
 ## Runtime requirements
 

@@ -8,22 +8,36 @@ onnxruntime: CoreML on a Mac, CUDA or plain CPU anywhere else.
 
 On Apple silicon the model runs in one CoreML session on the GPU
 (`--device coreml`, the default there): 43 ms round trip at 20 Hz on an
-M1 Pro, p99 44, parity gate passed. `--device ane` allows every unit, the
-Neural Engine included, and carries the two rewrites that make the Neural
-Engine correct (jetlink.onnx_patch, measured 2026-09-08): a Gather with a
-negative index gathers garbage there, so `normalize_gather_indices` writes
-every such index from the front; and its fp16 LayerNormalization overflows
-on this model's residual stream, so `layernorm_in_fp32` runs the policy's
-LayerNormalizations in fp32, which CoreML places off the Neural Engine. With
-both, the gate passes with the GPU path's precision and the round trip is
-33 ms back to back. It is not the default because at 20 Hz, a frame every
-50 ms with the units idle in between, the same session measured 45 ms with
-a p99 of 59 on the M1 Pro against the GPU's 43 and 44: every CoreML unit
-pays a cost on the first request after an idle gap, and the Neural Engine
-pays more of it. A faster Mac may not; measure it with
-scripts/bench_link.py --rate 20 before choosing (docs/platforms.md).
-Every session costs minutes of compile that onnxruntime's cache directory
-did not shorten.
+M1 Pro, p99 44, parity gate passed.
+
+`--device ane` cuts the graph where the vision trunk ends
+(`onnx_patch.split_vision_policy`) and runs it as a chain of two sessions:
+the conv trunk on the Neural Engine, everything after it (the heads, the
+policy, a stateful graph's feature and desire queues) on the GPU. Measured
+2026-09-25 on an M1 Pro through the server at 20 Hz, interleaved with the
+GPU path: Cinque Terre V3 36.2 to 37.0 ms mean, p99 40 to 41, against 43.2
+to 43.4 and p99 44; V1 35.3 to 35.7, p99 39 to 39.5, against 41.8 to 42.0
+and p99 43. The parity gate passes over 32 frames (worst column 0.99957, the
+GPU path's figure), the link returns the engine's output bit for bit, the
+build takes 16 s and a later load 0.6 s. The hand-off is 32 KB.
+
+Why this shape. The Neural Engine runs the trunk in about 20 ms where the
+GPU takes 31, but it cannot run V3's stateful policy (83 ms there), and one
+session with every unit allowed ran V1 in 45 ms with 55 frames in 300 over
+budget and V3 in 107 ms. Its fp16 LayerNormalization is not precise enough
+for the residual MLP after the trunk (road_transform at 0.9988 over 32
+frames with it there), which is why the cut is at the trunk's output and not
+at the end of everything image-only. The Metal keep-alive (metal.py) runs
+for the GPU half: without it the split measured 46.4 ms, p99 53. And a
+negative Gather index gathers garbage on the Neural Engine, so
+`normalize_gather_indices` writes every index from the front.
+
+It is the opt-in and not the default because the Neural Engine is shared:
+with another process running a model on it back to back (Photos'
+mediaanalysisd can, on an idle Mac), the split measured 52.5 ms mean, p99
+65, 28 % of frames over budget, while the GPU path stayed at 43.5 and 45. A
+Mac with its CPU saturated misses the budget either way (49 to 51 ms both,
+p99 60 to 65).
 
 Elsewhere it is one session with the plain graph. The ONNX gets the same
 surgery TensorRT's build does: the `org.tinygrad` layout op stripped,
@@ -73,9 +87,14 @@ PROVIDERS = {
   'cpu': 'CPUExecutionProvider',
 }
 
-# CoreML compute units per device name. `ane` is correct only with the two
-# rewrites in the module docstring, which the build applies for it.
+# CoreML compute units per device name, for a one-session build. `ane` is
+# built as ANE_SPLIT instead; see the module docstring.
 COREML_UNITS = {'coreml': 'CPUAndGPU', 'ane': 'ALL'}
+
+# `--device ane`: the vision trunk on the Neural Engine, the policy on the GPU,
+# in that order, as (session name, compute units). The name is the model file's
+# stem and so the part of its COREML_CACHE_KEY.
+ANE_SPLIT = (('vision', 'CPUAndNeuralEngine'), ('policy', 'CPUAndGPU'))
 
 # The last resort for the compile stage's fraction: only a first build of a
 # model, whose sidecar records nothing yet, and only if the compile writes
@@ -170,30 +189,16 @@ def _cache_key(out_path: Path, part: str) -> str:
   return re.sub(r'[^A-Za-z0-9]', '', out_path.stem + part)[:63]
 
 
-def keeps_history(onnx_path: Path) -> bool:
-  """Whether the graph carries its own history queues (openpilot #38916),
-  read from its inputs without loading the weights."""
-  from jetlink.onnx_meta import parse_file
-  from jetlink.spec import STATEFUL_FRAME
-  try:
-    return STATEFUL_FRAME in parse_file(str(onnx_path)).inputs
-  except Exception as e:
-    log.warning("could not read %s's inputs: %s", Path(onnx_path).name, e)
-    return False
-
-
-def _prepared_model(onnx_path: Path, for_ane: bool, for_coreml: bool = False):
+def _prepared_model(onnx_path: Path, for_coreml: bool = False):
   """The ONNX as onnxruntime will see it, in memory."""
   import onnx
 
   from jetlink.onnx_patch import (
     gemm_with_transposed_weight,
-    layernorm_in_fp32,
     needs_patch,
     normalize_gather_indices,
     patch_uint8_inputs,
     strip_tinygrad_ops,
-    vision_nodes,
   )
   model = onnx.load(str(onnx_path))
   stripped = strip_tinygrad_ops(model)
@@ -201,18 +206,14 @@ def _prepared_model(onnx_path: Path, for_ane: bool, for_coreml: bool = False):
   if patched:
     patch_uint8_inputs(model)
   gathers = normalize_gather_indices(model)
-  norms = 0
-  if for_ane:
-    policy = {n.name for n in model.graph.node} - vision_nodes(model)
-    norms = layernorm_in_fp32(model, only=policy)
   # Only for CoreML: it is what puts the weights in the weight file instead of
   # the MIL text. The CUDA and CPU providers are happy with the transB=0 Gemm
   # onnxruntime's own fusion makes, and gain nothing from the rewrite.
   gemms = gemm_with_transposed_weight(model) if for_coreml else 0
   log.info("prepared %s: stripped %d tinygrad op(s), %s, %d negative Gather index(es) normalized, "
-           "%d LayerNormalization(s) in fp32, %d MatMul+Add rewritten as Gemm(transB=1)",
+           "%d MatMul+Add rewritten as Gemm(transB=1)",
            onnx_path.name, stripped,
-           'images retyped to fp16' if patched else 'inputs left as declared', gathers, norms, gemms)
+           'images retyped to fp16' if patched else 'inputs left as declared', gathers, gemms)
   return model
 
 
@@ -494,35 +495,47 @@ class OrtBackend:
   # -- build ------------------------------------------------------------------
 
   def _stage(self, onnx_path: Path, staged: Path, out_path: Path) -> list[dict]:
-    """Write the prepared model into `staged` and return the manifest.
-
-    The manifest is a list because the worker runs sessions as a chain and
-    a split graph was measured through it; one session is what ships.
-    """
+    """Write the prepared model into `staged` and return the manifest: one
+    session, or on `ane` the vision and policy sessions the worker chains."""
     import onnx
 
     coreml = self._on_coreml
-    for_ane = self.device == 'ane'
-    units = COREML_UNITS[self.device] if coreml else None
-    if for_ane and keeps_history(onnx_path):
-      # Measured 2026-09-25 on an M1 Pro with Cinque Terre V3: Apple's Neural
-      # Engine compiler rejects the program (ANECCompile() FAILED) and CoreML
-      # runs the frame in 107 ms, against 43 ms on the GPU. The same Mac
-      # compiles Cinque Terre V1 for it and runs 42 ms, so it is the graph's
-      # own history queues. The GPU keeps the model inside the budget.
-      log.warning("the Neural Engine cannot compile a model that keeps its own history; "
-                  "preparing it for the GPU instead")
-      for_ane, units = False, COREML_UNITS['coreml']
-    model = _prepared_model(onnx_path, for_ane=for_ane, for_coreml=coreml)
+    if self.device == 'ane':
+      return self._stage_split(onnx_path, staged, out_path)
+    model = _prepared_model(onnx_path, for_coreml=coreml)
     # What the convert stage is working towards: onnxruntime writes the
     # initializers out as the MLProgram's weight file, so their size is the
     # total the bytes on disk can honestly be reported against.
     self._weights_bytes = sum(len(t.raw_data) for t in model.graph.initializer)
     onnx.save(_with_cache_key(model, _cache_key(out_path, 'model')), str(staged / 'model.onnx'))
-    manifest = [{'model': 'model.onnx', 'units': units, 'cache': 'coreml' if coreml else None}]
+    manifest = [{'model': 'model.onnx', 'units': COREML_UNITS[self.device] if coreml else None,
+                 'cache': 'coreml' if coreml else None}]
     for entry in manifest:
       if entry['cache']:
         (staged / entry['cache']).mkdir()
+    (staged / MANIFEST).write_text(json.dumps(manifest, indent=2))
+    return manifest
+
+  def _stage_split(self, onnx_path: Path, staged: Path, out_path: Path) -> list[dict]:
+    """`--device ane`: the trunk on the Neural Engine, the policy on the GPU.
+
+    No LayerNormalization goes to fp32: the Neural Engine's fp16 one
+    overflowed on the policy's residual stream (2026-09-08), and the policy
+    no longer runs there. The trunk's were precise enough on it.
+    """
+    import onnx
+
+    from jetlink.onnx_patch import split_vision_policy
+    model = _prepared_model(onnx_path, for_coreml=True)
+    parts = split_vision_policy(model)
+    del model
+    self._weights_bytes = sum(len(t.raw_data) for part in parts for t in part.graph.initializer)
+    manifest = []
+    for (name, units), part in zip(ANE_SPLIT, parts, strict=True):
+      onnx.save(_with_cache_key(part, _cache_key(out_path, name)), str(staged / f'{name}.onnx'))
+      manifest.append({'model': f'{name}.onnx', 'units': units, 'cache': f'coreml-{name}'})
+    for entry in manifest:
+      (staged / entry['cache']).mkdir()
     (staged / MANIFEST).write_text(json.dumps(manifest, indent=2))
     return manifest
 
@@ -619,6 +632,10 @@ class OrtBackend:
       # on an M1 Pro against 1.8 s for the same model built since. The host
       # replaces an invalid artifact from the ONNX, and that build is 5 s.
       raise ArtifactInvalid(f"{artifact}: built before the weight rewrite; loads took minutes, a rebuild takes seconds")
+    if self.device == 'ane' and [e.get('units') for e in manifest] != [units for _, units in ANE_SPLIT]:
+      # One session with every unit allowed: 45 ms and 55 frames in 300 over
+      # budget for Cinque Terre V1, 107 ms for V3. The split is seconds to build.
+      raise ArtifactInvalid(f"{artifact}: a Neural Engine build from before the vision/policy split")
     for entry in manifest:
       if not (artifact / entry['model']).is_file():
         raise ArtifactInvalid(f"{artifact}: no {entry['model']} inside")
