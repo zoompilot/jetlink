@@ -1,0 +1,920 @@
+diff --git a/openpilot/selfdrive/ui/sunnypilot/accelerator_link.py b/openpilot/selfdrive/ui/sunnypilot/accelerator_link.py
+index 2538310..c2921b9 100644
+--- a/openpilot/selfdrive/ui/sunnypilot/accelerator_link.py
++++ b/openpilot/selfdrive/ui/sunnypilot/accelerator_link.py
+@@ -15,6 +15,10 @@ from openpilot.sunnypilot import accelerators
+ from openpilot.system.ui.lib.multilang import tr
+ 
+ LINK_PARAM = "JetlinkEnabled"
++ENDPOINT_PARAM = "JetlinkEndpoint"
++# where the iPhone app listens, across the comma's USB network adapter; the
++# owner presents the adapter when this is the endpoint (jetlink/gadget.py)
++IPHONE_ENDPOINT = "192.168.60.2:5599"
+ 
+ 
+ def link_enabled() -> bool:
+@@ -32,6 +36,30 @@ def set_link_enabled(enabled: bool) -> None:
+     pass  # same unknown-key case as the read
+ 
+ 
++def iphone_link() -> bool:
++  """Is the accelerator the iPhone app, over the USB network adapter, rather
++  than a Mac or Jetson on jetlink's own USB gadget? Never raises."""
++  try:
++    raw = ui_state.params.get(ENDPOINT_PARAM)
++  except Exception:
++    return False
++  if isinstance(raw, bytes):
++    raw = raw.decode(errors='replace')
++  return (raw or "").strip() == IPHONE_ENDPOINT
++
++
++def set_iphone_link(on: bool) -> None:
++  """Point the link at the iPhone, or back at USB. Off clears only the iPhone's
++  endpoint: one set by hand for a Jetson on ethernet is not ours to remove."""
++  try:
++    if on:
++      ui_state.params.put(ENDPOINT_PARAM, IPHONE_ENDPOINT, block=True)
++    elif iphone_link():
++      ui_state.params.remove(ENDPOINT_PARAM)
++  except Exception:
++    pass  # a params library older than the key; the toggle just does nothing
++
++
+ def link_toggle_meaningful() -> bool:
+   """Offered wherever the package is checked out, as the chestnut slot is offered
+   whether or not a board is fitted. Hidden only on a device with nothing of ours:
+diff --git a/openpilot/selfdrive/ui/sunnypilot/layouts/settings/models.py b/openpilot/selfdrive/ui/sunnypilot/layouts/settings/models.py
+index 1aa477b..5e701f4 100644
+--- a/openpilot/selfdrive/ui/sunnypilot/layouts/settings/models.py
++++ b/openpilot/selfdrive/ui/sunnypilot/layouts/settings/models.py
+@@ -13,7 +13,8 @@ from openpilot.cereal import custom
+ from openpilot.sunnypilot.models.helpers import ACTIVE_BUNDLE_KEYS, get_selected_bundle, resolve_bundle_by_ref
+ from openpilot.common.constants import CV
+ from openpilot.selfdrive.ui.ui_state import device, ui_state
+-from openpilot.selfdrive.ui.sunnypilot.accelerator_link import link_enabled, link_status, link_toggle_meaningful, set_link_enabled
++from openpilot.selfdrive.ui.sunnypilot.accelerator_link import (iphone_link, link_enabled, link_status, link_toggle_meaningful,
++                                                                set_iphone_link, set_link_enabled)
+ from openpilot.sunnypilot import accelerators
+ from openpilot.selfdrive.ui.sunnypilot.model_info import big_model_state, bundles_for_source, carrying_model, default_model_name, queued_name
+ from openpilot.system.ui.lib.multilang import tr
+@@ -75,6 +76,14 @@ class ModelsLayout(Widget):
+       self._link_description(""),
+       initial_state=link_enabled(), callback=self._set_link_state)
+ 
++    # which accelerator: the iPhone app over the USB network adapter, or a Mac
++    # or Jetson on jetlink's own gadget. Parked only, like the link itself
++    self.iphone_link_item = toggle_item_sp(
++      tr("Accelerator on iPhone"),
++      tr("On: the Jetlink iPhone app, over the USB cable as a network link. Off: a Mac or Jetson over USB. "
++         "The comma switches its USB port over by itself; changes only while parked."),
++      initial_state=iphone_link(), callback=self._set_iphone_link)
++
+     self.download_item = download_status_item(lambda: tr("Download") if self._downloading else tr("Model Status"))
+ 
+     self.refresh_item = button_item(tr("Refresh Model List"), tr("REFRESH"), "",
+@@ -116,7 +125,8 @@ class ModelsLayout(Widget):
+                                         1, None, True, "", style.BUTTON_ACTION_WIDTH, None, True,
+                                         lambda v: f"{v / 100:.2f} m")
+ 
+-    self.items = [self.small_model_item, self.big_model_item, self.accelerator_link_item, self.cancel_download_item,
++    self.items = [self.small_model_item, self.big_model_item, self.accelerator_link_item, self.iphone_link_item,
++                  self.cancel_download_item,
+                   self.download_item, self.refresh_item, self.clear_cache_item,
+                   self.lane_turn_desire_toggle, self.lane_turn_value_control, self.lagd_toggle, self.delay_control, self.camera_offset]
+     self._refresh_accelerator_items()
+@@ -127,6 +137,12 @@ class ModelsLayout(Widget):
+       return
+     set_link_enabled(enabled)
+ 
++  def _set_iphone_link(self, on: bool):
++    if not ui_state.is_offroad():
++      self.iphone_link_item.action_item.set_state(iphone_link())
++      return
++    set_iphone_link(on)
++
+   @staticmethod
+   def _link_description(status: str) -> str:
+     return f"{tr('Run the big driving model on an attached accelerator.')} {status}".strip()
+@@ -135,6 +151,8 @@ class ModelsLayout(Widget):
+     # present() and unavailable_reason() read sysfs, so this rides the half-second tick
+     self.accelerator_link_item.set_visible(link_toggle_meaningful())
+     self.accelerator_link_item.action_item.set_state(link_enabled())
++    self.iphone_link_item.set_visible(link_toggle_meaningful())
++    self.iphone_link_item.action_item.set_state(iphone_link())
+     status = link_status()
+     if status != self._link_status:
+       self._link_status = status
+@@ -391,6 +409,7 @@ class ModelsLayout(Widget):
+     self.small_model_item.action_item.set_enabled(offroad)
+     self.big_model_item.action_item.set_enabled(offroad)
+     self.accelerator_link_item.action_item.set_enabled(offroad)
++    self.iphone_link_item.action_item.set_enabled(offroad)
+     self.small_model_item.set_description("" if offroad else tr("Only available when vehicle is off, or always offroad mode is on"))
+ 
+   def _render(self, rect):
+diff --git a/openpilot/selfdrive/ui/sunnypilot/mici/layouts/models.py b/openpilot/selfdrive/ui/sunnypilot/mici/layouts/models.py
+index 3fa8f6f..34dcae2 100644
+--- a/openpilot/selfdrive/ui/sunnypilot/mici/layouts/models.py
++++ b/openpilot/selfdrive/ui/sunnypilot/mici/layouts/models.py
+@@ -11,7 +11,8 @@ from openpilot.selfdrive.ui.mici.widgets.dialog import BigDialog
+ from openpilot.sunnypilot.models.helpers import ACTIVE_BUNDLE_KEYS, get_selected_bundle
+ from openpilot.selfdrive.ui.mici.widgets.button import BigButton, BigToggle
+ from openpilot.selfdrive.ui.ui_state import ui_state, device
+-from openpilot.selfdrive.ui.sunnypilot.accelerator_link import link_enabled, link_status, link_toggle_meaningful, set_link_enabled
++from openpilot.selfdrive.ui.sunnypilot.accelerator_link import (iphone_link, link_enabled, link_status, link_toggle_meaningful,
++                                                                set_iphone_link, set_link_enabled)
+ from openpilot.selfdrive.ui.sunnypilot.model_info import (active_source, big_model_progress, big_model_state,
+                                                           bundles_for_source, carrying_model,
+                                                           default_model_name, model_info, queued_name)
+@@ -41,6 +42,32 @@ class AcceleratorLinkToggle(BigToggle):
+       self.set_value(status)
+ 
+ 
++class IphoneLinkToggle(BigToggle):
++  """Which accelerator: the iPhone app over the USB network adapter, or a Mac
++  or Jetson on jetlink's own gadget. The owner swaps the port to match; the
++  write is refused onroad, as the link toggle's is."""
++
++  def __init__(self):
++    super().__init__(tr("accelerator on iphone"), initial_state=iphone_link(), toggle_callback=self._store)
++    self._show()
++
++  def _store(self, checked: bool) -> None:
++    if not ui_state.is_offroad():
++      self.set_checked(iphone_link())
++      return
++    set_iphone_link(checked)
++    self._show()
++
++  def _show(self) -> None:
++    value = tr("iphone over usb network") if iphone_link() else tr("mac or jetson over usb")
++    if value != self.get_value():
++      self.set_value(value)
++
++  def refresh(self) -> None:
++    self.set_checked(iphone_link())
++    self._show()
++
++
+ def _model_info() -> tuple[str, str, str]:
+   """(active model, info header, info text) for the panel. Runner-matched: the
+   active line names what actually drives, and a notable big-model state takes
+@@ -118,7 +145,11 @@ class ModelsLayoutMici(NavScroller):
+     self.link_toggle = AcceleratorLinkToggle()
+     self.link_toggle.set_visible(link_toggle_meaningful())
+ 
+-    self.main_items = [self.current_model_info, self.select_model_btn, self.cancel_download_btn, self.link_toggle]
++    self.iphone_toggle = IphoneLinkToggle()
++    self.iphone_toggle.set_visible(link_toggle_meaningful())
++
++    self.main_items = [self.current_model_info, self.select_model_btn, self.cancel_download_btn, self.link_toggle,
++                       self.iphone_toggle]
+     self._scroller.add_widgets(self.main_items)
+ 
+   @property
+@@ -235,6 +266,8 @@ class ModelsLayoutMici(NavScroller):
+       # present() and unavailable_reason() read sysfs, so they ride this half-second tick
+       self.link_toggle.refresh()
+       self.link_toggle.set_visible(link_toggle_meaningful())
++      self.iphone_toggle.refresh()
++      self.iphone_toggle.set_visible(link_toggle_meaningful())
+ 
+     is_downloading = (manager.selectedBundle
+                       and manager.selectedBundle.status == custom.ModelManagerSP.DownloadStatus.downloading)
+diff --git a/openpilot/sunnypilot/accelerators/jetlink/gadget.py b/openpilot/sunnypilot/accelerators/jetlink/gadget.py
+index ef451d3..f727ef0 100644
+--- a/openpilot/sunnypilot/accelerators/jetlink/gadget.py
++++ b/openpilot/sunnypilot/accelerators/jetlink/gadget.py
+@@ -236,7 +236,14 @@ def wait_for_host(timeout: float, bounce=None, should_stop=None, report=None) ->
+   the bus and stopped. The UDC then sits in default or addressed with the CC
+   pin still showing a host, and only another connect moves it: that is what
+   `bounce` is for, and it is spent once.
++
++  Over TCP there is nothing to enumerate: the connect that made the client
++  already reached the far end, and no gadget of ours is bound. Waiting on one
++  stalled every modeld join for CONNECT_TIMEOUT and then started over, so the
++  large model never joined.
+   """
++  if link_endpoint() is not None:
++    return True
+   deadline = time.monotonic() + timeout
+   stalled_since = None
+   bounced = False
+@@ -316,6 +323,53 @@ def link_configured() -> bool:
+     return False
+ 
+ 
++# -- the iPhone's link ----------------------------------------------------
++# An iPhone gives apps no USB access, so it cannot enumerate jetlink's
++# FunctionFS gadget. Instead the comma presents itself as a USB network
++# adapter (net_gadget.sh, CDC-NCM) at 192.168.60.1 and reaches the phone at
++# IPHONE_ENDPOINT over TCP. The models panel's "Accelerator on iPhone" toggle
++# writes or clears that endpoint; the owner brings the port to match.
++IPHONE_ENDPOINT = "192.168.60.2:5599"
++IPHONE_SUBNET = "192.168.60."
++NET_GADGET_PATH = Path("/sys/kernel/config/usb_gadget/jetlink-net")
++
++
++def iphone_link() -> bool:
++  """Is the endpoint one the comma's USB network adapter reaches? Another
++  endpoint, a Jetson on ethernet say, needs no adapter of ours."""
++  endpoint = link_endpoint()
++  return endpoint is not None and endpoint[0].startswith(IPHONE_SUBNET)
++
++
++def net_gadget_up() -> bool:
++  """Is the USB network adapter bound to the controller?"""
++  try:
++    return bool((NET_GADGET_PATH / "UDC").read_text().strip())
++  except OSError:
++    return False
++
++
++def _net_gadget_script() -> Path:
++  return Path(__file__).with_name('net_gadget.sh')
++
++
++def set_net_gadget(up: bool) -> bool:
++  """Present the USB network adapter, or take it down. Presenting it releases
++  jetlink's own gadget first and clears the error that release leaves in
++  GADGET_STATUS; taking it down leaves the port free for setup_gadget()."""
++  if not AGNOS:
++    return False
++  cmd = ['sudo', '-n', 'bash', str(_net_gadget_script())] + ([] if up else ['--teardown'])
++  try:
++    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
++                   timeout=GADGET_SETUP_TIMEOUT)
++  except Exception:
++    log.exception("jetlink: could not %s the USB network adapter", "present" if up else "remove")
++    return False
++  log.warning("jetlink: USB network adapter %s", "presented for the iPhone" if up else "removed")
++  return net_gadget_up() == up
++
++
+ def set_dormant(on: bool) -> None:
+   try:
+     if on:
+diff --git a/openpilot/sunnypilot/accelerators/jetlink/lending.py b/openpilot/sunnypilot/accelerators/jetlink/lending.py
+index 5ce1d34..6696d26 100644
+--- a/openpilot/sunnypilot/accelerators/jetlink/lending.py
++++ b/openpilot/sunnypilot/accelerators/jetlink/lending.py
+@@ -128,6 +128,10 @@ def borrow(name: str = 'modeld', timeout: float = BORROW_TIMEOUT, path: Path = S
+   on, or whose daemon died: the caller opens the gadget itself, as it always
+   did, so a drive never loses the large model to a daemon fault.
+   """
++  if gadget.link_endpoint() is not None:
++    # Over TCP there are no endpoints to lend and nobody holds any: asking
++    # would only wait out the timeout on "retry" before connecting anyway.
++    return None
+   deadline = time.monotonic() + timeout
+   try:
+     conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+diff --git a/openpilot/sunnypilot/accelerators/jetlink/net_gadget.sh b/openpilot/sunnypilot/accelerators/jetlink/net_gadget.sh
+new file mode 100755
+index 0000000..8138f6e
+--- /dev/null
++++ b/openpilot/sunnypilot/accelerators/jetlink/net_gadget.sh
+@@ -0,0 +1,252 @@
++#!/usr/bin/env bash
++#
++# Copyright (c) 2026-, Zeph Leggett.
++# This file is part of jetlink and is licensed under the MIT License.
++#
++# Present the comma's USB-C port as a USB network adapter, for an iPhone
++# running Jetlink on the other end of one cable.
++#
++# An iPhone cannot use jetlink's own gadget (scripts/setup_gadget.sh): iOS
++# gives apps no access to a vendor-specific USB device. It does drive USB
++# Ethernet (CDC-NCM and CDC-ECM) itself, so this makes the comma one, gives
++# it 192.168.60.1, and the comma's TCP client reaches the phone at
++# 192.168.60.2 over the cable.
++#
++# The owner (owner.py) runs this as root when the models panel's
++# "Accelerator on iPhone" toggle is on, at boot and whenever the toggle
++# changes, and runs it with --teardown when the toggle goes off. It needs a
++# kernel with the NCM or ECM gadget function (CONFIG_USB_CONFIGFS_NCM or
++# _ECM) and fails with that reason if there is none.
++#
++# zoompilot sets up jetlink's own FunctionFS gadget at boot, which holds the
++# port. This releases it, and clears the "gadget torn down" error its
++# teardown leaves in /dev/shm/jetlink-gadget: zoompilot reads any error
++# there as "no link", and would not try the TCP endpoint either.
++#
++# Plug an iPhone straight into the comma and the comma tries to power it and
++# reboots. Go through a hub on the phone and a USB-A to USB-C cable to the
++# comma: the A end can only supply power, so the comma never sources it.
++#
++# On the iPhone: Settings > Ethernet > (the new adapter) > Configure IP >
++# Manual, address 192.168.60.2, subnet mask 255.255.255.0, no router.
++#
++# By hand, and to find out whether a comma can do it at all without changing
++# anything it depends on (--check makes a throwaway gadget, tries the
++# functions, and removes it; it never binds the controller):
++#
++#   sudo bash net_gadget.sh [--teardown | --check]
++set -euo pipefail
++
++GADGET=/sys/kernel/config/usb_gadget/jetlink-net
++CONFIGFS=/sys/kernel/config
++STATUS_FILE=${JETLINK_STATUS_FILE:-/dev/shm/jetlink-net-gadget}
++# pid.codes test allocations, as the FunctionFS gadget uses 0x0001; get a real
++# PID before distributing this
++VID=${JETLINK_VID:-0x1209}
++PID=${JETLINK_NET_PID:-0x0002}
++COMMA_ADDR=${JETLINK_COMMA_ADDR:-192.168.60.1/24}
++PHONE_ADDR=${JETLINK_PHONE_ADDR:-192.168.60.2}
++# NCM first: it batches packets, which a 460 KB frame benefits from. ECM is
++# the older class and the fallback.
++FUNCTIONS=${JETLINK_NET_FUNCTIONS:-"ncm ecm"}
++# jetlink's own FunctionFS gadget, as zoompilot carries it, and its status file
++JETLINK_REPO=${JETLINK_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)/jetlink_repo}
++FFS_STATUS=/dev/shm/jetlink-gadget
++
++status() {
++  { echo "$1" > "$STATUS_FILE" && chmod 0644 "$STATUS_FILE"; } 2>/dev/null || true
++}
++
++fail() {
++  echo "jetlink-net: $1" >&2
++  status "error: $1"
++  # Leave nothing half-made: a gadget that failed partway still holds a
++  # function the next run would trip over.
++  trap - ERR
++  teardown
++  exit 1
++}
++
++teardown() {
++  if [[ -d "$GADGET" ]]; then
++    echo "" > "$GADGET/UDC" 2>/dev/null || true
++    for f in "$GADGET"/configs/c.1/*.usb0; do
++      [[ -L "$f" ]] && rm -f "$f"
++    done
++    rmdir "$GADGET/configs/c.1/strings/0x409" 2>/dev/null || true
++    rmdir "$GADGET/configs/c.1" 2>/dev/null || true
++    for f in "$GADGET"/functions/*.usb0; do
++      [[ -d "$f" ]] && rmdir "$f" 2>/dev/null || true
++    done
++    rmdir "$GADGET/strings/0x409" 2>/dev/null || true
++    rmdir "$GADGET" 2>/dev/null || true
++  fi
++}
++
++check() {
++  local ok=1
++  echo "kernel: $(uname -r)"
++  if mountpoint -q "$CONFIGFS" && [[ -d "$CONFIGFS/usb_gadget" ]]; then
++    echo "configfs USB gadgets: yes"
++  else
++    echo "configfs USB gadgets: NO (no $CONFIGFS/usb_gadget)"
++    ok=0
++  fi
++  shopt -s nullglob
++  local udcs=(/sys/class/udc/*)
++  shopt -u nullglob
++  if [[ ${#udcs[@]} -gt 0 ]]; then
++    for u in "${udcs[@]}"; do echo "device controller: $(basename "$u"), state $(cat "$u/state" 2>/dev/null || echo unknown)"; done
++  else
++    echo "device controller: NONE"
++    ok=0
++  fi
++  for g in "$CONFIGFS"/usb_gadget/*/; do
++    [[ -d "$g" ]] || continue
++    echo "gadget $(basename "$g"): bound to '$(cat "$g/UDC" 2>/dev/null)'"
++  done
++  if [[ -r /proc/config.gz ]]; then
++    zcat /proc/config.gz | grep -E '^CONFIG_USB_(CONFIGFS_(NCM|ECM|ECM_SUBSET|RNDIS|F_FS)|F_NCM|F_ECM)=' | sed 's/^/kernel option: /' || true
++  fi
++  for port in /sys/class/typec/port*; do
++    [[ -d "$port" ]] || continue
++    echo "USB-C $(basename "$port"): data role $(cat "$port/data_role" 2>/dev/null), power role $(cat "$port/power_role" 2>/dev/null)"
++  done
++  if [[ $ok -eq 1 ]]; then
++    local probe="$CONFIGFS/usb_gadget/jetlink-net-probe" found=""
++    mkdir -p "$probe" 2>/dev/null || true
++    for kind in ncm ecm; do
++      if mkdir "$probe/functions/$kind.probe" 2>/dev/null; then
++        found="$found $kind"
++        rmdir "$probe/functions/$kind.probe" 2>/dev/null || true
++      fi
++    done
++    rmdir "$probe" 2>/dev/null || true
++    if [[ -n "$found" ]]; then
++      echo "network gadget functions:$found"
++      echo "RESULT: this comma can present a USB network adapter"
++      return 0
++    fi
++    echo "network gadget functions: none"
++  fi
++  echo "RESULT: this comma cannot present a USB network adapter; use USB-C Ethernet adapters instead"
++  return 1
++}
++
++if [[ "${1:-}" == "--check" ]]; then
++  [[ $EUID -eq 0 ]] || { echo "run --check as root (sudo)" >&2; exit 1; }
++  check
++  exit $?
++fi
++
++if [[ "${1:-}" == "--teardown" ]]; then
++  teardown
++  status "error: gadget torn down"
++  echo "jetlink network gadget torn down"
++  exit 0
++fi
++
++[[ $EUID -eq 0 ]] || fail "setup_net_gadget.sh must run as root"
++trap 'fail "line $LINENO: $BASH_COMMAND failed"' ERR
++
++if [[ -d "/lib/modules/$(uname -r)" ]]; then
++  for m in configfs libcomposite usb_f_ncm usb_f_ecm; do
++    modprobe "$m" 2>/dev/null || true
++  done
++fi
++
++mountpoint -q "$CONFIGFS" || mount -t configfs none "$CONFIGFS" 2>/dev/null || true
++mountpoint -q "$CONFIGFS" || fail "no configfs at $CONFIGFS; this kernel cannot configure a USB gadget"
++[[ -d "$CONFIGFS/usb_gadget" ]] || fail "kernel has no USB gadget support (CONFIG_USB_LIBCOMPOSITE)"
++
++shopt -s nullglob
++udcs=(/sys/class/udc/*)
++shopt -u nullglob
++[[ ${#udcs[@]} -gt 0 ]] || fail "no USB device controller in /sys/class/udc; this device cannot act as a USB gadget"
++UDC=${JETLINK_UDC:-$(basename "${udcs[0]}")}
++
++# jetlink's own gadget, which zoompilot sets up at boot, is released; any
++# other gadget holding the controller is someone else's and left alone.
++for other in "$CONFIGFS"/usb_gadget/*/UDC; do
++  if [[ -e "$other" ]]; then
++    owner=$(basename "$(dirname "$other")")
++    bound=$(cat "$other" 2>/dev/null || true)
++    if [[ "$owner" == "jetlink" && -n "$bound" ]]; then
++      echo "jetlink-net: releasing jetlink's USB gadget (turn Accelerator Link off first)"
++      [[ -f "$JETLINK_REPO/scripts/setup_gadget.sh" ]] || fail "jetlink's gadget holds the port, and there is no $JETLINK_REPO/scripts/setup_gadget.sh to tear it down; set JETLINK_REPO"
++      bash "$JETLINK_REPO/scripts/setup_gadget.sh" --teardown >/dev/null 2>&1 || true
++      [[ -z "$(cat "$other" 2>/dev/null || true)" ]] || fail "jetlink's USB gadget would not let go of the port; turn Accelerator Link off and try again"
++    elif [[ "$owner" != "jetlink-net" && -n "$bound" ]]; then
++      fail "USB gadget '$owner' already holds the device controller ($bound); tear it down first"
++    fi
++  fi
++done
++
++teardown
++mkdir -p "$GADGET" || fail "could not create the gadget at $GADGET"
++cd "$GADGET"
++
++echo "$VID"   > idVendor
++echo "$PID"   > idProduct
++echo 0x0100   > bcdDevice
++echo 0x0320   > bcdUSB            # 3.2: advertise SuperSpeed
++echo 0x02     > bDeviceClass      # Communications: a CDC network device
++echo 0x00     > bDeviceSubClass
++echo 0x00     > bDeviceProtocol
++
++# The device tree carries a serial on some commas and not others (AGNOS on a
++# 4.9.103 kernel has none); any stable string will do.
++serial=$({ tr -d '\0' < /proc/device-tree/serial-number; } 2>/dev/null || cat /etc/machine-id 2>/dev/null || echo 0001)
++mkdir -p strings/0x409
++echo "zoompilot"              > strings/0x409/manufacturer
++echo "jetlink network link"   > strings/0x409/product
++echo "$serial"                > strings/0x409/serialnumber
++
++mkdir -p configs/c.1/strings/0x409
++echo "jetlink network" > configs/c.1/strings/0x409/configuration
++# self-powered: the comma runs from the car, and the phone must not feed it
++echo 0xC0 > configs/c.1/bmAttributes
++echo 8    > configs/c.1/MaxPower
++
++# Stable, locally administered MAC addresses from the serial, so the phone
++# sees the same adapter every drive and keeps its manual address for it.
++hash=$(printf '%s' "$serial" | md5sum | cut -c1-10)
++mac() { printf '%s:%s:%s:%s:%s:%s' "$1" "${hash:0:2}" "${hash:2:2}" "${hash:4:2}" "${hash:6:2}" "${hash:8:2}"; }
++
++chosen=""
++for kind in $FUNCTIONS; do
++  if mkdir -p "functions/$kind.usb0" 2>/dev/null; then
++    chosen=$kind
++    break
++  fi
++done
++[[ -n "$chosen" ]] || fail "kernel has none of the '$FUNCTIONS' gadget functions (CONFIG_USB_CONFIGFS_NCM / _ECM); the comma cannot present a network adapter"
++# The comma's end, then the phone's. Qualcomm's 4.9 kernel refuses these
++# writes (ENODEV) and picks its own addresses; that works, the phone just may
++# see a new adapter after a reboot and need its manual address again.
++if ! { echo "$(mac 02)" > "functions/$chosen.usb0/dev_addr" && echo "$(mac 06)" > "functions/$chosen.usb0/host_addr"; } 2>/dev/null; then
++  echo "jetlink-net: the kernel chose the adapter's MAC addresses itself" >&2
++fi
++ln -s "$GADGET/functions/$chosen.usb0" "configs/c.1/$chosen.usb0"
++
++echo "$UDC" > UDC || fail "could not bind the gadget to $UDC"
++
++ifname=$(cat "functions/$chosen.usb0/ifname" 2>/dev/null || echo usb0)
++for _ in $(seq 1 50); do
++  [[ -e "/sys/class/net/$ifname" ]] && break
++  sleep 0.1
++done
++[[ -e "/sys/class/net/$ifname" ]] || fail "the $chosen function did not create a network interface"
++ip addr flush dev "$ifname" 2>/dev/null || true
++ip addr add "$COMMA_ADDR" dev "$ifname"
++ip link set "$ifname" up
++
++status ok
++# jetlink's teardown leaves "error: gadget torn down" behind, which zoompilot
++# reads as no link at all. The link is this gadget now.
++if grep -qs "torn down" "$FFS_STATUS"; then
++  rm -f "$FFS_STATUS"
++fi
++echo "USB network gadget ($chosen) bound to $UDC as $ifname, comma at $COMMA_ADDR"
++echo "on the iPhone: Settings > Ethernet > Configure IP > Manual, $PHONE_ADDR / 255.255.255.0"
++echo "on the comma:  echo -n $PHONE_ADDR:5599 > /data/params/d/JetlinkEndpoint"
+diff --git a/openpilot/sunnypilot/accelerators/jetlink/owner.py b/openpilot/sunnypilot/accelerators/jetlink/owner.py
+index a6f99f7..6fddadb 100644
+--- a/openpilot/sunnypilot/accelerators/jetlink/owner.py
++++ b/openpilot/sunnypilot/accelerators/jetlink/owner.py
+@@ -54,6 +54,9 @@ GADGET_SETUP_BACKOFF = 60.0
+ # seconds of imports, so it is spawned on a change and not on a timer
+ WORKER_BACKOFF = 300.0
+ WORKER_GRACE = 10.0
++# between attempts to swap the port between jetlink's gadget and the iPhone's
++# USB network adapter, so a script that keeps failing is not rerun twice a second
++PORT_BACKOFF = 10.0
+ 
+ # under /data/log rather than /dev/shm: this is the one jetlink process alive
+ # for a whole drive, and a bench session wants its lines afterwards. Rotated,
+@@ -61,7 +64,9 @@ WORKER_GRACE = 10.0
+ LOG = Path('/data/log/jetlink-owner.log')
+ LOG_BYTES = 1 << 20
+ # params whose change is a reason to look again: the pick, and what is built
+-WATCHED = ('ModelManager_ActiveBundleChestnut', 'JetlinkEngineReady', 'JetlinkSpec')
++# and the endpoint: switching between a Mac or Jetson and the iPhone is a
++# different server, which may not have the engine yet
++WATCHED = ('ModelManager_ActiveBundleChestnut', 'JetlinkEngineReady', 'JetlinkSpec', 'JetlinkEndpoint')
+ WORKER = 'openpilot.sunnypilot.accelerators.jetlink.jetlinkd'
+ 
+ 
+@@ -96,6 +101,7 @@ class Owner:
+     self.idle_since = time.monotonic()
+     self.next_attempt = 0.0
+     self.next_gadget_attempt = 0.0
++    self.next_port_attempt = 0.0
+     self.next_worker = 0.0
+     self.lease_settled = 0.0
+     self.attached = False
+@@ -156,6 +162,41 @@ class Owner:
+       self.next_attempt = time.monotonic() + RECONNECT_BACKOFF
+       return False
+ 
++  @staticmethod
++  def over_tcp() -> bool:
++    """Is the server reached over TCP (JetlinkEndpoint), not the gadget?"""
++    return gadget.link_endpoint() is not None
++
++  def reconcile_port(self, enabled: bool = True) -> bool:
++    """Bring the USB port to the link that is asked for. True when it acted.
++
++    The iPhone's link wants the USB network adapter; everything else wants
++    jetlink's own gadget, which ensure_gadget() puts back once the adapter is
++    gone. At boot this is what brings the adapter up; afterwards the models
++    panel's toggle, which only writes while parked. Never with the endpoints
++    lent out or a provisioning run on them: that is a link in use.
++    """
++    want_net = enabled and gadget.iphone_link()
++    if want_net == gadget.net_gadget_up() or not gadget.AGNOS:
++      return False
++    if self.lender.lent or (self.worker is not None and self.worker.poll() is None):
++      return False
++    now = time.monotonic()
++    if now < self.next_port_attempt:
++      return False
++    self.next_port_attempt = now + PORT_BACKOFF
++    if want_net:
++      gadget.log.warning("jetlink: the iPhone link is on, presenting the USB network adapter")
++      self.close_link()
++      gadget.set_net_gadget(True)
++    else:
++      gadget.log.warning("jetlink: the iPhone link is off, removing the USB network adapter")
++      gadget.set_net_gadget(False)
++      # jetlink's gadget comes back on the next cycle rather than after the backoffs
++      self.next_gadget_attempt = 0.0
++      self.next_attempt = 0.0
++    return True
++
+   def ensure_gadget(self) -> bool:
+     """Is there a gadget to present? Create it if boot did not.
+ 
+@@ -307,6 +348,7 @@ class Owner:
+       if self.transport is not None:
+         gadget.log.warning("jetlink: disabled, releasing the link")
+         self.close_link()
++      self.reconcile_port(enabled=False)
+       self.stop_worker()
+       self.wake()
+       if self.vm_tuned:
+@@ -318,6 +360,9 @@ class Owner:
+       vmtune.apply_vm_tuning()
+       self.vm_tuned = True
+ 
++    if self.reconcile_port():
++      return
++
+     # each read is a file; take them once and pass them down
+     offroad = gadget.offroad()
+     self.attached = gadget.host_attached()
+@@ -329,7 +374,7 @@ class Owner:
+     if reason is not None and not self.lender.lent:
+       self.stop_worker()
+       self.wake()
+-      if self.open_link():
++      if self.over_tcp() or self.open_link():
+         return self.spawn_worker(f'the jetson has to be shut down: {reason}')
+       return
+ 
+@@ -365,7 +410,10 @@ class Owner:
+       if not self.ensure_gadget():
+         return
+       self.wake()
+-      if not self.open_link():
++      # Over TCP the run connects by itself; there is no gadget to present
++      # first, and waiting for one meant a parked comma never provisioned,
++      # recorded the engine ready, or compiled its warp.
++      if not self.over_tcp() and not self.open_link():
+         return
+       return self.spawn_worker(why)
+ 
+diff --git a/openpilot/sunnypilot/accelerators/jetlink/tests/test_backend.py b/openpilot/sunnypilot/accelerators/jetlink/tests/test_backend.py
+index 6f3ffa4..3846491 100644
+--- a/openpilot/sunnypilot/accelerators/jetlink/tests/test_backend.py
++++ b/openpilot/sunnypilot/accelerators/jetlink/tests/test_backend.py
+@@ -41,6 +41,10 @@ class ClockedTest(unittest.TestCase):
+       p = mock.patch.object(module, 'time', self.clock)
+       self.addCleanup(p.stop)
+       p.start()
++    # USB unless a test says otherwise, whatever the machine's params hold
++    p = mock.patch.object(gadget, 'link_endpoint', mock.Mock(return_value=None))
++    self.addCleanup(p.stop)
++    p.start()
+ 
+   def bus(self, udc: str, cc: bool = True):
+     # gadget, not helpers: the primitives live there and everything that reads
+@@ -106,6 +110,24 @@ class WaitForHost(ClockedTest):
+     assert helpers.wait_for_host(backend.CONNECT_TIMEOUT, should_stop=lambda: True) is False
+     assert self.clock.slept == 0.0
+ 
++  def test_over_tcp_there_is_no_host_to_wait_for(self):
++    # The connect already reached the phone or Jetson; no gadget of ours is
++    # bound, so the UDC would never say configured.
++    self.bus('not attached', cc=False)
++    gadget.link_endpoint.return_value = ('192.168.60.2', 5599)
++    said = []
++    assert helpers.wait_for_host(backend.CONNECT_TIMEOUT, report=lambda: said.append(True)) is True
++    assert self.clock.slept == 0.0
++    assert said == []
++
++  def test_a_join_over_tcp_returns_the_client_at_once(self):
++    self.bus('not attached', cc=False)
++    gadget.link_endpoint.return_value = ('192.168.60.2', 5599)
++    link = mock.Mock()
++    link.open.return_value = client = mock.Mock()
++    assert backend._connect_patiently(link) is client
++    assert self.clock.slept == 0.0
++
+   def test_the_wait_says_once_that_it_is_waiting(self):
+     self.bus('powered')
+     said = []
+diff --git a/openpilot/sunnypilot/accelerators/jetlink/tests/test_gadget.py b/openpilot/sunnypilot/accelerators/jetlink/tests/test_gadget.py
+index 00df93e..eaca06f 100644
+--- a/openpilot/sunnypilot/accelerators/jetlink/tests/test_gadget.py
++++ b/openpilot/sunnypilot/accelerators/jetlink/tests/test_gadget.py
+@@ -90,3 +90,47 @@ class TestParamsOffTheFilesystem(unittest.TestCase):
+ 
+ if __name__ == '__main__':
+   unittest.main()
++
++
++class TestIphoneLink(unittest.TestCase):
++  """The endpoint that asks for the USB network adapter, and the script that
++  presents it."""
++
++  def endpoint(self, value):
++    return unittest.mock.patch.object(gadget, 'link_endpoint', return_value=value)
++
++  def test_only_the_adapters_subnet_is_the_iphone(self):
++    for value, want in ((('192.168.60.2', 5599), True), (('10.0.0.5', 5599), False), (None, False)):
++      with self.endpoint(value):
++        self.assertIs(gadget.iphone_link(), want, value)
++
++  def test_the_adapter_is_up_only_when_bound(self):
++    with tempfile.TemporaryDirectory() as d:
++      with unittest.mock.patch.object(gadget, 'NET_GADGET_PATH', Path(d)):
++        self.assertFalse(gadget.net_gadget_up())   # no gadget at all
++        (Path(d) / 'UDC').write_text('\n')
++        self.assertFalse(gadget.net_gadget_up())   # made, not bound
++        (Path(d) / 'UDC').write_text('a600000.dwc3\n')
++        self.assertTrue(gadget.net_gadget_up())
++
++  def test_the_script_runs_as_root_and_its_result_is_checked(self):
++    with unittest.mock.patch.object(gadget, 'AGNOS', True), \
++         unittest.mock.patch.object(gadget.subprocess, 'run') as run, \
++         unittest.mock.patch.object(gadget, 'net_gadget_up', return_value=True):
++      self.assertTrue(gadget.set_net_gadget(True))
++      cmd = run.call_args.args[0]
++      self.assertEqual(cmd[:3], ['sudo', '-n', 'bash'])
++      self.assertTrue(cmd[3].endswith('net_gadget.sh') and Path(cmd[3]).is_file())
++      self.assertEqual(cmd[4:], [])
++      self.assertFalse(gadget.set_net_gadget(False))   # still up: the teardown did not take
++      self.assertEqual(run.call_args.args[0][4:], ['--teardown'])
++
++  def test_a_script_that_fails_is_reported_not_raised(self):
++    with unittest.mock.patch.object(gadget, 'AGNOS', True), \
++         unittest.mock.patch.object(gadget.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'bash')):
++      self.assertFalse(gadget.set_net_gadget(True))
++
++  def test_off_agnos_nothing_runs(self):
++    with unittest.mock.patch.object(gadget.subprocess, 'run') as run:
++      self.assertFalse(gadget.set_net_gadget(True))
++      run.assert_not_called()
+diff --git a/openpilot/sunnypilot/accelerators/jetlink/tests/test_lending.py b/openpilot/sunnypilot/accelerators/jetlink/tests/test_lending.py
+index 9c3f28b..9fe82fd 100644
+--- a/openpilot/sunnypilot/accelerators/jetlink/tests/test_lending.py
++++ b/openpilot/sunnypilot/accelerators/jetlink/tests/test_lending.py
+@@ -38,6 +38,11 @@ class LendingTest(unittest.TestCase):
+     self.addCleanup(p.stop)
+     self.udc = 'udc0'
+     p.start()
++    # the link is the gadget unless a test says otherwise, whatever this
++    # machine's own params hold
++    self.endpoint = mock.patch.object(lending.gadget, 'link_endpoint', mock.Mock(return_value=None))
++    self.addCleanup(self.endpoint.stop)
++    self.endpoint.start()
+ 
+   def lender(self) -> lending.Lender:
+     lender = lending.Lender(lambda: self.free, self.bounce, path=self.path)
+@@ -94,6 +99,14 @@ class Borrowing(LendingTest):
+     t.join(3.0)
+     assert got and got[0] is not None
+ 
++  def test_over_tcp_there_is_nothing_to_borrow_and_nobody_is_asked(self):
++    lender = self.lender()
++    with mock.patch.object(lending.gadget, 'link_endpoint', return_value=('192.168.60.2', 5599)):
++      t0 = time.monotonic()
++      assert self.take(timeout=3.0) is None
++      assert time.monotonic() - t0 < 0.5, 'waited on a lender over TCP'
++    assert not lender.lent, 'the owner was asked for endpoints it does not have'
++
+   def test_a_borrow_nobody_can_answer_gives_up_and_says_so(self):
+     self.free = False
+     lender = self.lender()
+diff --git a/openpilot/sunnypilot/accelerators/jetlink/tests/test_owner.py b/openpilot/sunnypilot/accelerators/jetlink/tests/test_owner.py
+index 12a8d17..a94a6e4 100644
+--- a/openpilot/sunnypilot/accelerators/jetlink/tests/test_owner.py
++++ b/openpilot/sunnypilot/accelerators/jetlink/tests/test_owner.py
+@@ -33,7 +33,11 @@ class OwnerTest(unittest.TestCase):
+                         ('can_setup_gadget', mock.Mock(return_value=False)),
+                         ('host_attached', mock.Mock(return_value=True)),
+                         ('udc_state', mock.Mock(return_value='configured')),
+-                        ('wait_for_host', mock.Mock(return_value=True))):
++                        ('wait_for_host', mock.Mock(return_value=True)),
++                        # a Mac or PC: nothing touches a real USB port
++                        ('AGNOS', False),
++                        ('net_gadget_up', mock.Mock(return_value=False)),
++                        ('set_net_gadget', mock.Mock(return_value=True))):
+       p = mock.patch.object(gadget, name, value)
+       self.addCleanup(p.stop)
+       p.start()
+@@ -342,6 +346,49 @@ class TestTheToggle(OwnerTest):
+       self.assertIsNone(o.transport)
+ 
+ 
++class TestEthernet(OwnerTest):
++  """With JetlinkEndpoint set there is no gadget, and runs start without one."""
++
++  def owner(self, **kw):
++    o = super().owner(presented=False, **kw)
++    o.open_link.return_value = False   # what open_link answers over TCP
++    return o
++
++  def setUp(self):
++    super().setUp()
++    p = mock.patch.object(gadget, 'link_endpoint', mock.Mock(return_value=('192.168.60.2', 5599)))
++    self.addCleanup(p.stop)
++    p.start()
++
++  def test_the_first_look_of_the_boot_runs_without_a_gadget(self):
++    o = self.owner()
++    o.seen = {}
++    o.step()
++    o.spawn_worker.assert_called_once()
++    o.open_link.assert_not_called()
++
++  def test_a_new_pick_starts_a_run_without_a_gadget(self):
++    o = self.owner()
++    o.step()
++    o.spawn_worker.assert_not_called()
++    self.write('ModelManager_ActiveBundleChestnut', b'{"ref": "c" * 40}')
++    o.step()
++    o.spawn_worker.assert_called_once()
++
++  def test_a_shutdown_request_starts_a_run_without_a_gadget(self):
++    o = self.owner()
++    gadget.SHUTDOWN_REQUEST.write_text(json.dumps({'reason': 'car battery'}))
++    o.step()
++    o.spawn_worker.assert_called_once()
++
++  def test_onroad_it_starts_nothing(self):
++    o = self.owner()
++    o.seen = {}
++    self.write('IsOffroad', b'0')
++    o.step()
++    o.spawn_worker.assert_not_called()
++
++
+ class TestSetup(OwnerTest):
+   def test_a_gadget_boot_did_not_make_is_created(self):
+     o = self.owner(presented=False)
+@@ -394,3 +441,85 @@ class TestLending(OwnerTest):
+ 
+ if __name__ == '__main__':
+   unittest.main()
++
++
++class TestIphonePort(OwnerTest):
++  """The models panel's iPhone toggle writes the endpoint; the owner swaps the
++  USB port between jetlink's gadget and the iPhone's network adapter."""
++
++  IPHONE = ('192.168.60.2', 5599)
++
++  def setUp(self):
++    super().setUp()
++    for name, value in (('AGNOS', True), ('link_endpoint', mock.Mock(return_value=self.IPHONE))):
++      p = mock.patch.object(gadget, name, value)
++      self.addCleanup(p.stop)
++      p.start()
++
++  def test_the_iphone_endpoint_presents_the_adapter(self):
++    o = self.owner()
++    o.step()
++    gadget.set_net_gadget.assert_called_once_with(True)
++    o.close_link.assert_called_once()
++    # the swap is the whole cycle: the run for the new server comes on the next
++    o.spawn_worker.assert_not_called()
++
++  def test_a_port_that_already_matches_is_left_alone(self):
++    gadget.net_gadget_up.return_value = True
++    o = self.owner(presented=False)
++    o.step()
++    gadget.set_net_gadget.assert_not_called()
++
++  def test_back_to_usb_removes_the_adapter_and_brings_the_gadget_back_at_once(self):
++    gadget.link_endpoint.return_value = None
++    gadget.net_gadget_up.return_value = True
++    o = self.owner(presented=False)
++    o.next_gadget_attempt = o.next_attempt = time.monotonic() + 60
++    o.step()
++    gadget.set_net_gadget.assert_called_once_with(False)
++    self.assertEqual(o.next_gadget_attempt, 0.0)
++    self.assertEqual(o.next_attempt, 0.0)
++
++  def test_another_endpoint_needs_no_adapter(self):
++    # a Jetson on ethernet during bring-up: TCP, but not over our USB port
++    gadget.link_endpoint.return_value = ('10.0.0.5', 5599)
++    o = self.owner(presented=False)
++    o.step()
++    gadget.set_net_gadget.assert_not_called()
++
++  def test_not_while_the_endpoints_are_lent(self):
++    o = self.owner()
++    o.lender.lent = True
++    o.step()
++    gadget.set_net_gadget.assert_not_called()
++
++  def test_not_during_a_provisioning_run(self):
++    o = self.owner()
++    o.worker = mock.Mock(poll=mock.Mock(return_value=None))
++    o.step()
++    gadget.set_net_gadget.assert_not_called()
++
++  def test_a_swap_that_fails_is_not_retried_every_cycle(self):
++    gadget.set_net_gadget.return_value = False
++    o = self.owner()
++    for _ in range(3):
++      o.step()
++    gadget.set_net_gadget.assert_called_once_with(True)
++
++  def test_turning_the_link_off_takes_the_adapter_down(self):
++    self.write('JetlinkEnabled', b'0')
++    gadget.net_gadget_up.return_value = True
++    o = self.owner(presented=False)
++    o.step()
++    gadget.set_net_gadget.assert_called_once_with(False)
++
++  def test_switching_the_endpoint_starts_a_run_for_the_new_server(self):
++    gadget.net_gadget_up.return_value = True
++    o = self.owner(presented=False)
++    o.open_link.return_value = False   # what open_link answers over TCP
++    o.step()
++    o.spawn_worker.assert_not_called()
++    self.write('JetlinkEndpoint', b'192.168.60.2:5599')
++    o.step()
++    o.spawn_worker.assert_called_once()
++
