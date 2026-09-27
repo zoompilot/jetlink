@@ -27,6 +27,12 @@ short tests do not establish sustained performance at high temperatures.
 For Mac latency, preparation times, and backend comparisons, see
 [Mac performance](mac-performance.md).
 
+iPhone 17 Pro, experimental ([Jetlink for iPhone](../ios/README.md)): the
+766 MB model on the Neural Engine at 17.7 ms mean, 21.5 ms p99 a frame, parity
+gate passed. Over one USB cable, zoompilot's parked live bench ran every frame
+on the phone at 39.1 ms p99. Driven once, about 30 minutes; the phone slowed
+as it heated. Queued models (V1, V2) only, and it needs a zoompilot patch.
+
 <a id="what-still-needs-validation"></a>
 
 ## Power and connection

@@ -9,6 +9,7 @@ Install the server, set up the comma, and wait for its icon to turn green.
 | --- | --- |
 | Set up a Jetson, including JetPack and power | [Jetson setup](jetson.md) |
 | Install and use the Mac app | [Jetlink for Mac](macos-app.md) |
+| Try the iPhone server (experimental) | [Jetlink for iPhone](../ios/README.md) |
 | Set up a Linux PC, WSL2, or a source install | [Platform setup](platforms.md) |
 | Understand icons, startup, and model switching | [Using Jetlink](using-jetlink.md) |
 | Choose a model or prepare it ahead of time | [Model management](models.md) |

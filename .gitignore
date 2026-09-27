@@ -16,3 +16,6 @@ dist/
 
 # The Mac script's engine cache (scripts/run-mac.sh); 5.5 GB per CoreML model
 /models_cache/
+
+# verify_parity.py captures, as the iPhone app's accuracy command writes them
+/parity-*/

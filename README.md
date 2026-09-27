@@ -123,7 +123,8 @@ For logs and more checks, use the [Jetson guide](docs/jetson.md#troubleshooting)
 [All guides and references](docs/README.md) ·
 [Daily use](docs/using-jetlink.md) ·
 [Updates and rollback](docs/releasing.md) ·
-[Performance and limits](docs/status.md)
+[Performance and limits](docs/status.md) ·
+[iPhone (experimental)](ios/README.md)
 
 ## License
 
