@@ -1,0 +1,9 @@
+# Build products: xcodebuild's derived data and SwiftPM's.
+build/
+DerivedData/
+JetlinkKit/.build/
+JetlinkKit/.swiftpm/
+*.xcuserstate
+xcuserdata/
+Config/Local.xcconfig
+.DS_Store

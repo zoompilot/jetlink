@@ -1,0 +1,51 @@
+{
+ "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+ "nbytes": 0,
+ "frame_skip": 2,
+ "checkpoint": null,
+ "input_shapes": {
+  "img": [
+   1,
+   18,
+   2,
+   4
+  ],
+  "big_img": [
+   1,
+   18,
+   2,
+   4
+  ],
+  "desire_pulse": [
+   1,
+   7,
+   4
+  ],
+  "traffic_convention": [
+   1,
+   2
+  ],
+  "action_t": [
+   1,
+   2
+  ],
+  "features_buffer": [
+   1,
+   5,
+   6
+  ]
+ },
+ "output_shapes": {
+  "outputs": [
+   1,
+   8
+  ]
+ },
+ "output_slices": {
+  "hidden_state": [
+   0,
+   8
+  ]
+ },
+ "frames": 50
+}

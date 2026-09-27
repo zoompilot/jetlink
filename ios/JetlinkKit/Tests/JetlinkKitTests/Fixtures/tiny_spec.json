@@ -1,0 +1,60 @@
+{
+ "sha256": "ec0908a16f73f22def08414de71ebaebff611f29e164b547772e4884146949a2",
+ "nbytes": 169558,
+ "frame_skip": 4,
+ "checkpoint": "tiny-test",
+ "input_shapes": {
+  "img": [
+   1,
+   12,
+   8,
+   16
+  ],
+  "big_img": [
+   1,
+   12,
+   8,
+   16
+  ],
+  "desire_pulse": [
+   1,
+   33,
+   8
+  ],
+  "traffic_convention": [
+   1,
+   2
+  ],
+  "action_t": [
+   1,
+   2
+  ],
+  "features_buffer": [
+   1,
+   32,
+   4,
+   8
+  ]
+ },
+ "output_shapes": {
+  "outputs": [
+   1,
+   64
+  ]
+ },
+ "output_slices": {
+  "plan": [
+   0,
+   16
+  ],
+  "lead_prob": [
+   16,
+   19
+  ],
+  "hidden_state": [
+   32,
+   64
+  ]
+ },
+ "frames": 12
+}
