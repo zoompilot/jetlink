@@ -1,0 +1,93 @@
+# xcodegen spec for Jetlink for iPhone.
+#
+# Regenerate with `make project` (or `xcodegen generate` in this directory).
+# The generated Jetlink.xcodeproj is committed so `open Jetlink.xcodeproj`
+# works without installing xcodegen. JetlinkKit, the server itself, is the
+# local Swift package beside this file; it fetches onnxruntime 1.29.0 on the
+# first build.
+name: Jetlink
+options:
+  deploymentTarget: { iOS: "17.0" }
+  xcodeVersion: "26.6"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+packages:
+  JetlinkKit:
+    path: JetlinkKit
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    DEAD_CODE_STRIPPING: YES
+targets:
+  Jetlink:
+    type: application
+    platform: iOS
+    # Team and bundle identifier: Config/Signing.xcconfig, and your own in
+    # Config/Local.xcconfig, which git ignores.
+    configFiles:
+      Debug: Config/Signing.xcconfig
+      Release: Config/Signing.xcconfig
+    sources:
+      - path: Jetlink
+      - path: Resources/Assets.xcassets
+    dependencies:
+      - package: JetlinkKit
+        product: JetlinkKit
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleName: Jetlink
+        CFBundleDisplayName: Jetlink
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIRequiredDeviceCapabilities: [arm64]
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSLocalNetworkUsageDescription: Jetlink serves driving models to your comma over the wired link between them.
+        # Lets a model be copied in with Finder as well as imported from Files.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: false
+        ITSAppUsesNonExemptEncryption: false
+        NSHumanReadableCopyright: "MIT License. Copyright 2026 Zeph Leggett."
+    entitlements:
+      path: Resources/Jetlink.entitlements
+      properties:
+        # A 766 MB model and its CoreML compile need more than an app's
+        # default share of memory. (Extended Virtual Addressing is left out:
+        # a free Personal Team cannot sign it, and mapping the model fits
+        # the default address space.)
+        com.apple.developer.kernel.increased-memory-limit: true
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+schemes:
+  Jetlink:
+    build:
+      targets:
+        Jetlink: all
+    # Run builds Release: frame times from an unoptimized build mean little,
+    # and this is how the app is used in the car.
+    run:
+      config: Release
+    profile:
+      config: Release
+    archive:
+      config: Release

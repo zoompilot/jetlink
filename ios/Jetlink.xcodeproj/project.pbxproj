@@ -1,0 +1,430 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		15023ACD3AC6BCE6E2D2CD0A /* JetlinkKit in Frameworks */ = {isa = PBXBuildFile; productRef = EE168AFAF92FF522E4DD799C /* JetlinkKit */; };
+		3621BC8C8E848D685FB21407 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BBD8FD990F83901290E13A3 /* RootView.swift */; };
+		3D4B2EF59A059605926C4E6A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE2AA8426482FBAC83449100 /* SettingsView.swift */; };
+		5B0ED2BA13F028709B8112E7 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43DBEE74070286C6D86FE93C /* AppModel.swift */; };
+		5F2C446BE10555BEBEF9A9AF /* ModelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C6279207493AD7D245284F1 /* ModelsView.swift */; };
+		8B167F9986DACB4E316DC397 /* JetlinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 868D0C6D327E8A2A54106C5C /* JetlinkApp.swift */; };
+		8B23FD26B19D0019331D3A8E /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8496E521644C4D442EBE4D0 /* LogStore.swift */; };
+		A1478201C2CEDFBE91C9CED7 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C4F355D905E2612FE93D798 /* AppSettings.swift */; };
+		A16EA313C504C7BBDDCED9CC /* StatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3047F8C242F98154043E594 /* StatusView.swift */; };
+		A1BAD4A05D8CDF16C560DE60 /* NetworkInterfaces.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A03002DBFBDF375531F5450 /* NetworkInterfaces.swift */; };
+		C17ECDB8A4833CBCF16B9746 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6B71A2709AC0F259D4486CB6 /* Assets.xcassets */; };
+		C5BD297534DB35414E8EE4A4 /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C8A278FA961C026335DCFD8 /* LogsView.swift */; };
+		E3E5E81C9DDEEE6634A62A34 /* BenchmarkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95935759392B054144F7DC96 /* BenchmarkView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0362ED2711F16456CEB6535A /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		0C6279207493AD7D245284F1 /* ModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsView.swift; sourceTree = "<group>"; };
+		43DBEE74070286C6D86FE93C /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		4C4F355D905E2612FE93D798 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		6B71A2709AC0F259D4486CB6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		7A03002DBFBDF375531F5450 /* NetworkInterfaces.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkInterfaces.swift; sourceTree = "<group>"; };
+		7BBD8FD990F83901290E13A3 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		868D0C6D327E8A2A54106C5C /* JetlinkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JetlinkApp.swift; sourceTree = "<group>"; };
+		8C8A278FA961C026335DCFD8 /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
+		95935759392B054144F7DC96 /* BenchmarkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchmarkView.swift; sourceTree = "<group>"; };
+		B8496E521644C4D442EBE4D0 /* LogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStore.swift; sourceTree = "<group>"; };
+		C3047F8C242F98154043E594 /* StatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusView.swift; sourceTree = "<group>"; };
+		C8ECBD9F702381594E2513CB /* Jetlink.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Jetlink.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		DE2AA8426482FBAC83449100 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		F3F05DFEF6D33AC14D49161F /* JetlinkKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = JetlinkKit; path = JetlinkKit; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		48A3BF05403C2A35AA67A8A3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				15023ACD3AC6BCE6E2D2CD0A /* JetlinkKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		53612B9A74E54171CC9B3001 = {
+			isa = PBXGroup;
+			children = (
+				FD09DA6C3EC5F2D7480C04F5 /* Config */,
+				C7CA7BCC1C2645081B411100 /* Jetlink */,
+				DA50B24FA2F767EDAED36955 /* Packages */,
+				57A21EDE24D2E95CCB7BF737 /* Resources */,
+				CF0B24949FEEE32049C8E3F6 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		57A21EDE24D2E95CCB7BF737 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				6B71A2709AC0F259D4486CB6 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		7393D26A9B37A0C76E7CDB79 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				43DBEE74070286C6D86FE93C /* AppModel.swift */,
+				4C4F355D905E2612FE93D798 /* AppSettings.swift */,
+				868D0C6D327E8A2A54106C5C /* JetlinkApp.swift */,
+				B8496E521644C4D442EBE4D0 /* LogStore.swift */,
+				7A03002DBFBDF375531F5450 /* NetworkInterfaces.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		7FDBA8385B1CDAAE7E427846 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				95935759392B054144F7DC96 /* BenchmarkView.swift */,
+				8C8A278FA961C026335DCFD8 /* LogsView.swift */,
+				0C6279207493AD7D245284F1 /* ModelsView.swift */,
+				7BBD8FD990F83901290E13A3 /* RootView.swift */,
+				DE2AA8426482FBAC83449100 /* SettingsView.swift */,
+				C3047F8C242F98154043E594 /* StatusView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		C7CA7BCC1C2645081B411100 /* Jetlink */ = {
+			isa = PBXGroup;
+			children = (
+				7393D26A9B37A0C76E7CDB79 /* App */,
+				7FDBA8385B1CDAAE7E427846 /* Views */,
+			);
+			path = Jetlink;
+			sourceTree = "<group>";
+		};
+		CF0B24949FEEE32049C8E3F6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C8ECBD9F702381594E2513CB /* Jetlink.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		DA50B24FA2F767EDAED36955 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				F3F05DFEF6D33AC14D49161F /* JetlinkKit */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		FD09DA6C3EC5F2D7480C04F5 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				0362ED2711F16456CEB6535A /* Signing.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		457ADB6E292BE4157714448D /* Jetlink */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E7D8606C136ECAADD9688877 /* Build configuration list for PBXNativeTarget "Jetlink" */;
+			buildPhases = (
+				F1C9204DB6F0105D87743B33 /* Sources */,
+				69DAF83B561FA56875C5504F /* Resources */,
+				48A3BF05403C2A35AA67A8A3 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Jetlink;
+			packageProductDependencies = (
+				EE168AFAF92FF522E4DD799C /* JetlinkKit */,
+			);
+			productName = Jetlink;
+			productReference = C8ECBD9F702381594E2513CB /* Jetlink.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1847D87B12BF920468D8F334 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					457ADB6E292BE4157714448D = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 70AA863B3933050DD9D4AC42 /* Build configuration list for PBXProject "Jetlink" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 53612B9A74E54171CC9B3001;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				FDEDED4F50D52807204C4EB9 /* XCLocalSwiftPackageReference "JetlinkKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = CF0B24949FEEE32049C8E3F6 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				457ADB6E292BE4157714448D /* Jetlink */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		69DAF83B561FA56875C5504F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C17ECDB8A4833CBCF16B9746 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		F1C9204DB6F0105D87743B33 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5B0ED2BA13F028709B8112E7 /* AppModel.swift in Sources */,
+				A1478201C2CEDFBE91C9CED7 /* AppSettings.swift in Sources */,
+				E3E5E81C9DDEEE6634A62A34 /* BenchmarkView.swift in Sources */,
+				8B167F9986DACB4E316DC397 /* JetlinkApp.swift in Sources */,
+				8B23FD26B19D0019331D3A8E /* LogStore.swift in Sources */,
+				C5BD297534DB35414E8EE4A4 /* LogsView.swift in Sources */,
+				5F2C446BE10555BEBEF9A9AF /* ModelsView.swift in Sources */,
+				A1BAD4A05D8CDF16C560DE60 /* NetworkInterfaces.swift in Sources */,
+				3621BC8C8E848D685FB21407 /* RootView.swift in Sources */,
+				3D4B2EF59A059605926C4E6A /* SettingsView.swift in Sources */,
+				A16EA313C504C7BBDDCED9CC /* StatusView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		0B0C6BC3644B29B3045F8319 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0362ED2711F16456CEB6535A /* Signing.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Resources/Jetlink.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				INFOPLIST_FILE = Resources/Info.plist;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		6FC77E09BEEA08923A45ED81 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0362ED2711F16456CEB6535A /* Signing.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Resources/Jetlink.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				INFOPLIST_FILE = Resources/Info.plist;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		EB03C47241D009BF7A61D035 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		EE73595EC75C27233DC43AAB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		70AA863B3933050DD9D4AC42 /* Build configuration list for PBXProject "Jetlink" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EE73595EC75C27233DC43AAB /* Debug */,
+				EB03C47241D009BF7A61D035 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E7D8606C136ECAADD9688877 /* Build configuration list for PBXNativeTarget "Jetlink" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0B0C6BC3644B29B3045F8319 /* Debug */,
+				6FC77E09BEEA08923A45ED81 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		FDEDED4F50D52807204C4EB9 /* XCLocalSwiftPackageReference "JetlinkKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = JetlinkKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		EE168AFAF92FF522E4DD799C /* JetlinkKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = JetlinkKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 1847D87B12BF920468D8F334 /* Project object */;
+}

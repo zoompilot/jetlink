@@ -1,0 +1,14 @@
+// Signing for the Jetlink app. The committed defaults build for no one in
+// particular; your own team and bundle identifier go in Local.xcconfig beside
+// this file, which git ignores:
+//
+//   DEVELOPMENT_TEAM = ABCDE12345
+//   PRODUCT_BUNDLE_IDENTIFIER = com.yourname.jetlink
+//
+// Set them there rather than in Xcode's Signing & Capabilities, which would
+// write them into the project file.
+
+DEVELOPMENT_TEAM =
+PRODUCT_BUNDLE_IDENTIFIER = io.zoompilot.jetlink.ios
+
+#include? "Local.xcconfig"
