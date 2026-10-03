@@ -252,14 +252,15 @@ final class ServerStore: ServerControlling {
     guard isLive else { return }
     let wanted: Bool
     if case .serving = runState {
-      wanted = settings.keepAwakeWhileServing && sleepAssertion.isOnACPower
+      wanted = settings.keepAwakeWhileServing
+        && (sleepAssertion.isOnACPower || settings.keepAwakeOnBattery)
     } else {
       wanted = false
     }
     sleepAssertion.setActive(wanted)
   }
 
-  /// Called by the settings view when keepAwakeWhileServing changes.
+  /// Called by the settings view when a keep-awake setting changes.
   func keepAwakeSettingChanged() {
     updateSleepAssertion()
   }

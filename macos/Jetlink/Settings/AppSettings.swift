@@ -17,8 +17,8 @@ enum BackendChoice: String, CaseIterable, Codable, Sendable {
 
   var title: String {
     switch self {
-    case .auto: "CoreML with the Neural Engine"
-    case .coreml: "CoreML on the GPU"
+    case .auto: "CoreML with Neural Engine"
+    case .coreml: "CoreML (GPU)"
     }
   }
 
@@ -45,6 +45,7 @@ final class AppSettings {
     static let cacheDirectory = "cacheDirectory"
     static let startServerOnLaunch = "startServerOnLaunch"
     static let keepAwakeWhileServing = "keepAwakeWhileServing"
+    static let keepAwakeOnBattery = "keepAwakeOnBattery"
   }
 
   @ObservationIgnored private let defaults: UserDefaults
@@ -73,6 +74,10 @@ final class AppSettings {
     didSet { defaults.set(keepAwakeWhileServing, forKey: Key.keepAwakeWhileServing) }
   }
 
+  var keepAwakeOnBattery: Bool {
+    didSet { defaults.set(keepAwakeOnBattery, forKey: Key.keepAwakeOnBattery) }
+  }
+
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
     // A stored "tinygrad" (the removed Python backend) or "ane" (an older name
@@ -90,6 +95,7 @@ final class AppSettings {
     // (-startServerOnLaunch NO), which an `as? Bool` cast ignores.
     startServerOnLaunch = defaults.object(forKey: Key.startServerOnLaunch) == nil ? true : defaults.bool(forKey: Key.startServerOnLaunch)
     keepAwakeWhileServing = defaults.object(forKey: Key.keepAwakeWhileServing) == nil ? true : defaults.bool(forKey: Key.keepAwakeWhileServing)
+    keepAwakeOnBattery = defaults.object(forKey: Key.keepAwakeOnBattery) == nil ? false : defaults.bool(forKey: Key.keepAwakeOnBattery)
   }
 
   nonisolated static let defaultTCPPort = 5599
