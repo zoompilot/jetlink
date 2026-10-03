@@ -354,6 +354,50 @@ struct ServerLifecycleTests {
     #expect(live.most == 1, "\(live.most) sessions served at once")
     #expect(interrupts.all.filter { $0 == "a" }.count == 1, "\(interrupts.all)")
   }
+
+  /// Over USB the gadget's interface opens whether or not anything on the
+  /// comma serves it, so a claim that hears nothing must not interrupt the
+  /// session being served: a loan handover's bounce does exactly that, with
+  /// nobody on the comma behind the re-appeared gadget.
+  @Test("An unserved gadget claim leaves the session being served alone")
+  func unservedGadgetDoesNotTakeOver() throws {
+    let cache = try TemporaryDirectory()
+    let server = try Server(
+      configuration: Server.Configuration(host: "127.0.0.1", port: 0, cacheRoot: cache.url, preload: false, listen: false),
+      backend: cpuBackend())
+    try server.start()
+    defer { server.shutdown() }
+    let live = LiveCount()
+    let interrupts = Recorded<String>()
+    server.takeover(ParkedLink("tcp", live: live, interrupts: interrupts))
+    #expect(eventually { live.current == 1 })
+    let (done, session) = server.takeoverWhenAnnounced(UnservedGadget())
+    done.wait()
+    #expect(!session.announced)
+    #expect(live.current == 1, "the session being served was interrupted")
+    #expect(interrupts.all.isEmpty, "\(interrupts.all)")
+  }
+
+  /// The other half of the same rule: a gadget the comma does serve speaks,
+  /// and the session it announces takes over from the one being served, as
+  /// the comma's own reconnect must.
+  @Test("A gadget that speaks takes over from the session being served")
+  func speakingGadgetTakesOver() throws {
+    let cache = try TemporaryDirectory()
+    let server = try Server(
+      configuration: Server.Configuration(host: "127.0.0.1", port: 0, cacheRoot: cache.url, preload: false, listen: false),
+      backend: cpuBackend())
+    try server.start()
+    defer { server.shutdown() }
+    let live = LiveCount()
+    let interrupts = Recorded<String>()
+    server.takeover(ParkedLink("tcp", live: live, interrupts: interrupts))
+    #expect(eventually { live.current == 1 })
+    let (done, session) = server.takeoverWhenAnnounced(SpeakingGadget())
+    done.wait()
+    #expect(session.announced)
+    #expect(interrupts.all == ["tcp"], "\(interrupts.all)")
+  }
 }
 
 /// How many links are being read at once, and the most there ever were.
@@ -419,6 +463,48 @@ final class ParkedLink: MessageLink, @unchecked Sendable {
       condition.broadcast()
     }
   }
+
+  func close() {}
+}
+
+/// A gadget nobody on the comma serves: its reads fail at once, and no
+/// message ever arrives. The shape the USB loop sees between runs and across
+/// a loan handover.
+final class UnservedGadget: MessageLink, @unchecked Sendable {
+  let peer = "usb"
+  var medium: LinkMedium? { .usb }
+  var connectsOnOpen: Bool { false }
+
+  func recv() throws -> Message {
+    throw LinkError.closed("usb bulk read aborted")
+  }
+
+  func sendParts(_ type: Wire.Msg, seq: UInt32, parts: UnsafeBufferPointer<UnsafeRawBufferPointer>, flags: Wire.Flag) throws {}
+
+  func shutdown() {}
+
+  func close() {}
+}
+
+/// A gadget the comma serves: one message — enough to announce — and then
+/// the link is gone.
+final class SpeakingGadget: MessageLink, @unchecked Sendable {
+  let peer = "usb"
+  var medium: LinkMedium? { .usb3 }
+  var connectsOnOpen: Bool { false }
+  private var said = false
+
+  func recv() throws -> Message {
+    defer { said = true }
+    if said {
+      throw LinkError.closed("link closed")
+    }
+    return Message(msgType: Wire.Msg.ping.rawValue, seq: 1, flags: 0, payload: UnsafeRawBufferPointer(_empty: ()))
+  }
+
+  func sendParts(_ type: Wire.Msg, seq: UInt32, parts: UnsafeBufferPointer<UnsafeRawBufferPointer>, flags: Wire.Flag) throws {}
+
+  func shutdown() {}
 
   func close() {}
 }

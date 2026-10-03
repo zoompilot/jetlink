@@ -41,6 +41,9 @@ public struct DialTarget: Sendable, Equatable, CustomStringConvertible {
 /// being served instead of waiting behind it. A comma only ever has one
 /// connection open, so a second one means the first is dead (a pulled cable
 /// the keepalive has not noticed yet), and the reconnect must not wait for it.
+/// Over USB an open interface is not a connection: the gadget sits on the bus
+/// while nothing on the comma serves it, so the gadget's session takes over
+/// when the comma first speaks on it, not when the interface opens.
 ///
 /// A connection comes from the listener, from dialing, or from the comma's
 /// USB gadget. Over a USB network link the comma listens and the phone dials
@@ -297,22 +300,40 @@ public final class Server: @unchecked Sendable {
   /// race two.
   @discardableResult
   func takeover(_ transport: any MessageLink) -> (done: Latch, session: Session) {
-    // One swap at a time, from reading `current` to replacing it: the accept,
-    // dial and USB loops each take over, and two that saw the same session
-    // would each serve one of their own on the engine's one set of queues.
-    takeoverLock.lock()
-    defer { takeoverLock.unlock() }
-    lock.lock()
-    let previous = current
-    lock.unlock()
-    if let previous {
-      log.info("a new connection from \(transport.peer) takes over from \(previous.session.peer)")
-      previous.session.interrupt()
-      previous.done.wait()
-    }
     let session = Session(transport: transport, host: host)
+    let done = Latch()
+    attach(session, done: done, takesOverOnAnnounce: false)
+    displaceCurrent(with: (session, done))
+    start(session, done: done)
+    return (done, session)
+  }
+
+  /// Serves `transport` without touching the session being served until this
+  /// one speaks. Over USB an open gadget is not a client: the comma's owner
+  /// keeps the gadget on the bus while nothing on the comma serves it —
+  /// between runs, and across a loan handover, whose re-bind alone used to
+  /// interrupt whoever was connected here. The swap happens on the session's
+  /// first message; a session that ends without one, the unserved gadget,
+  /// leaves the session being served alone.
+  @discardableResult
+  func takeoverWhenAnnounced(_ transport: any MessageLink) -> (done: Latch, session: Session) {
+    let session = Session(transport: transport, host: host)
+    let done = Latch()
+    attach(session, done: done, takesOverOnAnnounce: true)
+    start(session, done: done)
+    return (done, session)
+  }
+
+  /// Wires the session's callbacks. `takesOverOnAnnounce` moves the swap into
+  /// the first link event, for a transport whose openness proves nothing (the
+  /// gadget); the swap then runs on the session's own thread, inside the
+  /// announce, before the link it reports replaces the one being served.
+  private func attach(_ session: Session, done: Latch, takesOverOnAnnounce: Bool) {
     session.onLink = { [weak self] event, first in
       guard let self else { return }
+      if first, takesOverOnAnnounce {
+        displaceCurrent(with: (session, done))
+      }
       let medium = event.linkMedium?.title ?? "an unknown link"
       if first {
         // install.sh waits for this line
@@ -329,10 +350,28 @@ public final class Server: @unchecked Sendable {
     if let gadget {
       session.onMessage = { gadget.sessionHeard() }
     }
-    let done = Latch()
+  }
+
+  /// One swap at a time, from reading `current` to replacing it: the accept,
+  /// dial and USB loops each take over, and two that saw the same session
+  /// would each serve one of their own on the engine's one set of queues.
+  private func displaceCurrent(with new: (session: Session, done: Latch)) {
+    takeoverLock.lock()
+    defer { takeoverLock.unlock() }
     lock.lock()
-    current = (session, done)
+    let previous = current
     lock.unlock()
+    if let previous {
+      log.info("a new connection from \(new.session.peer) takes over from \(previous.session.peer)")
+      previous.session.interrupt()
+      previous.done.wait()
+    }
+    lock.lock()
+    current = new
+    lock.unlock()
+  }
+
+  private func start(_ session: Session, done: Latch) {
     let thread = Thread { [self] in
       serve(session)
       done.release()
@@ -340,7 +379,6 @@ public final class Server: @unchecked Sendable {
     thread.name = "jetlink-session"
     thread.qualityOfService = .userInteractive
     thread.start()
-    return (done, session)
   }
 
   private func serve(_ session: Session) {
@@ -456,7 +494,10 @@ public final class Server: @unchecked Sendable {
   /// Presence is not readiness: the comma's owner keeps the gadget on the
   /// bus while no process on the comma is serving it, and then a read fails
   /// within milliseconds. Such a session never reported a connection, so
-  /// it is retried without a link event, and said once in the log.
+  /// it is retried without a link event, and said once in the log. Nor is
+  /// presence a client: the claim takes over only when the comma speaks on
+  /// it, so a session being served over TCP or a dial survives the gadget's
+  /// idle periods and the loan handover's bounce.
   private func usbLoop(_ gadget: any GadgetSource) {
     var waiting = WaitLog(log: log)
     var quiet = 0
@@ -489,7 +530,7 @@ public final class Server: @unchecked Sendable {
         Thread.sleep(forTimeInterval: quiet <= Server.usbQuickRetries ? Server.usbPoll : Server.usbQuietRetry)
         continue
       }
-      let (done, session) = takeover(transport)
+      let (done, session) = takeoverWhenAnnounced(transport)
       done.wait()
       if session.announced {
         // The comma closes the link between runs; the next run's hello is
