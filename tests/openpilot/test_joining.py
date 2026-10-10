@@ -157,7 +157,7 @@ class JoiningTest(JoiningBase):
   def test_only_the_join_thread_runs_and_it_leaves_modelds_realtime_core_first(self):
     # created after config_realtime_process(7, 54), it inherits SCHED_FIFO on
     # core 7 and drops it before anything else. Nothing polls for in_control:
-    # modeld writes it before every frame
+    # the frame asks it
     events = []
     with mock.patch.object(joining, 'background_thread', lambda: events.append(threading.current_thread().name)):
       s = self._state()
@@ -181,6 +181,14 @@ class JoiningTest(JoiningBase):
       self.assertEqual(self._run(s), {'from': 'small'})
     self.assertFalse(s.chestnut)
     self.assertFalse(self.big.warmed)
+
+  def test_asks_the_adapter_before_every_frame(self):
+    answers = [True, True, False]
+    s = self._make(self.small, self._connect, self._build, in_control=lambda: answers.pop(0))
+    self.addCleanup(self._close, s)
+    self._wait_joined(s)
+    self.assertEqual([self._run(s) for _ in range(3)], [{'from': 'small'}, {'from': 'small'}, {'from': 'big'}])
+    self.assertFalse(self.small.in_control, 'lands on the small model too')
 
   def test_late_boot_announces_availability_without_switching(self):
     booted = threading.Event()

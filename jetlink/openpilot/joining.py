@@ -38,10 +38,10 @@ Two rules the swap keeps:
   only; building the JetlinkModelState unpickles a TinyJit, and doing that
   next to the small model running frames on the same device is not safe.
 - never swap while the plan is steering. The two models disagree by ~195 m of
-  planned path, and the swap costs a frame or two. modeld says before every
-  frame whether anything is in control (in_control), from messages it reads
-  anyway; standstill alone is not enough, longitudinal control may still hold
-  the brake.
+  planned path, and the swap costs a frame or two. The adapter says before
+  every frame whether anything is in control (in_control), from openpilot's
+  own messages; standstill alone is not enough, longitudinal control may still
+  hold the brake.
 """
 from __future__ import annotations
 
@@ -113,10 +113,11 @@ class JoiningModelState:
   """Duck-types openpilot's modeld ModelState, with a second one inside.
 
   `progress` is where the join says what it is waiting on (status.Progress),
-  and `log` is cloudlog on a comma.
+  `log` is cloudlog on a comma, and `in_control` the adapter's, asked before
+  every frame; without one, the in_control last written stands.
   """
 
-  def __init__(self, small, connect, build, prepare=None, reset_small=None, *, progress, log):
+  def __init__(self, small, connect, build, prepare=None, reset_small=None, *, progress, log, in_control=None):
     self._small = small
     self._active = small
     self._connect = connect
@@ -177,9 +178,10 @@ class JoiningModelState:
     self._host_left = False
     self._replugged = False
 
-    # in control until modeld says otherwise, so a swap can never happen on no
-    # information
+    # in control until the adapter says otherwise, so a swap can never happen
+    # on no information
     self._in_control = True
+    self._ask_in_control = in_control
     self._stop = threading.Event()
 
     # whether the large model has produced a frame; a first inference that
@@ -286,11 +288,10 @@ class JoiningModelState:
 
   @in_control.setter
   def in_control(self, value):
-    # openpilot or MADS in control, by modeld's own messages, written before
-    # every run() as frame_drop_ratio is: the swap waits for False. A thread
-    # polling selfdrived for it woke ~300 times a second on a drive and took
-    # 6 to 11 % of a core inside modeld (2026-10-05). It lands on the small
-    # model too, as every write does
+    # openpilot or MADS in control, by openpilot's own messages, asked before
+    # every run(): the swap waits for False. A thread polling selfdrived for it
+    # woke ~300 times a second on a drive and took 6 to 11 % of a core inside
+    # modeld (2026-10-05). It lands on the small model too, as every write does
     self._in_control = value
     self._small.in_control = value
 
@@ -308,6 +309,8 @@ class JoiningModelState:
   # -- the frame path ---------------------------------------------------------
 
   def run(self, bufs, transforms, inputs, after_enqueue=None):
+    if self._ask_in_control is not None:
+      self.in_control = self._ask_in_control()
     if self._lagging:
       # the last frame was the large model's last, published as it came
       self._lagging = False
@@ -671,4 +674,4 @@ def join(parts, cam_w: int, cam_h: int, small) -> JoiningModelState:
     return links.open_link(parts, link, should_stop)
 
   return JoiningModelState(small, connect, build, prepare, reset_small=lambda: ready['reset_small'](),
-                           progress=parts.progress, log=parts.log)
+                           progress=parts.progress, log=parts.log, in_control=op.in_control)

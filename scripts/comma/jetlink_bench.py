@@ -162,7 +162,7 @@ def main():
           for service in IN_CONTROL:
             message = messaging.new_message(service)
             message.valid = True
-            # what the adapter's in_control reads, which modeld writes onto the
+            # what the adapter's in_control reads before every frame of the
             # joining model; faking it engaged holds the join back
             if service == 'carControl':
               message.carControl.enabled = engaged

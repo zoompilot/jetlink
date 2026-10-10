@@ -128,12 +128,17 @@ class WorkerSide(StatusSide, Protocol):
 
 
 class ModelSide(WorkerSide, Protocol):
-  """modeld: comma's model face, and the structured log line the link's
-  telemetry goes to. What modeld writes onto the model every frame is
-  Jetlink.attach's."""
+  """modeld: comma's model face, whether anything is in control, and the
+  structured log line the link's telemetry goes to. What modeld writes onto
+  the model every frame is Jetlink.attach's."""
 
   def model_face(self) -> ModelFace:
     """What a ModelState for comma's large model has to carry."""
+
+  def in_control(self) -> bool:
+    """Is openpilot or MADS in control? The joining model asks on modeld's
+    frame thread before every frame and swaps the large model in only while
+    not. True when it cannot tell; never raises."""
 
   def event(self, name: str, **fields: Any) -> None:
     """A structured log line (cloudlog.event)."""

@@ -119,6 +119,8 @@ class FakeOpenpilot:
     self.geometry = camera
     self.put_error: Exception | None = None
     self.face = FACE
+    # what in_control() answers: openpilot or MADS in control
+    self.engaged = True
 
   # -- the readers ------------------------------------------------------------
 
@@ -156,6 +158,9 @@ class FakeOpenpilot:
 
   def model_face(self) -> ModelFace:
     return self.face
+
+  def in_control(self) -> bool:
+    return self.engaged
 
   def event(self, name: str, **fields) -> None:
     self.events.append((name, fields))

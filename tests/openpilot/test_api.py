@@ -251,6 +251,12 @@ class TestTheJoinFactory(OpenpilotTest):
     self.assertIsInstance(held, link.Link)
     self.assertIs(should_stop, stop)
 
+  def test_the_swap_window_is_the_adapters(self):
+    s = self.join()
+    for engaged in (True, False):
+      self.op.engaged = engaged
+      self.assertIs(s._ask_in_control(), engaged)
+
   def test_the_small_models_reset_is_the_one_prepared(self):
     s = self.join()
     s._reset_small()
