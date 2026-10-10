@@ -13,8 +13,8 @@ frames and context in, 18452 floats out, and holds no control state.
 The split is at `run_policy`. The warp stays on the comma's GPU: its input is a
 2 MB camera buffer already there and its output the 393 KB the link carries
 anyway. The history queues live on the Jetson, shipping them would cost ~10 MB
-a frame instead of ~0.5 MB. Upstream fused warp and policy into one JIT, so
-the fork's build compiles a standalone warp; see warp.
+a frame instead of ~0.5 MB. modeld runs its warp as a JIT of its own, and
+the link runs the same one; see warp.
 
 A model that keeps its own history (openpilot #38916, Cinque Terre V3 on)
 takes the same warped frame and the same scalars; its hidden state never
@@ -22,7 +22,7 @@ leaves the Jetson, so there is no prev_feat to send back. The spec says which.
 
 What openpilot's modeld reads off a ModelState comes from the fork's adapter
 (ModelFace): comma's constants, parser, smoothing and action function.
-tinygrad is warp.Warp's to import: only modeld and the build have it.
+tinygrad is warp.Warp's to import: only modeld has it.
 """
 from __future__ import annotations
 
@@ -156,9 +156,9 @@ class JetlinkModelState:
     # model manager key off this flag
     self.chestnut = True
 
-    # a warp.Warp, loaded and warmed ahead: its first call costs ~2 s and this
-    # runs on modeld's frame thread. Frames go out of its output as they are,
-    # over either transport
+    # a warp.Warp, loaded and warmed ahead: its first call links the JIT, and
+    # this runs on modeld's frame thread. Frames go out of its output as they
+    # are, over either transport
     self.warp = warp
 
     self.input_shapes = spec.input_shapes

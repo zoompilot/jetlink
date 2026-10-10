@@ -168,7 +168,7 @@ def usb_port() -> str | None:
 
 # -- whether the link can run --------------------------------------------------
 
-# the offroad alert's text for a device whose build made no warp for its camera
+# the offroad alert's text for a device whose checkout has no warp for its camera
 NO_WARP = "no warp built for this camera"
 
 

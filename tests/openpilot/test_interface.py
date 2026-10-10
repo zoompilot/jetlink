@@ -45,11 +45,7 @@ MODELD = {
   'model_face': '() -> ModelFace',
   'event': '(name: str, **fields: Any) -> None',
 }
-BUILD = {
-  'make_warp': '(cam_w: int, cam_h: int, model_w: int, model_h: int) -> tuple[Callable[..., Any], int]',
-}
-SIDES = {'StatusSide': READERS, 'WorkerSide': WORKER, 'ModelSide': MODELD, 'BuildSide': BUILD,
-         'Openpilot': {**MODELD, **BUILD}}
+SIDES = {'StatusSide': READERS, 'WorkerSide': WORKER, 'ModelSide': MODELD, 'Openpilot': MODELD}
 
 FIELDS = {
   'Keys': ['link', 'offroad', 'progress', 'spec', 'pointers', 'big_model', 'catalog', 'charge_phone'],

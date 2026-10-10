@@ -160,13 +160,6 @@ class FakeOpenpilot:
   def event(self, name: str, **fields) -> None:
     self.events.append((name, fields))
 
-  # -- the build ---------------------------------------------------------------
-
-  def make_warp(self, cam_w: int, cam_h: int, model_w: int, model_h: int):
-    def warp(tfm, big_tfm, frame, big_frame):
-      return SimpleNamespace(tfm=tfm, big_tfm=big_tfm, frame=frame, big_frame=big_frame)
-    return warp, frame_size(cam_w, cam_h)
-
   # -- the adapter module's, for jetlinkd --------------------------------------
 
   def owner_config(self) -> OwnerConfig:
@@ -292,18 +285,9 @@ class FakeTensor:
   def numpy(self):
     return self.array
 
-  @staticmethod
-  def from_blob(ptr, shape, dtype=None, device=None):
-    return SimpleNamespace(ptr=ptr, shape=shape, device=device)
-
-  @staticmethod
-  def randint(*shape, low=0, high=256, dtype=None, device=None):
-    return FakeTensor(np.zeros(shape, dtype=np.uint8), device=device)
-
 
 class FakeDevice:
   DEFAULT = 'CPU'
-  default = SimpleNamespace(synchronize=lambda: None)
 
 
 def fake_jit(fn=None, prune=False):

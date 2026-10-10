@@ -17,7 +17,7 @@ The interface is split by process. The resident gadget owner gets data only
 (OwnerConfig), no callbacks, so it stays at the standard library and about
 10 MB. The heavy processes get the adapter object and each uses its side:
 StatusSide in manager, the UI, hardwared and the model manager, WorkerSide in
-the provisioning run, ModelSide in modeld, BuildSide in the warp build.
+the provisioning run, ModelSide in modeld.
 
 The standard library only: the owner imports this module.
 """
@@ -103,10 +103,11 @@ class StatusSide(Protocol):
     """Is comma's chestnut fitted? A USB walk; jetlink caches the answer."""
 
   def camera(self) -> tuple[int, int, int, int]:
-    """This device's (cam_w, cam_h, model_w, model_h): the warp modeld asks for."""
+    """This device's (cam_w, cam_h, model_w, model_h): the warp modeld loads."""
 
   def warp_path(self, cam_w: int, cam_h: int, model_w: int, model_h: int) -> Path:
-    """Where the build puts the warp for this geometry."""
+    """Where modeld's warp for this geometry is: openpilot's driving warp
+    pickle, which warp.Warps.load reads."""
 
 
 class WorkerSide(StatusSide, Protocol):
@@ -138,15 +139,7 @@ class ModelSide(WorkerSide, Protocol):
     """A structured log line (cloudlog.event)."""
 
 
-class BuildSide(Protocol):
-  """scons: comma's warp graph."""
-
-  def make_warp(self, cam_w: int, cam_h: int, model_w: int, model_h: int) -> tuple[Callable[..., Any], int]:
-    """The warp graph for this geometry, and the size of the NV12 frame it
-    reads. Imports comma's graph module before anything of tinygrad's."""
-
-
-class Openpilot(ModelSide, BuildSide, Protocol):
+class Openpilot(ModelSide, Protocol):
   """The whole adapter: one object implements every side."""
 
 
@@ -155,7 +148,7 @@ def load_adapter(module: str) -> Openpilot:
   module that holds every openpilot import jetlink needs: its top level
   imports only the standard library, and it has adapter() -> Openpilot and
   owner_config() -> OwnerConfig. The entry points that run as their own
-  process (the provisioning run, the warp build) are told its name."""
+  process (the provisioning run) are told its name."""
   return importlib.import_module(module).adapter()
 
 

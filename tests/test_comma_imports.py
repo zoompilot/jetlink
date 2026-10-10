@@ -41,8 +41,7 @@ FORK_IMPORTS = {
   # its tests only: the seam guard, and the comma side on the real tinygrad
   'jetlink.openpilot.joining': ('JoiningModelState',),
   'jetlink.openpilot.model_state': ('JetlinkModelState',),
-  'jetlink.openpilot.warp': ('WARP_INPUT_NAMES', 'Warp', 'Warps', 'call_warp', 'compile_warp', 'init_device',
-                             'prepare_reset'),
+  'jetlink.openpilot.warp': ('Warp', 'Warps', 'init_device', 'prepare_reset'),
   'jetlink.spec': ('ModelSpec',),
   'jetlink.queues': ('PolicyQueues',),
   'jetlink.comma': ('gadget',),

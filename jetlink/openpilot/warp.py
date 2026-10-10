@@ -4,54 +4,35 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-The comma-side warp JIT: how it is built, where it lives, what loads it, how
-the frame loop runs it (Warp), and the small model's reset for a fallback.
+The comma-side warp: openpilot's own, where it lives, what loads it, how the
+frame loop runs it (Warp), and the small model's reset for a fallback.
 
-The warp stays on the comma (see model_state), and upstream's fused run_model
-JIT (openpilot #38684) has no warp to borrow, so comma's make_warp graph is
-JIT-compiled as a build target: the fork's build runs
-`python -m jetlink.openpilot.warp` once per camera it builds for. A source
-build makes the one for its own camera, a prebuilt release one for every
-camera it installs on. Nothing compiles one at runtime: in modeld the ~9 s
-compile would hold back the first frame on every ignition, and in a
-provisioning run, which only runs offroad, it was lost to ignition. A device
-without one runs the small model.
+The warp stays on the comma (see model_state). openpilot's modeld runs it as
+a JIT of its own, driving_warp_{w}x{h}_tinygrad.pkl, one per camera, and the
+link runs the same pickle: both camera frames in as one (2, frame size) uint8
+input_frame, their transforms as one (2, 3, 3) M_inv, and out the
+(2, 6, 128, 256) uint8 frame the link sends. The fork's adapter says where it
+is. Nothing compiles one at runtime: a device without one runs the small
+model.
 
 load() is what stands between a bad pickle and the car.
 
-tinygrad is the fork's, and only modeld and the build have it: every import of
-it here is inside the function that needs it.
+tinygrad is the fork's, and only modeld has it: every import of it here is
+inside the function that needs it.
 """
 from __future__ import annotations
 
-import argparse
+import ctypes
 import pickle
-import sys
 from pathlib import Path
 
-# what TinyJit records for the keyword call in call_warp: sorted(kwargs)
-WARP_INPUT_NAMES = ['big_frame', 'big_tfm', 'frame', 'tfm']
+# what the warp's TinyJit was captured with: sorted(kwargs) of modeld's call
+WARP_INPUT_NAMES = ['M_inv', 'input_frame']
 # KGSL allocation flags (msm_kgsl.h) for memory the GPU's accesses snoop the
 # CPU's caches on, mapped write-back: KGSL_MEMFLAGS_IOCOHERENT, which
 # tinygrad's kgsl bindings lack, and KGSL_CACHEMODE_WRITEBACK (3 << 26). See
 # Warp
 COHERENT_WRITEBACK = (1 << 31) | (3 << 26)
-# camera buffers a Warp holds tensors for past which the log asks why.
-# camerad hands out a fixed pool of 18 a stream and maps new ones only when
-# it restarts, which modeld survives; past two generations of both streams
-# something is rotating addresses under the cache, which otherwise grows
-# without a bound
-FRAMES_WARN = 2 * 2 * 18 + 1
-
-
-def call_warp(warp, tfm, big_tfm, frame, big_frame):
-  """Call a warp JIT. Every caller goes through here, capture included.
-
-  TinyJit names inputs from enumerate(args) plus sorted(kwargs) and refuses a
-  call whose names differ from the capture. A positional compile and a keyword
-  call raised JitError on the first frame of a drive.
-  """
-  return warp(tfm=tfm, big_tfm=big_tfm, frame=frame, big_frame=big_frame)
 
 
 def init_device(log) -> None:
@@ -78,29 +59,27 @@ def init_device(log) -> None:
 
 
 class Warps:
-  """The warps the build made for this device, as the fork's adapter says where."""
+  """The warps this device's checkout has, where the fork's adapter says."""
 
   def __init__(self, op):
     self.op = op
-    # nothing compiles a warp at runtime and the build runs before manager, so
-    # the answer holds for the life of the process; the UI asks at 5 Hz
+    # nothing makes a warp at runtime and the checkout's are there before
+    # manager, so the answer holds for the life of the process; the UI asks
+    # at 5 Hz
     self._built: bool | None = None
 
   def geometry(self) -> tuple[int, int, int, int]:
-    """(cam_w, cam_h, model_w, model_h) for this device: the choice modeld's
-    build makes, so the warp built is the one modeld asks for. If they
-    disagree, load() raises and the drive is small-model."""
+    """(cam_w, cam_h, model_w, model_h) for this device: the warp modeld
+    loads. If the link's model disagrees, load() raises and the drive is
+    small-model."""
     return tuple(self.op.camera())
 
   def path(self, cam_w: int, cam_h: int, model_w: int, model_h: int) -> Path:
     return Path(self.op.warp_path(cam_w, cam_h, model_w, model_h))
 
   def is_cached(self, cam_w: int, cam_h: int, model_w: int, model_h: int) -> bool:
-    """Is there a warp for this geometry?
-
-    Presence only. Staleness is the build's job: the target depends on tinygrad
-    and the capture sources. A pickle from an incompatible tinygrad raises in load().
-    """
+    """Is there a warp for this geometry? Presence only: a pickle from an
+    incompatible tinygrad raises in load()."""
     return self.path(cam_w, cam_h, model_w, model_h).is_file()
 
   def built(self) -> bool:
@@ -110,129 +89,107 @@ class Warps:
       self._built = self.is_cached(*self.geometry())
     return self._built
 
-  def load(self, cam_w: int, cam_h: int, model_w: int, model_h: int):
-    """The built warp JIT. Raises if it is not there or is stale.
+  def load(self, cam_w: int, cam_h: int, model_w: int, model_h: int) -> dict:
+    """The warp as openpilot pickles it: {'run': its TinyJit, 'input_specs':
+    {name: (shape, dtype, device)}}. Raises if it is not there or is not one
+    the frame loop can run.
 
     modeld's big-model load is wrapped in the fallback to the small model, and a
     warp that cannot be trusted must not reach the car.
     """
-    if not self.is_cached(cam_w, cam_h, model_w, model_h):
-      raise RuntimeError(f"no warp built for {cam_w}x{cam_h} -> {model_w}x{model_h}; "
-                         "the fork's build makes it (python -m jetlink.openpilot.warp)")
-    with open(self.path(cam_w, cam_h, model_w, model_h), 'rb') as f:
+    path = self.path(cam_w, cam_h, model_w, model_h)
+    if not path.is_file():
+      raise RuntimeError(f"no warp for {cam_w}x{cam_h} -> {model_w}x{model_h} at {path}")
+    with open(path, 'rb') as f:
       warp = pickle.load(f)
+    if not isinstance(warp, dict) or not {'run', 'input_specs'} <= warp.keys():
+      raise RuntimeError(f"{path.name} is not a driving warp: {type(warp).__name__}")
 
     # a JIT pickled before TinyJit captured loads fine and computes nothing; one
-    # captured with a different call convention raises JitError on the first
-    # frame of a drive. Both have happened
-    captured = getattr(warp, 'captured', None)
+    # captured under other names raises JitError on the first frame of a drive
+    captured = getattr(warp['run'], 'captured', None)
     if captured is None:
-      raise RuntimeError("cached warp was pickled before it captured; it computes nothing")
+      raise RuntimeError("the warp was pickled before it captured; it computes nothing")
     names = list(getattr(captured, 'expected_names', []))
     if names != WARP_INPUT_NAMES:
-      raise RuntimeError(f"cached warp expects {names}, call_warp passes {WARP_INPUT_NAMES}")
+      raise RuntimeError(f"the warp expects {names}, the frame loop passes {WARP_INPUT_NAMES}")
+    specs = warp['input_specs']
+    frames, tfm = tuple(specs['input_frame'][0]), tuple(specs['M_inv'][0])
+    if len(frames) != 2 or frames[0] != 2 or tfm != (2, 3, 3):
+      raise RuntimeError(f"the warp takes frames {frames} and transforms {tfm}, not two of each")
+    made = tuple(getattr(captured.ret, 'shape', ()))
+    if made != (2, 6, model_h // 2, model_w // 2):
+      raise RuntimeError(f"the warp makes {made}, not a {model_w}x{model_h} model's input")
     return warp
 
 
 class Warp:
-  """The built warp as modeld's frame loop runs it: start() with two camera
-  buffers and their transforms, wait(), and `output` holds the warped frame,
-  where the link sends it from.
+  """The warp as modeld's frame loop runs it: start() with two camera buffers
+  and their transforms, wait(), and `output` holds the warped frame, where the
+  link sends it from.
 
-  Three things the JIT alone does not do, each measured on the comma
-  (2026-10-06):
+  openpilot's warp takes both frames as one buffer, so start() copies the
+  camera buffers in, as modeld does, and the transforms beside them. Two
+  things the JIT alone does not do, measured on the comma with the warp
+  jetlink once built itself (2026-10-06):
   - Its output lives in GPU memory the CPU reads through its cache. tinygrad
     maps a QCOM buffer write-combined, which the CPU reads uncached: copying
     the 393 KB out took 2.9 ms, the kernel's copy straight from that mapping
     7.3 ms. The Adreno 630 is IO-coherent, so KGSL memory flagged IOCOHERENT
     and write-back is right to read once the GPU is done: 0.22 ms for the
     kernel's copy, the GPU's own time unchanged. It moves before the first
-    call, which binds the graph to its buffers' addresses.
-  - A frame replays the capture with its inputs' buffers. TinyJit prepares
-    and checks every call's inputs, a graph rewrite per input: 0.97 ms of a
-    1.93 ms call. Every frame's inputs are alike (camera buffers as from_blob
-    tensors, two transforms), and the buffers are all TinyJit's preparing
-    hands the capture, so they are checked once, by the warm-up's calls
-    through TinyJit.
-  - On the GPU only the capture's graph of warp kernels runs. Replayed whole,
-    the capture is three steps through tinygrad's dispatch, two of them
-    copying a transform from an NPY tensor into its QCOM buffer through a
-    synced memory view: 0.61 ms of a 1.13 ms launch on the frame loop, the
-    graph's submit the rest (2026-10-07). start() writes the transforms into
-    those buffers itself, as the copies did; the GPU is idle there, since
-    every start() is waited for before the next.
-  - A camera buffer becomes a tensor once, by address.
+    call, which links the JIT to its buffers' addresses.
+  - TinyJit prepares and checks every call's inputs, a graph rewrite per
+    input: 0.97 ms of a 1.93 ms call. Every frame's inputs are the same two
+    buffers, which start() writes into, so they are checked once, by the
+    warm-up's calls through TinyJit, and a frame replays the capture.
 
-  The warm-up is the first call's 1.9 s and the second's compile, paid here
-  rather than on modeld's frame loop, where it was ~26 dropped frames and
-  16 s of modeldLagging after every join.
+  The warm-up, the link of the JIT and its first runs, is paid here rather
+  than on modeld's frame loop.
   """
 
-  def __init__(self, jit, frame_size: int, log):
+  def __init__(self, warp: dict, frame_size: int):
     import numpy as np
     from tinygrad.device import Device
     from tinygrad.tensor import Tensor
-    self._frame_size = frame_size
-    self._log = log
-    self._tensor = Tensor
+    jit, specs = warp['run'], warp['input_specs']
+    (frames_shape, _, _), (tfm_shape, _, _) = specs['input_frame'], specs['M_inv']
+    # what it reads of each camera buffer: modeld's frame_copy_size, short of
+    # the buffer's end
+    self._frame_size = frames_shape[1]
+    if self._frame_size > frame_size:
+      raise RuntimeError(f"the warp reads {self._frame_size} bytes a frame, past a {frame_size} byte camera buffer")
     out = jit.captured.ret.uop.base.buffer
     self._device = out.device
     if self._device.startswith('QCOM'):
       _make_coherent(out)
-    # written in place by start(): the NPY tensors are views of them
-    self._tfm = np.zeros((3, 3), dtype=np.float32)
-    self._big_tfm = np.zeros((3, 3), dtype=np.float32)
-    tfm, big_tfm = (Tensor(a, device='NPY').realize() for a in (self._tfm, self._big_tfm))
-    self._tfm_buf, self._big_tfm_buf = tfm.uop.base, big_tfm.uop.base
-    self._frames: dict[int, object] = {}   # camera buffer address -> its tensor
-    blank = [np.zeros(frame_size, dtype=np.uint8) for _ in range(2)]
-    blobs = [Tensor.from_blob(b.ctypes.data, (frame_size,), dtype='uint8', device=self._device) for b in blank]
+    # the two buffers every frame passes, written in place by start()
+    self._tensors = {name: Tensor(np.zeros(shape, dtype=dtype), device=device).realize()
+                     for name, (shape, dtype, device) in specs.items()}
     for _ in range(2):
-      call_warp(jit, tfm, big_tfm, blobs[0], blobs[1])
+      jit(**self._tensors)
     self.wait = Device[self._device].synchronize
     self.wait()
-    self.output = out.as_memoryview(force_zero_copy=True, no_sync=True)
+    self.output = out.as_memoryview(allow_zero_copy=True)
+    self._frames = np.frombuffer(self._view('input_frame'), dtype=np.uint8).reshape(frames_shape)
+    self._at = [self._frames[i].ctypes.data for i in range(2)]
+    self._tfm = np.frombuffer(self._view('M_inv'), dtype=np.float32).reshape(tfm_shape)
     self._replay = jit.captured
-    if self._device.startswith('QCOM'):
-      inputs = (blobs[1].uop.base, self._big_tfm_buf, blobs[0].uop.base, self._tfm_buf)
-      self._replay, self._tfm, self._big_tfm = _graph_alone(jit.captured, inputs)
+    self._inputs = [self._tensors[name].uop.base for name in WARP_INPUT_NAMES]
+
+  def _view(self, name: str) -> memoryview:
+    """The CPU's view of an input buffer, not a copy of it."""
+    return self._tensors[name].uop.base.buffer.as_memoryview(allow_zero_copy=True)
 
   def start(self, frame: int, big_frame: int, tfm, big_tfm) -> None:
     """Warp the camera buffers at these addresses under their transforms.
-    `output` is the frame once wait() returns, until the next start()."""
-    self._tfm[:, :] = tfm
-    self._big_tfm[:, :] = big_tfm
-    # the capture's input order, sorted names (WARP_INPUT_NAMES)
-    self._replay((self._buffer(big_frame), self._big_tfm_buf, self._buffer(frame), self._tfm_buf), {})
-
-  def _buffer(self, address: int):
-    tensor = self._frames.get(address)
-    if tensor is None:
-      tensor = self._frames[address] = self._tensor.from_blob(address, (self._frame_size,), dtype='uint8',
-                                                              device=self._device)
-      if len(self._frames) == FRAMES_WARN:
-        self._log.warning("jetlink: %d camera buffers cached; is the camera stack rotating them?", len(self._frames))
-    return tensor.uop.base
-
-
-def _graph_alone(captured, inputs):
-  """The capture's graph of warp kernels, and the QCOM buffers its two copy
-  steps write the transforms into, as (3, 3) float32 views: tfm's, then
-  big_tfm's. Raises unless the capture is those three steps."""
-  import numpy as np
-  from tinygrad.engine.realize import get_graph_runtime, resolve_params
-  from tinygrad.uop.ops import Ops
-  steps = captured._linear.src
-  copies = [s for s in steps if s.src[0].op is Ops.COPY]
-  graphs = [s.src[0] for s in steps if s.src[0].op is Ops.CUSTOM_FUNCTION and s.src[0].arg == 'graph']
-  if len(steps) != 3 or len(copies) != 2 or len(graphs) != 1:
-    raise RuntimeError(f"the warp's capture is not two transform copies and a graph: {[s.src[0].op for s in steps]}")
-  views = {}
-  for step in copies:
-    dest, src = resolve_params(step, inputs)
-    name = WARP_INPUT_NAMES[next(i for i, u in enumerate(inputs) if u is src)]
-    views[name] = np.frombuffer(dest.buffer.as_memoryview(force_zero_copy=True), dtype=np.float32).reshape(3, 3)
-  return get_graph_runtime(graphs[0], inputs), views['tfm'], views['big_tfm']
+    `output` is the frame once wait() returns, until the next start(). The
+    GPU is idle here: every start() is waited for before the next."""
+    ctypes.memmove(self._at[0], frame, self._frame_size)
+    ctypes.memmove(self._at[1], big_frame, self._frame_size)
+    self._tfm[0] = tfm
+    self._tfm[1] = big_tfm
+    self._replay(self._inputs, {})
 
 
 def _make_coherent(out) -> None:
@@ -252,107 +209,41 @@ def _make_coherent(out) -> None:
 def prepare_reset(model):
   """Capture the small model's reset before driving, keeping its JIT's buffer identities.
 
-  Its history is stale after the Jetson ran, so a fallback starts from the same
-  zero history as modeld startup. Nothing is allocated or compiled on the
-  failure frame.
+  Its history is stale after the Jetson ran, so a fallback starts from the
+  zero history modeld's warmup leaves it at. Nothing is allocated or compiled
+  on the failure frame.
 
-  The small model is whatever bundle the user picked, stock modeld's or a
-  modeld_v2 one, so the history is whatever GPU queues it has; the NPY tensors
-  are zeroed through their numpy views. Duck-typed on openpilot's ModelState:
-  input_queues, numpy_inputs (modeld_v2) or npy (modeld), prev_desire. The
-  fork's tests pin those names.
+  The small model is whatever bundle the user picked, on stock modeld or
+  modeld_v2, and each keeps its history its own way. Stock modeld's
+  ModelState, and a modeld_v2 native bundle's adapter: the recurrent state on
+  the GPU (state_pairs) and one packed host buffer (packed_input), as their
+  warmup zeroes them. A modeld_v2 legacy bundle's adapter: history queues on
+  the GPU, and numpy inputs. The fork's tests pin those names.
   """
   from tinygrad import Tensor, TinyJit
 
-  queues = tuple(q for q in model.input_queues.values() if q.device != 'NPY')
-  npy = model.numpy_inputs if hasattr(model, 'numpy_inputs') else model.npy
+  adapter = getattr(model, 'adapter', None)
+  if adapter is None or adapter.is_native:
+    keeper = model if adapter is None else adapter
+    queues = tuple(keeper.input_queues[name] for name in keeper.state_pairs)
+    arrays = (keeper.packed_input,)
+  else:
+    queues = tuple(q for q in adapter.input_queues.values() if q.device != 'NPY')
+    arrays = tuple(adapter.numpy_inputs.values())
 
   @TinyJit
   def clear():
     Tensor.realize(*(q.assign(0) for q in queues))
 
-  for _ in range(3):
-    clear()
+  if queues:
+    for _ in range(3):
+      clear()
 
   def reset():
-    clear()
+    if queues:
+      clear()
     model.prev_desire.fill(0)
-    for array in npy.values():
+    for array in arrays:
       array.fill(0)
 
   return reset
-
-
-# -- the build ------------------------------------------------------------------
-
-def compile_warp(graph, frame_size: int, out: Path) -> Path:
-  """JIT the warp graph and pickle it to `out`. Holds the GPU while it runs.
-
-  Three runs before pickling: TinyJit captures on the second call, and a
-  pickle taken earlier is an empty jit that silently does nothing.
-  """
-  import numpy as np
-  from tinygrad.device import Device
-  from tinygrad.engine.jit import TinyJit
-  from tinygrad.tensor import Tensor
-
-  warp_jit = TinyJit(graph, prune=True)
-
-  # one set of input tensors: TinyJit captures against the buffers it is
-  # first handed. Random so nothing constant-folds
-  rng = np.random.default_rng(42)
-  tfm_npy, big_tfm_npy = np.eye(3, dtype=np.float32), np.eye(3, dtype=np.float32)
-  tfm = Tensor(tfm_npy, device='NPY')
-  big_tfm = Tensor(big_tfm_npy, device='NPY')
-  frame = Tensor.randint(frame_size, low=0, high=256, dtype='uint8', device=Device.DEFAULT).realize()
-  big_frame = Tensor.randint(frame_size, low=0, high=256, dtype='uint8', device=Device.DEFAULT).realize()
-  for _ in range(3):
-    tfm_npy[:] = rng.standard_normal((3, 3)).astype(np.float32)
-    big_tfm_npy[:] = rng.standard_normal((3, 3)).astype(np.float32)
-    call_warp(warp_jit, tfm, big_tfm, frame, big_frame).realize()
-  Device.default.synchronize()
-
-  out = Path(out)
-  out.parent.mkdir(parents=True, exist_ok=True)
-  # through a temporary: a compile killed mid-write leaves nothing under the
-  # name load() opens
-  tmp = out.with_suffix('.pkl.tmp')
-  with open(tmp, 'wb') as f:
-    pickle.dump(warp_jit, f)
-  tmp.replace(out)
-  return out
-
-
-def size(text: str) -> tuple[int, int]:
-  """'WxH' as (w, h)."""
-  w, sep, h = text.lower().partition('x')
-  if not sep:
-    raise argparse.ArgumentTypeError(f"expected WxH, not {text!r}")
-  try:
-    return int(w), int(h)
-  except ValueError:
-    raise argparse.ArgumentTypeError(f"expected WxH, not {text!r}") from None
-
-
-def main(argv: list[str] | None = None) -> None:
-  """Build the warp for one camera, as the fork's build runs it."""
-  from jetlink.openpilot.interface import load_adapter
-  p = argparse.ArgumentParser(prog='python -m jetlink.openpilot.warp', description=main.__doc__)
-  p.add_argument('--adapter', required=True, help="the fork's adapter module")
-  p.add_argument('--camera', type=size, required=True, help='camera resolution, WxH')
-  p.add_argument('--model', type=size, required=True, help='model input, WxH')
-  p.add_argument('--output', type=Path, required=True)
-  args = p.parse_args(argv)
-
-  (cam_w, cam_h), (model_w, model_h) = args.camera, args.model
-  op = load_adapter(args.adapter)
-  print(f"Compiling jetlink warp for {cam_w}x{cam_h} -> {model_w}x{model_h}...")
-  # before anything of tinygrad's is imported here: comma's graph module
-  # patches tinygrad's firmware fetch as it loads
-  graph, frame_size = op.make_warp(cam_w, cam_h, model_w, model_h)
-  out = compile_warp(graph, frame_size, args.output)
-  print(f"  Saved to {out}")
-
-
-if __name__ == "__main__":
-  sys.exit(main())

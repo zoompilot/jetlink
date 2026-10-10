@@ -654,7 +654,7 @@ def join(parts, cam_w: int, cam_h: int, small) -> JoiningModelState:
       geometry = parts.warps.geometry()[2:]
     try:
       ready['reset_small'] = prepare_reset(small)
-      warp = Warp(parts.warps.load(cam_w, cam_h, *geometry), face.frame_size(cam_w, cam_h), parts.log)
+      warp = Warp(parts.warps.load(cam_w, cam_h, *geometry), face.frame_size(cam_w, cam_h))
     except Exception:
       link.close()
       raise

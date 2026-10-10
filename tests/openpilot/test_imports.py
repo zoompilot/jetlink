@@ -139,7 +139,7 @@ def test_no_source_in_jetlink_names_openpilot():
 
 
 def test_tinygrad_is_only_ever_imported_where_it_is_used():
-  # it is the fork's, and only modeld and the warp build have it; a module-level
+  # it is the fork's, and only modeld has it; a module-level
   # import would fail every other process and jetlink's CI
   offenders = [f"{path.relative_to(ROOT)}:{line}"
                for path in sorted(PACKAGE.rglob('*.py'))
