@@ -1,0 +1,14 @@
+{
+  "big": {
+    "img": "5fc78eab0b9ef010d6df229a4350ca47783cc2a04873012bb4e9bc17f59940e3",
+    "big_img": "b71527094b812405df9e1abe654f85e29d4966d429f18a04d3d488e2003148c2",
+    "desire_pulse": "1b4bdf5de2eea1a71f2801f3ebbf291ae06bbe2710ea9fd4292bb825b1f53c84",
+    "features_buffer": "574144f89a4f11bb2a0b170c807efb29f1c2303ea6f45693b6b8ece2daf2d90f"
+  },
+  "small": {
+    "img": "5fc78eab0b9ef010d6df229a4350ca47783cc2a04873012bb4e9bc17f59940e3",
+    "big_img": "b71527094b812405df9e1abe654f85e29d4966d429f18a04d3d488e2003148c2",
+    "desire_pulse": "63cee0cb64550fd63455c8b2479ca81bb53b4107ea40e6a86c9fcb0e6ab35e81",
+    "features_buffer": "b9697e95b6d899f29600e94097c29e68454be2b7404f77838d778ace2fe2fa14"
+  }
+}

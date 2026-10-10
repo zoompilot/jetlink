@@ -43,7 +43,6 @@ FORK_IMPORTS = {
   'jetlink.openpilot.model_state': ('JetlinkModelState',),
   'jetlink.openpilot.warp': ('Warp', 'Warps', 'init_device', 'prepare_reset'),
   'jetlink.spec': ('ModelSpec',),
-  'jetlink.queues': ('PolicyQueues',),
   'jetlink.comma': ('gadget',),
   'jetlink.comma.gadget': ('gadget_error', 'link_configured'),
   'jetlink.registry.catalog': ('fetch_catalogs',),
