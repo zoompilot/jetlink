@@ -289,7 +289,7 @@ jobs:
         # and check the gadget's IDs, the port and the onnxruntime release
         # against Pinned.swift.
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Jetlink-android
           path: android/app/build/outputs/apk/release/app-release.apk
@@ -324,7 +324,7 @@ jobs:
         run: ditto -c -k --keepParent macos/build/Jetlink.app macos/build/Jetlink-unsigned.zip
 
       - name: Upload the app
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Jetlink-unsigned
           path: macos/build/Jetlink-unsigned.zip
