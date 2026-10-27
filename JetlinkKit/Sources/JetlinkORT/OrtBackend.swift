@@ -138,6 +138,7 @@ public final class OrtBackend: EngineBackend {
   public let keepAlive: Bool
   /// Keep a CPU core warm while the Neural Engine or the NPU runs a frame.
   public let keepCPUWarm: Bool
+  public let qnn: QnnPolicy
   private let preparer: any ModelPreparer
   private let chip: String
   private let log = ServerLog(category: "ort")
@@ -145,18 +146,22 @@ public final class OrtBackend: EngineBackend {
   /// `chip` names what the artifacts are valid for: on Android the SoC's
   /// model, "SM8650" (Build.SOC_MODEL), which a QNN context is compiled for.
   /// Nil is the Apple chip on Apple platforms and "cpu" elsewhere.
-  public init(profile: OrtProfile, preparer: any ModelPreparer, keepAlive: Bool = true, keepCPUWarm: Bool = true, chip: String? = nil) {
+  public init(
+    profile: OrtProfile, preparer: any ModelPreparer, keepAlive: Bool = true, keepCPUWarm: Bool = true,
+    chip: String? = nil, qnn: QnnPolicy = .init()
+  ) {
     self.profile = profile
     self.preparer = preparer
     self.keepAlive = keepAlive
     self.keepCPUWarm = keepCPUWarm
     self.chip = HostChip.resolve(chip)
+    self.qnn = qnn
   }
 
   public var runtimeVersion: String { OrtRuntime.version }
 
   public func deviceTag() -> String {
-    sanitize("\(profile.rawValue)-\(chip)")
+    sanitize("\(profile.rawValue)-\(chip)\(profile.sessions.contains(where: { $0.unit == .htp }) ? qnn.cacheSuffix : "")")
   }
 
   public func deriveSpec(model: URL, sha256: String, nbytes: Int64, frameSkip: Int) throws -> ModelSpec {
@@ -167,8 +172,7 @@ public final class OrtBackend: EngineBackend {
   func providerOptions(_ unit: OrtUnit) -> [String: String] {
     switch unit {
     case .htp:
-      [
-        "backend_type": "htp",
+      var options = qnn.htpBackend.merging([
         // burst holds the clocks up between frames, the counterpart of the
         // Mac's GPU keep-alive; sustained trades speed for less heat.
         "htp_performance_mode": keepAlive ? "burst" : "sustained_high_performance",
@@ -176,9 +180,11 @@ public final class OrtBackend: EngineBackend {
         "htp_graph_finalization_optimization_mode": "3",
         "enable_htp_fp16_precision": "1",
         "qnn_context_priority": "high",
-      ]
-    case .qnnGPU: ["backend_type": "gpu"]
-    case .coreML, .cpu: [:]
+      ]) { _, value in value }
+      if qnn.sharedIO { options["enable_htp_shared_memory_allocator"] = "1" }
+      return options
+    case .qnnGPU: return ["backend_type": "gpu"]
+    case .coreML, .cpu: return [:]
     }
   }
 
@@ -187,7 +193,9 @@ public final class OrtBackend: EngineBackend {
   func plan(_ unit: OrtUnit, model: URL, cache: URL?) -> SessionPlan {
     switch unit {
     case .coreML(let units): SessionPlan(model: model, computeUnits: units, cacheDirectory: cache)
-    case .htp: SessionPlan(model: model, provider: "QNN", options: providerOptions(unit), label: "QNN(htp)", usesNeuralEngine: true)
+    case .htp: SessionPlan(
+      model: model, provider: "QNN", options: providerOptions(unit), config: qnn.sessionConfig,
+      label: "QNN(htp)", usesNeuralEngine: true)
     case .qnnGPU: SessionPlan(model: model, provider: "QNN", options: providerOptions(unit), label: "QNN(gpu)", usesGPU: true)
     case .cpu: SessionPlan(model: model, provider: nil, threads: HostChip.cpuThreads, label: "CPU")
     }
@@ -204,6 +212,7 @@ public final class OrtBackend: EngineBackend {
   // MARK: build
 
   public func build(model: URL, artifact: URL, report: @escaping ProgressFn, metaExtra: [String: Any]) throws {
+    try qnn.validate()
     let started = Date()
     let expect = Artifact.sidecar(artifact)
     try Artifact.build(artifact, metaExtra: metaExtra, report: report) { staged in
@@ -267,12 +276,7 @@ public final class OrtBackend: EngineBackend {
     let context = staged.appending(path: "\(session)_ctx.onnx")
     report("compile", 0, "compiling \(session) for the NPU")
     try Ticker.during(interval: 2, Ticker.paced("compile", "compiling \(session) for the NPU", took: took, report: report)) {
-      let config = [
-        "ep.context_enable": "1",
-        "ep.context_file_path": context.path,
-        // the context binary in a file of its own beside the model, not base64 inside it
-        "ep.context_embed_mode": "0",
-      ]
+      let config = contextConfiguration(context: context)
       _ = try OrtSession(model: source, provider: "QNN", options: providerOptions(.htp), config: config)
     }
     guard FileManager.default.fileExists(atPath: context.path) else {
@@ -281,6 +285,16 @@ public final class OrtBackend: EngineBackend {
     }
     try? FileManager.default.removeItem(at: source)
     return context.lastPathComponent
+  }
+
+  /// The same strict provider contract applies during compilation and reload.
+  func contextConfiguration(context: URL) -> [String: String] {
+    qnn.sessionConfig.merging([
+        "ep.context_enable": "1",
+        "ep.context_file_path": context.path,
+        // the context binary in a file of its own beside the model, not base64 inside it
+        "ep.context_embed_mode": "0",
+    ]) { _, value in value }
   }
 
   /// A CoreML build's first session creation is the conversion and CoreML's
@@ -326,6 +340,7 @@ public final class OrtBackend: EngineBackend {
   // MARK: load
 
   public func load(artifact: URL, report: @escaping ProgressFn) throws -> any Engine {
+    try qnn.validate()
     let (manifest, meta) = try OrtArtifact.open(artifact, version: profile.prepareVersion) { entry in
       guard let unit = OrtUnit(entry: entry) else { return "a session names no unit" }
       // Without its compile, onnxruntime would recompile under a "loading"

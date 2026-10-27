@@ -232,7 +232,8 @@
         }
         return OrtBackend(
           profile: profile, preparer: ONNXPreparer(), keepAlive: (config["keep_alive"] as? Bool) ?? true,
-          keepCPUWarm: (config["keep_cpu_warm"] as? Bool) ?? false, chip: chip)
+          keepCPUWarm: (config["keep_cpu_warm"] as? Bool) ?? false, chip: chip,
+          qnn: try QnnPolicy(configuration: config))
       case let other:
         throw HostFailure("unknown backend \(other)")
       }
