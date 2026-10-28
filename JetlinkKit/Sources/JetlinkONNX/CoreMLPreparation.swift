@@ -42,6 +42,8 @@ public enum CoreMLPreparation {
     /// (`--device ane-whole`): model.onnx, with the policy's norms prescaled
     /// and the vision heads in fp32.
     case aneWhole
+    /// Offline base for the hash-bound Cinque V3 causal-prefill compiler.
+    case qnnPrefillBase
     /// One model for TensorRT or the CPU: model.onnx, tinygrad's ops
     /// stripped and the images fp16, nothing else changed.
     case plain
@@ -119,7 +121,7 @@ public enum CoreMLPreparation {
     var tiles = 0
     if layout != .plain {
       gathers = try Patches.normalizeGatherIndices(&g, src)
-      gemms = try Patches.gemmWithTransposedWeight(&g, src)
+      if layout != .qnnPrefillBase { gemms = try Patches.gemmWithTransposedWeight(&g, src) }
       tiles = try Patches.expandToTile(&g, src)
     }
     var norms = 0
@@ -128,6 +130,7 @@ public enum CoreMLPreparation {
       norms = try Patches.prescaleLayerNorm(&g)
       heads = try Patches.headsInFP32(&g, src)
     }
+    if layout == .qnnPrefillBase { norms = try QnnPreparation.fusedLayerNorms(&g) }
     model.graph = g
 
     var parts: [(name: String, model: Model)]
@@ -135,7 +138,7 @@ public enum CoreMLPreparation {
     case .split:
       let (vision, policy) = try Split.visionPolicy(model)
       parts = [("vision", vision), ("policy", policy)]
-    case .whole, .aneWhole, .plain:
+    case .whole, .aneWhole, .qnnPrefillBase, .plain:
       parts = [("model", model)]
     }
     for i in parts.indices where layout != .plain {

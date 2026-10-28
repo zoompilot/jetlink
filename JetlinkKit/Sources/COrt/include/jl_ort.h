@@ -36,6 +36,7 @@ enum {
 typedef struct jl_env jl_env;
 typedef struct jl_session jl_session;
 typedef struct jl_binding jl_binding;
+typedef struct jl_shared_allocator jl_shared_allocator;
 
 typedef struct {
   const char *key;
@@ -77,10 +78,19 @@ char *jl_session_io_info(const jl_session *session, int output, size_t index,
                          char *name, size_t name_cap, int *elem_type,
                          int64_t *dims, size_t dims_cap, size_t *rank);
 
+// QNN's host-accessible RPC memory. The session must outlive this allocator,
+// and every allocation and binding must be freed before releasing it.
+char *jl_shared_allocator_create(jl_session *session, jl_shared_allocator **out);
+char *jl_shared_allocator_alloc(jl_shared_allocator *allocator, size_t bytes, void **out);
+void jl_shared_allocator_free(jl_shared_allocator *allocator, void *data);
+void jl_shared_allocator_release(jl_shared_allocator *allocator);
+size_t jl_shared_allocator_total_bytes(const jl_shared_allocator *allocator);
+
 // Binds caller-owned buffers to a session's inputs and outputs once, for
 // jl_binding_run to run with. The buffers must outlive the binding.
 char *jl_binding_create(jl_session *session, const jl_tensor *inputs, size_t n_inputs,
-                        const jl_tensor *outputs, size_t n_outputs, jl_binding **out);
+                        const jl_tensor *outputs, size_t n_outputs,
+                        const jl_shared_allocator *shared, jl_binding **out);
 char *jl_binding_run(jl_binding *binding);
 void jl_binding_release(jl_binding *binding);
 

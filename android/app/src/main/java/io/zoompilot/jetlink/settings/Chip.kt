@@ -1,6 +1,7 @@
 package io.zoompilot.jetlink.settings
 
 import android.os.Build
+import io.zoompilot.jetlink.BuildConfig
 
 /**
  * The phone's SoC, and whether its NPU can run the model. QNN runs the
@@ -28,7 +29,8 @@ object Chip {
     fun tensorGeneration(model: String): Int? = tensorModel.find(model.trim())?.groupValues?.get(1)?.toIntOrNull()
 
     /** What this phone's Settings offer. */
-    fun processors(current: Processor): List<Processor> = Processor.choices(isQualcomm, hasTensorNpu, isEmulator, current)
+    fun processors(current: Processor): List<Processor> = Processor.choices(
+        isQualcomm, hasTensorNpu, isEmulator, current, parallel = BuildConfig.EXPERIMENTAL_CAUSAL_PREFILL)
 
     /** What Automatic runs on here. */
     val automatic: Processor by lazy { Processor.automatic(hasTensorNpu, isEmulator) }

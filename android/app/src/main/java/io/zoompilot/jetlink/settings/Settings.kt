@@ -44,6 +44,9 @@ enum class Processor(val backend: Backend, val device: String, val title: String
      */
     NpuGpu(Backend.Ort, "htp", "NPU + GPU"),
 
+    /** Same-frame causal work in parallel; exact model contracts only, otherwise whole NPU. */
+    NpuGpuParallel(Backend.Ort, "htp-parallel", "NPU + GPU (experimental)"),
+
     /** The CPU: the emulator and tests. Seconds a frame with a real model. */
     Cpu(Backend.Ort, "cpu", "CPU");
 
@@ -58,7 +61,11 @@ enum class Processor(val backend: Backend, val device: String, val title: String
      * NPU: the NPU took no model. [accelerator] is the ready engine's.
      */
     fun fellBack(accelerator: String?, automatic: Processor = Chip.automatic): Boolean =
-        resolved(automatic) == TensorNpu && hardwareOf(accelerator).let { it != null && it != "NPU" }
+        when (resolved(automatic)) {
+            TensorNpu -> hardwareOf(accelerator).let { it != null && it != "NPU" }
+            NpuGpuParallel -> hardwareOf(accelerator) == "NPU"
+            else -> false
+        }
 
     /** What the Processor row says: the choice, and with Automatic what it runs on. */
     fun summary(accelerator: String?, automatic: Processor = Chip.automatic): String {
@@ -88,9 +95,9 @@ enum class Processor(val backend: Backend, val device: String, val title: String
          * CPU is offered on a Snapdragon only once chosen; the emulator offers
          * everything, for testing.
          */
-        fun choices(qualcomm: Boolean, tensorNpu: Boolean, emulator: Boolean, current: Processor): List<Processor> = when {
-            emulator -> entries
-            qualcomm -> entries.filter { it != TensorNpu && (it != Cpu || current == Cpu) }
+        fun choices(qualcomm: Boolean, tensorNpu: Boolean, emulator: Boolean, current: Processor, parallel: Boolean = false): List<Processor> = when {
+            emulator -> entries.filter { it != NpuGpuParallel || parallel }
+            qualcomm -> entries.filter { it != TensorNpu && (it != Cpu || current == Cpu) && (it != NpuGpuParallel || parallel) }
             tensorNpu -> listOf(Auto, TensorNpu, Gpu, Cpu)
             else -> listOf(Auto, Gpu, Cpu)
         }

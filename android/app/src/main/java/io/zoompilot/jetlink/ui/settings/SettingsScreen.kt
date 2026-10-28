@@ -263,6 +263,10 @@ private fun Performance(values: SettingsValues, info: SettingsInfo, actions: Set
     var choosing by remember { mutableStateOf(false) }
     val choices = info.processors
     val footer = when {
+        values.processor.resolved(info.automatic) == Processor.NpuGpuParallel &&
+            values.processor.fellBack(info.accelerator, info.automatic) ->
+            "This model has no validated causal split, so it runs on the whole NPU. " +
+                "Run Benchmark and check accuracy on this phone before use."
         values.processor.fellBack(info.accelerator, info.automatic) ->
             "The NPU did not take this model, so it runs on the GPU. Logs (in Help) say why. " +
                 "Changing the processor prepares models again."

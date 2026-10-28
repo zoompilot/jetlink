@@ -9,6 +9,8 @@ public struct SessionPlan: Sendable, Equatable {
   /// provider alone.
   public let provider: String?
   public let options: [String: String]
+  /// Per-session configuration, including an explicit fallback contract.
+  public let config: [String: String]
   /// The CPU provider's intra-op pool: 1 where an accelerator does the work.
   public let threads: Int
   /// The session as the log and the hello name it: "CoreML(CPUAndGPU)",
@@ -20,12 +22,13 @@ public struct SessionPlan: Sendable, Equatable {
   public let usesNeuralEngine: Bool
 
   public init(
-    model: URL, provider: String?, options: [String: String] = [:], threads: Int = 1, label: String,
+    model: URL, provider: String?, options: [String: String] = [:], config: [String: String] = [:], threads: Int = 1, label: String,
     usesGPU: Bool = false, usesNeuralEngine: Bool = false
   ) {
     self.model = model
     self.provider = provider
     self.options = options
+    self.config = config
     self.threads = threads
     self.label = label
     self.usesGPU = usesGPU
@@ -56,7 +59,7 @@ public struct SessionPlan: Sendable, Equatable {
   }
 }
 
-/// A loaded model: a chain of onnxruntime sessions run back to back over
+/// A loaded model: a chain or dependency DAG of onnxruntime sessions over
 /// buffers the engine owns, the Swift form of the Python ort worker.
 ///
 /// The host writes a frame's inputs into `hostInput(_:)`, calls `run()`, and
@@ -70,26 +73,50 @@ public final class OrtEngine: EngineCore, @unchecked Sendable {
   /// Whether the CPU is kept warm beside this engine: a busy thread, or
   /// Android's performance hints.
   public var keepsCPUWarm: Bool { keepWarm != nil || hint != nil }
-  public override var notes: String { "CPU keep-warm \(keepsCPUWarm ? "on" : "off")" }
+  public override var notes: String {
+    "CPU keep-warm \(keepsCPUWarm ? "on" : "off"); QNN shared I/O \(sharedAllocator == nil ? "off" : "on")"
+      + (schedule == nil ? "" : "; session DAG \(parallelExecution ? "parallel" : "serial")")
+  }
+  public override var accelerator: String { executedAccelerator }
   public override var coolsWhenIdle: Bool { usesNeuralEngine }
 
   private let chain: [OrtSession]
+  private let sharedAllocator: OrtSharedAllocator?
+  private let sharedSessions: [Bool]
   private var bindings: [[OrtBinding]] = []  // [parity][session]
   private let keepAlive: MetalKeepAlive?
   private let keepWarm: CPUKeepWarm?
   private let hint: PerformanceHint?
   private let usesNeuralEngine: Bool
+  private let schedule: SessionDAG?
+  private let parallelExecution: Bool
+  private let executedAccelerator: String
 
   /// `keepAlive` keeps the GPU clocked up between frames, `keepCPUWarm` the
   /// CPU; each only where a plan runs on that unit.
-  public init(plans: [SessionPlan], device: String, keepAlive: Bool = true, keepCPUWarm: Bool = true) throws {
+  public init(
+    plans: [SessionPlan], device: String, keepAlive: Bool = true, keepCPUWarm: Bool = true,
+    dataflow: Bool = false, parallel: Bool = true, accelerator: String = ""
+  ) throws {
     self.device = device
+    self.executedAccelerator = accelerator
     var chain: [OrtSession] = []
     for plan in plans {
-      chain.append(try OrtSession(model: plan.model, provider: plan.provider, options: plan.options, threads: plan.threads))
+      chain.append(try OrtSession(model: plan.model, provider: plan.provider, options: plan.options, config: plan.config, threads: plan.threads))
     }
     self.chain = chain
     self.providers = plans.map(\.label)
+    self.schedule = dataflow ? try SessionDAG(inputs: chain.map { $0.inputs.map(\.name) }, outputs: chain.map { $0.outputs.map(\.name) }) : nil
+    self.parallelExecution = parallel
+    let sharedSessions = plans.map { $0.options["enable_htp_shared_memory_allocator"] == "1" }
+    for (index, enabled) in sharedSessions.enumerated() where enabled {
+      guard plans[index].provider == "QNN", plans[index].usesNeuralEngine, !plans[index].usesGPU else {
+        throw OrtError("only QNN HTP sessions may bind QNN shared memory")
+      }
+    }
+    let shared = try sharedSessions.firstIndex(of: true).map { try OrtSharedAllocator(session: chain[$0]) }
+    self.sharedAllocator = shared
+    self.sharedSessions = sharedSessions
 
     // What the host stages: every session's inputs no earlier session
     // produces. What it can read: every session's outputs no later one reads.
@@ -108,10 +135,25 @@ public final class OrtEngine: EngineCore, @unchecked Sendable {
         outputs[spec.name] = spec
       }
     }
+    if dataflow {
+      let written = Set(chain.flatMap { $0.outputs.map(\.name) })
+      let read = Set(chain.flatMap { $0.inputs.map(\.name) })
+      inputs = [:]
+      outputs = [:]
+      for session in chain {
+        for spec in session.inputs where !written.contains(spec.name) { inputs[spec.name] = spec }
+        for spec in session.outputs where !read.contains(spec.name) { outputs[spec.name] = spec }
+      }
+    }
     // One buffer per tensor name: inputs, hand-offs and outputs alike.
     var sizes: [String: Int] = [:]
+    var tensorTypes: [String: TensorSpec] = [:]
     for session in chain {
       for spec in session.inputs + session.outputs {
+        if dataflow, let previous = tensorTypes[spec.name], previous != spec {
+          throw OrtError("incompatible session tensor \(spec.name)")
+        }
+        tensorTypes[spec.name] = spec
         sizes[spec.name] = max(sizes[spec.name] ?? 0, spec.byteCount)
       }
     }
@@ -122,7 +164,7 @@ public final class OrtEngine: EngineCore, @unchecked Sendable {
     let hint = warmCPU ? PerformanceHint.make() : nil
     self.hint = hint
     self.keepWarm = warmCPU && hint == nil ? CPUKeepWarm() : nil
-    try super.init(inputs: inputs, outputs: outputs, sizes: sizes)
+    try super.init(inputs: inputs, outputs: outputs, sizes: sizes, allocator: shared?.hostAllocator ?? .heap)
     // A throw from here on closes through deinit.
     try rebind([])
   }
@@ -145,14 +187,18 @@ public final class OrtEngine: EngineCore, @unchecked Sendable {
     var sets: [[OrtBinding]] = []
     for p in 0..<(pairs.isEmpty ? 1 : 2) {
       var set: [OrtBinding] = []
-      for session in chain {
+      for (index, session) in chain.enumerated() {
         let ins = session.inputs.map { ($0, buffer($0.name, parity: p)!) }
         let outs = session.outputs.map { spec -> (TensorSpec, UnsafeMutableRawPointer) in
           guard let input = outputOf[spec.name] else { return (spec, buffer(spec.name, parity: p)!) }
           // writes the buffer the state_ input reads next run
           return (spec, buffer(input, parity: p ^ 1)!)
         }
-        set.append(try OrtBinding(session: session, inputs: ins, outputs: outs))
+        // These allocations remain host-accessible. Only HTP sessions label
+        // their bindings QnnHtpShared; CPU/GPU sessions use CPU memory metadata.
+        set.append(try OrtBinding(
+          session: session, inputs: ins, outputs: outs,
+          sharedAllocator: sharedSessions[index] ? sharedAllocator : nil))
       }
       sets.append(set)
     }
@@ -172,6 +218,12 @@ public final class OrtEngine: EngineCore, @unchecked Sendable {
   }
 
   public override func execute() throws {
+    if let schedule {
+      try schedule.run(parallel: parallelExecution) { index in
+        try self.bindings[self.parity][index].run()
+      }
+      return
+    }
     for binding in bindings[parity] {
       try binding.run()
     }
@@ -181,7 +233,8 @@ public final class OrtEngine: EngineCore, @unchecked Sendable {
   /// second is the steady state.
   public override func warm() throws -> String {
     _ = try super.warm()
-    return "onnxruntime \(OrtRuntime.version) on \(device) in process, sessions \(providers.joined(separator: " then "))"
+    let shared = sharedAllocator.map { "; QNN shared I/O: \($0.totalBytes) bytes allocated" } ?? ""
+    return "onnxruntime \(OrtRuntime.version) on \(device) in process, sessions \(providers.joined(separator: " then "))\(shared)"
   }
 
   public override func close() {
