@@ -13,12 +13,19 @@ bench tools). There is one version: update the comma and Jetlink together.
   header with any other version is a broken stream: the server drops the
   link, a comma on another version gets no answer to its hello, and it drives
   on its small model.
-- **Picks.** The comma's hello carries its big-model pick and how long ago
-  it was made (`pick`: ref, sha256, nbytes, name, `age_s`). The server keeps
-  its own pick (Use Model, the web page's prepare) beside the cache
-  (`pick.json`), and its reply's `pick` is the newer of the two, with its
-  age; the comma then runs that one and asks its model manager for it. Each
-  end dates a pick by its own clock and only ages cross the link. The reply's
+- **Picks.** The comma's hello carries its big-model pick, how long ago it
+  was made and when by the comma's clock (`pick`: ref, sha256, nbytes, name,
+  `age_s`, `at`); the default, chosen by emptying the slot, is a pick too. The
+  server keeps its own pick (Use Model, the web page's prepare) beside the
+  cache (`pick.json`) with the pick the comma named last, and its reply's
+  `pick` is the newer of the two, with its age; the comma then runs that one
+  and asks its model manager for it, unless it has picked again since the
+  hello. Newer is settled by the comma's last hello where it can be: a pick
+  the comma has named loses to the next one it names, and one made on the
+  server wins while the comma still names the pick it named before, whatever
+  either clock did (a Jetson's starts again behind at every power-on). Only
+  when both ends picked since the last hello do the dates decide, each by its
+  own clock with ages crossing the link. The reply's
   `fetches` says whether the server downloads a model itself when asked: a
   default route and no download failed for want of the internet in the last
   10 minutes.

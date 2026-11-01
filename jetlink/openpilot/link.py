@@ -357,7 +357,8 @@ def open_link(parts, link: Link, should_stop=None):
   # booting; both resolve on their own
   client = connect_patiently(link)
   try:
-    hello = parts.models.heard(client.hello(timeout=10.0, pick=parts.models.hello_pick()))
+    sent = parts.models.hello_pick()
+    hello = parts.models.heard(client.hello(timeout=10.0, pick=sent), sent)
     parts.log.warning("jetlink: %s trt %s, engine %s, loaded %s",
                    hello.get('device'), hello.get('trt_version'),
                    hello.get('engine_state'), str(hello.get('loaded'))[:16])

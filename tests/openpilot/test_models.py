@@ -16,6 +16,7 @@ import urllib.request
 from unittest import mock
 
 from jetlink.openpilot import models
+from jetlink.registry.catalog import DEFAULT_BIG_MODEL_REF
 from tests.openpilot.fakes import OpenpilotTest
 
 
@@ -338,6 +339,65 @@ class TestPicksOnBothEnds(ModelsTest):
     self.models.adopt()
     self.assertEqual(self.op.store['ModelManager_DownloadRef'], 'small-model-ref')
     self.assertEqual(self.models.selected_model()['ref'], REF_B)
+
+  def empty_slot(self):
+    """The model manager's Default, chosen: the slot taken out."""
+    del self.op.store[self.SLOT]
+    (self.op.store_dir / self.SLOT).unlink()
+    self.models._slot_cache = None
+
+  def answer(self, ref, sent, ago=0.0):
+    """A hello that carried `sent`, answered with a pick of `ref` from a
+    server whose clock calls it `ago` seconds old."""
+    return self.models.heard({'pick': {'ref': ref, 'sha256': None, 'nbytes': None, 'age_s': ago}}, sent)
+
+  def test_the_hello_dates_our_pick_by_this_clock(self):
+    self.pick_here(REF_A, 'Alpha', ago=30)
+    self.assertAlmostEqual(self.models.hello_pick()['at'], time.time() - 30, delta=2)
+
+  def test_the_default_chosen_here_is_a_pick_the_server_does_not_undo(self):
+    # both ends named Beta; then the user chose the Default in the comma's list
+    self.catalog(bundle(DEFAULT_BIG_MODEL_REF, 'Cinque Terre V3', 0), bundle(REF_A, 'Alpha', 1), bundle(REF_B, 'Beta', 2))
+    self.pick_here(REF_B, 'Beta', ago=600)
+    self.answer(REF_B, self.models.hello_pick(), ago=600)
+    self.empty_slot()
+    self.assertEqual(self.models.selected_model()['ref'], DEFAULT_BIG_MODEL_REF)
+    self.models.adopt()
+    self.assertNotIn('ModelManager_DownloadRef', self.op.store)
+    # and the next hello names it, dated when it was chosen
+    pick = self.models.hello_pick()
+    self.assertEqual(pick['ref'], DEFAULT_BIG_MODEL_REF)
+    self.assertLess(pick['age_s'], 5)
+    # which another process knows too: it is kept beside the downloads
+    other = models.Models(self.op)
+    self.assertEqual(other.hello_pick()['ref'], DEFAULT_BIG_MODEL_REF)
+
+  def test_a_slot_never_filled_is_no_pick(self):
+    self.assertIsNone(self.models.hello_pick())
+    self.hear(REF_B, ago=6000)
+    self.assertEqual(self.models.selected_model()['ref'], REF_B)
+
+  def test_the_servers_answer_stands_for_the_pick_it_was_asked_with(self):
+    # a Jetson whose clock started again behind dates its pick oddly; what
+    # counts is that it chose it knowing ours
+    self.pick_here(REF_A, 'Alpha', ago=60)
+    self.answer(REF_B, self.models.hello_pick(), ago=90_000)
+    self.assertEqual(self.models.selected_model()['ref'], REF_B)
+    self.models.adopt()
+    self.assertEqual(self.op.store['ModelManager_DownloadRef'], REF_B)
+
+  def test_a_pick_made_here_since_the_hello_is_ours(self):
+    self.pick_here(REF_A, 'Alpha', ago=600)
+    self.answer(REF_B, self.models.hello_pick(), ago=0)
+    self.pick_here(REF_A, 'Alpha', ago=5)   # picked again after the hello
+    self.assertEqual(self.models.selected_model()['ref'], REF_A)
+    self.empty_slot()                       # or the default chosen
+    self.assertEqual(self.models.selected_model()['ref'], self.models.default_model()['ref'])
+
+  def test_an_answer_to_a_hello_with_no_pick_does_not_beat_one_made_since(self):
+    self.answer(REF_B, None)
+    self.pick_here(REF_A, 'Alpha', ago=5)
+    self.assertEqual(self.models.selected_model()['ref'], REF_A)
 
   def test_without_a_place_to_ask_it_drives_all_the_same(self):
     self.op.keys = dataclasses.replace(self.op.keys, select=None)

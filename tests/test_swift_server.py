@@ -445,25 +445,26 @@ def test_the_hello_carries_the_link_and_answers_with_what_the_comma_reads(server
 
 def test_the_hello_settles_whose_pick_is_newer(tmp_path):
   # a model picked on either end drives on both: the comma's hello says what
-  # it picked and how long ago, and the answer is the newer of that and the
-  # server's, kept beside the cache
+  # it picked, how long ago and when, and the answer is the newer of that and
+  # the server's, kept beside the cache
   with running(tmp_path) as s:
     client = s.connect()
     try:
       hello = client.hello(timeout=5)
       assert hello['pick'] is None and isinstance(hello['fetches'], bool)
-      mine = {'ref': 'a' * 40, 'sha256': '1' * 64, 'nbytes': 766, 'name': 'Alpha', 'age_s': 30.0}
+      now = time.time()
+      mine = {'ref': 'a' * 40, 'sha256': '1' * 64, 'nbytes': 766, 'name': 'Alpha', 'age_s': 30.0, 'at': now - 30}
       pick = client.hello(timeout=5, pick=mine)['pick']
       assert (pick['ref'], pick['sha256'], pick['by']) == ('a' * 40, '1' * 64, 'comma') and 29 <= pick['age_s'] < 40
-      older = dict(mine, ref='b' * 40, sha256='2' * 64, age_s=600.0)
-      assert client.hello(timeout=5, pick=older)['pick']['ref'] == 'a' * 40
-      newer = dict(older, age_s=1.0)
-      assert client.hello(timeout=5, pick=newer)['pick']['ref'] == 'b' * 40
+      # the comma picks another: it wins, by what the comma named before, not by the server's clock
+      other = dict(mine, ref='b' * 40, sha256='2' * 64, age_s=1.0, at=now - 1)
+      assert client.hello(timeout=5, pick=other)['pick']['ref'] == 'b' * 40
       # one with no pick of its own takes the server's
       assert client.hello(timeout=5, pick=dict(mine, age_s=None))['pick']['ref'] == 'b' * 40
     finally:
       client.close()
-  assert json.loads((s.cache / 'pick.json').read_text())['ref'] == 'b' * 40
+  kept = json.loads((s.cache / 'pick.json').read_text())
+  assert kept['ref'] == 'b' * 40 and 'heard' not in kept
 
 
 def test_a_hello_restarts_the_seqs_and_replays_are_dropped(server):

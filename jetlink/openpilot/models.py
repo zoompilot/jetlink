@@ -29,6 +29,7 @@ into it itself, and the fork's picker shows what drives.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -50,6 +51,11 @@ INDEX_TTL = 2.0
 DOWNLOAD_RETRY_DELAYS = (5.0, 15.0, 30.0, 60.0, 120.0)
 # server_pick() before this process has heard a hello
 _UNHEARD = object()
+# heard() told nothing of the hello's own pick: an older caller
+_UNTOLD = object()
+# the slot as jetlink saw it last, under model_dir(): to tell a slot the user
+# emptied (the default, chosen) from one never filled
+SLOT_STATE = 'slot.json'
 
 
 def _dated(pick) -> dict | None:
@@ -70,6 +76,8 @@ class Models:
     self.op = op
     self._index_cache: tuple[float, list[dict], dict[str, dict]] | None = None
     self._slot_cache: tuple[float, dict | None, float | None] | None = None
+    # SLOT_STATE as this process last read or wrote it
+    self._slot_state: dict | None = None
     # the pick of the last hello this process heard, and the owner's record
     # of the last hello any process heard
     self._heard: dict | None | object = _UNHEARD
@@ -175,8 +183,51 @@ class Models:
         at = os.stat(Path(self.op.params_dir()) / key).st_mtime
       except OSError:
         pass
+    self._note_slot(pick)
     self._slot_cache = (now, pick, at)
     return pick
+
+  def _note_slot(self, pick: dict | None) -> None:
+    """Keep SLOT_STATE in step with the slot: what is in it, and when it was
+    emptied. A pick taken out is the default chosen (the model manager's
+    Default, here or on sunnylink), a pick like any other, which the hello
+    names and a server's older pick must not undo. Read again only when the
+    slot no longer matches what this process knows, so per process it costs
+    a file read at a change. Never raises."""
+    last = {'ref': pick['ref'], 'sha256': pick['sha256']} if pick else None
+    state = self._slot_state
+    if state is not None and state.get('last') == last:
+      return
+    path = self.model_dir() / SLOT_STATE
+    try:
+      state = json.loads(path.read_text())
+      state = state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+      state = {}
+    if state and state.get('last') == last:
+      self._slot_state = state
+      return
+    if last is None and not state:
+      # empty with nothing known before it: never picked, as far as we know
+      self._slot_state = {'last': None, 'cleared_at': None}
+      return
+    state = {'last': last, 'cleared_at': time.time() if last is None else None}
+    self._slot_state = state
+    try:
+      path.parent.mkdir(parents=True, exist_ok=True)
+      tmp = path.with_suffix('.tmp')
+      tmp.write_text(json.dumps(state))
+      os.replace(tmp, path)
+    except OSError:
+      self.op.log.exception("jetlink: could not keep the big-model slot's state")
+
+  def default_chosen_at(self) -> float | None:
+    """When the slot was emptied by this clock, the default chosen; None while
+    it holds a pick, or was never filled."""
+    if self.selected_slot() is not None or self._slot_state is None:
+      return None
+    at = self._slot_state.get('cleared_at')
+    return float(at) if isinstance(at, (int, float)) else None
 
   def default_model(self) -> dict | None:
     """What runs with no pick: jetlink's default big model, else the newest the
@@ -205,18 +256,32 @@ class Models:
       return self._own_row(own)
     return self.default_model()
 
+  def _own(self) -> tuple[dict | None, float | None]:
+    """Our pick as a row, and when it was made by this clock: the slot's, or
+    the default when it was chosen by emptying the slot. (None, None) with
+    neither."""
+    if (own := self.selected_slot()) is not None:
+      return self._own_row(own), self.picked_at()
+    if (at := self.default_chosen_at()) is not None and (default := self.default_model()) is not None:
+      return default, at
+    return None, None
+
   def _own_row(self, own: dict) -> dict:
     return self._row(own['name'], own['ref'], self._index()[1], own['sha256'])
 
   # -- picks on both ends -----------------------------------------------------
-  # A pick is made on either end: in the comma's list, or on the server (its
-  # web page, an app's Use Model). Each hello carries the comma's own pick and
-  # how long ago it was made, and the server answers with the newer of that
-  # and its own (PickStore in JetlinkServer). The answer is kept with the rest
-  # of the hello (gadget.SERVER, through the owner), dated by this clock, and
-  # selected_model() takes whichever pick is newer; so a model picked on the
-  # server drives without being picked here too, and one picked here goes to
-  # the server at the next hello.
+  # A pick is made on either end: in the comma's list (the default included,
+  # chosen by emptying the slot), or on the server (its web page, an app's Use
+  # Model). Each hello carries the comma's own pick, when it was made by this
+  # clock and how long ago, and the server answers with the newer of that and
+  # its own (PickStore in JetlinkServer), which it settles by what the comma
+  # named before rather than by its clock where it can: a Jetson's clock
+  # starts again behind at every power-on. The answer is kept with the rest of
+  # the hello (gadget.SERVER, through the owner) along with the pick the hello
+  # carried, and selected_model() takes the server's when that is still our
+  # pick: the server chose knowing it. So a model picked on the server drives
+  # without being picked here too, and one picked here goes to the server at
+  # the next hello.
 
   def picked_at(self) -> float | None:
     """When the slot was last written, by this clock: when the pick was made.
@@ -224,21 +289,24 @@ class Models:
     return self._slot_cache[2] if self.selected_slot() is not None and self._slot_cache else None
 
   def hello_pick(self) -> dict | None:
-    """Our own pick, for the hello: {ref, sha256, nbytes, name, age_s}, the
-    pointer where it is resolved already (no network here). None with nothing
-    picked here, or no date for it: the server's pick, if any, stands."""
-    own, at = self.selected_slot(), self.picked_at()
-    if own is None or at is None:
+    """Our own pick, for the hello: {ref, sha256, nbytes, name, age_s, at},
+    the pointer where it is resolved already (no network here), `at` when it
+    was made by this clock. None with nothing picked here, or no date for it:
+    the server's pick, if any, stands."""
+    row, at = self._own()
+    if row is None or at is None or not (row['ref'] or row['oid']):
       return None
-    row = self._own_row(own)
     return {'ref': row['ref'], 'sha256': row['oid'], 'nbytes': row['size'], 'name': row['name'],
-            'age_s': round(max(0.0, time.time() - at), 1)}
+            'age_s': round(max(0.0, time.time() - at), 1), 'at': round(at, 3)}
 
-  def heard(self, hello: dict) -> dict:
-    """The server's hello with its `pick` dated by this clock (_dated), which
-    is how the owner keeps it (lending.SERVER_FIELDS) and server_pick() reads
-    it. This process goes by it at once, whatever the owner does with it."""
+  def heard(self, hello: dict, asked=_UNTOLD) -> dict:
+    """The server's hello with its `pick` dated by this clock (_dated), and
+    `asked`, the hello_pick() the hello carried, kept with it: which is how
+    the owner keeps it (lending.SERVER_FIELDS) and server_pick() reads it.
+    This process goes by it at once, whatever the owner does with it."""
     self._heard = _dated(hello.get('pick'))
+    if self._heard is not None and asked is not _UNTOLD:
+      self._heard['asked'] = {k: asked.get(k) for k in ('ref', 'sha256', 'at')} if isinstance(asked, dict) else None
     return {**hello, 'pick': self._heard} if self._heard is not None else hello
 
   def server_pick(self) -> dict | None:
@@ -257,20 +325,32 @@ class Models:
 
   def _newer_server_pick(self) -> dict | None:
     """The server's last pick, when it is another model than ours and was
-    picked after it, or we have none."""
-    theirs, own = self.server_pick(), self.selected_slot()
-    if theirs is None or (own is not None and (self._same(theirs, self._own_row(own)) or
-                                               theirs['at'] <= (self.picked_at() or 0.0))):
+    picked after it, or we have none. The server settled that when the hello
+    carried this pick of ours; a pick made here since that hello is newer.
+    An answer kept without the pick it was asked with (an older jetlink) goes
+    by its date."""
+    theirs = self.server_pick()
+    if theirs is None:
       return None
-    return theirs
+    own, at = self._own()
+    if own is None:
+      return theirs
+    if self._same(theirs, own):
+      return None
+    if 'asked' in theirs:
+      asked = theirs['asked']
+      fresh = isinstance(asked, dict) and self._same(asked, own) and isinstance(asked.get('at'), (int, float)) \
+        and at is not None and abs(asked['at'] - at) < 1.0
+      return theirs if fresh else None
+    return None if theirs['at'] <= (at or 0.0) else theirs
 
   @staticmethod
   def _same(pick: dict, row: dict) -> bool:
     """One model: by the catalog ref where both have one, since two refs can
     share one export, else by the hash. The server's PickStore.sameModel."""
-    if pick['ref'] and row['ref']:
+    if pick.get('ref') and row['ref']:
       return pick['ref'] == row['ref']
-    return bool(pick['sha256']) and pick['sha256'] == row['oid']
+    return bool(pick.get('sha256')) and pick['sha256'] == row['oid']
 
   def _server_row(self, pick: dict) -> dict:
     """The server's pick as a catalog row: ours where we list it, with the
