@@ -130,5 +130,40 @@
       #expect(stopping.upperBound <= server.lowerBound)
       #expect(server.upperBound <= statusPage.lowerBound)
     }
+
+    #if os(Linux)
+      /// A SIGTERM during start-up waits for the handler, rather than ending
+      /// the process: Linux holds it until the signal sources are registered.
+      @Test func sigtermDuringStartUpStillStopsCleanly() throws {
+        let tmp = try TemporaryDirectory()
+        let page = try TCPListener(host: "127.0.0.1", port: 0).port
+        let log = try tmp.file("server.log", "")
+        let process = Process()
+        process.executableURL = try #require(Binary.url)
+        process.arguments = [
+          "--backend", "ort", "--device", "cpu", "--listen", "--host", "127.0.0.1", "--port", "0", "--cache", tmp.path, "--no-preload",
+          "--status-port", "\(page)",
+        ]
+        let handle = try FileHandle(forWritingTo: log)
+        process.standardOutput = handle
+        process.standardError = handle
+        try process.run()
+        defer { if process.isRunning { process.terminate() } }
+
+        // At the serving line, before the web page and the handler are up.
+        let serving = eventually(timeout: 30) {
+          !process.isRunning || String(decoding: (try? Data(contentsOf: log)) ?? Data(), as: UTF8.self).contains("jetlink-server is serving")
+        }
+        guard serving, process.isRunning else {
+          Issue.record("never served: \(String(decoding: (try? Data(contentsOf: log)) ?? Data(), as: UTF8.self))")
+          return
+        }
+        kill(process.processIdentifier, SIGTERM)
+        process.waitUntilExit()
+        let text = String(decoding: try Data(contentsOf: log), as: UTF8.self)
+        #expect(process.terminationReason == .exit && process.terminationStatus == 0, "\(text)")
+        #expect(text.contains("stopping on SIGTERM") && text.contains("stopped the web page"), "\(text)")
+      }
+    #endif
   }
 #endif

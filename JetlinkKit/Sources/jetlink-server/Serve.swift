@@ -210,6 +210,12 @@
   /// Runs `stop` on the main queue at SIGINT or SIGTERM, then exits 0 by
   /// `exitNow`. Never returns.
   func stopOnSignals(_ stop: @escaping @Sendable (String) -> Void) -> Never {
+    // The sources are registered before the main thread goes to dispatch: on
+    // Linux dispatchMain leaves it in sigsuspend with nothing blocked, so a
+    // held signal that comes before a source has taken over ends the process.
+    // Their own queue, since the main queue does not run until then.
+    let queue = DispatchQueue(label: "jetlink.signals")
+    let registered = DispatchGroup()
     let sources = stopSignals.map { number, name in
       #if os(macOS)
         // Handled by the source alone; a shell that starts this in the
@@ -218,14 +224,19 @@
       #endif
       // Not on Linux, where the signals are held: ignoring one drops it if
       // it is already pending, a SIGTERM that came during start-up.
-      let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+      let source = DispatchSource.makeSignalSource(signal: number, queue: queue)
+      registered.enter()
+      source.setRegistrationHandler { registered.leave() }
       source.setEventHandler {
-        stop(name)
-        exitNow(0)
+        DispatchQueue.main.async {
+          stop(name)
+          exitNow(0)
+        }
       }
       source.resume()
       return source
     }
+    registered.wait()
     withExtendedLifetime(sources) { dispatchMain() }
   }
 
