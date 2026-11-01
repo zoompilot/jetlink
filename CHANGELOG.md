@@ -1,4 +1,12 @@
 <!-- Each release: a "Jetlink vX.Y.Z" heading underlined with =, newest first. A release that changes the fork contract ends with a **Forks** group (docs/publishing.md). -->
+Jetlink v0.8.13
+===============
+**Models**
+* Fixed a big model picked on the comma going back to the one picked before. Choosing the Default reverted every time, and after the Jetson restarted with its clock behind (offline in the car), any pick could. **Update the Jetson and the comma.**
+
+**Forks**
+* API stays 3. An emptied big-model slot that held a pick now counts as choosing jetlink's default, which goes to the server like any pick; a slot never filled still takes the server's pick. jetlink keeps the slot's history in `slot.json` under its model directory.
+
 Jetlink v0.8.12
 ===============
 **Models**
