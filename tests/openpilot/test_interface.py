@@ -47,6 +47,7 @@ MODELD = {
   'event': '(name: str, **fields: Any) -> None',
   'small_reset': '(small: Any) -> Callable[[], None] | None',
   'model_warp': '(small: Any, cam_w: int, cam_h: int, model_w: int, model_h: int) -> FrameWarp | None',
+  'camera_calibration': '() -> dict | None',
 }
 SIDES = {'StatusSide': READERS, 'WorkerSide': WORKER, 'ModelSide': MODELD, 'Openpilot': MODELD}
 # what modeld hands attach, and what it reads off and writes onto the result
@@ -59,7 +60,7 @@ JOINED = {'handovers': None, 'big_model_state': None, 'chestnut': None, 'get_act
 WARP = {'output': None, 'start': '(frame: int, big_frame: int, tfm: Any, big_tfm: Any) -> None', 'wait': '() -> None'}
 MODELS = {'SmallModel': SMALL, 'JoinedModel': JOINED, 'FrameWarp': WARP}
 # the members an implementation may lack: jetlink reads them with getattr and a fallback
-OPTIONAL = {'ModelSide': {'small_reset', 'model_warp'}, 'Openpilot': {'small_reset', 'model_warp'},
+OPTIONAL = {'ModelSide': {'small_reset', 'model_warp', 'camera_calibration'}, 'Openpilot': {'small_reset', 'model_warp', 'camera_calibration'},
             'SmallModel': {'desire_key', 'numpy_inputs', 'lat_delay', 'PLANPLUS_CONTROL'},
             'JoinedModel': {'get_action_from_model', 'constants', 'LAT_SMOOTH_SECONDS', 'LONG_SMOOTH_SECONDS', 'lat_delay'}}
 

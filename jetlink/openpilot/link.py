@@ -358,7 +358,10 @@ def open_link(parts, link: Link, should_stop=None):
   client = connect_patiently(link)
   try:
     sent = parts.models.hello_pick()
-    hello = parts.models.heard(client.hello(timeout=10.0, pick=sent), sent)
+    # the cameras' calibration, where the adapter knows it, for the server
+    calibration = getattr(parts.op, 'camera_calibration', lambda: None)()
+    camera = {'camera': calibration} if calibration else {}
+    hello = parts.models.heard(client.hello(timeout=10.0, pick=sent, **camera), sent)
     parts.log.warning("jetlink: %s trt %s, engine %s, loaded %s",
                    hello.get('device'), hello.get('trt_version'),
                    hello.get('engine_state'), str(hello.get('loaded'))[:16])

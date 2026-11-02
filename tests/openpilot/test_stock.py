@@ -69,6 +69,16 @@ class FakeParams:
     self.world.params.pop(key, None)
 
 
+class FakeEvent:
+  """cereal's log.Event over JSON: {which: {field: value}}, as calibrationd saves one in CalibrationParams."""
+
+  @staticmethod
+  def from_bytes(raw):
+    which, fields = next(iter(json.loads(raw).items()))
+    msg = SimpleNamespace(which=lambda: which, **{which: SimpleNamespace(**fields)})
+    return mock.MagicMock(__enter__=lambda self: msg, __exit__=lambda *a: False)
+
+
 class FakeSubMaster(testing.FakeSubMaster):
   """The kit's, over the world's messages, failing as the world says."""
 
@@ -150,6 +160,7 @@ class World:
       ('openpilot.selfdrive.modeld.parse_model_outputs', 'Parser'): Parser,
       ('openpilot.system.camerad.cameras.nv12_info', 'get_nv12_info'): nv12_info,
       ('openpilot.cereal', 'messaging'): None,   # the module below
+      ('openpilot.cereal', 'log'): SimpleNamespace(Event=FakeEvent),
     }
 
   def modules(self) -> dict[str, ModuleType]:
@@ -270,6 +281,22 @@ class TestParams(StockTest):
 
 
 class TestDevice(StockTest):
+  def test_camera_calibration_is_calibrationds_saved_one(self):
+    self.world.declared.add('CalibrationParams')
+    assert self.op.camera_calibration() is None, 'not yet calibrated: nothing saved'
+    for which in ('liveCalibration', 'extrinsicsCalibration'):  # upstream's name, and a fork's
+      self.world.params['CalibrationParams'] = json.dumps(
+        {which: {'calStatus': 'calibrated', 'wideFromDeviceEuler': [0.0, 0.0217, -0.0161], 'height': [1.374]}}).encode()
+      assert self.op.camera_calibration() == {'wide_from_device_euler': [0.0, 0.0217, -0.0161], 'height': 1.374}
+    self.world.params['CalibrationParams'] = json.dumps(
+      {'liveCalibration': {'calStatus': 'uncalibrated', 'wideFromDeviceEuler': [0.0, 0.0, 0.0], 'height': [1.22]}}).encode()
+    assert self.op.camera_calibration() is None, 'only a calibrated one'
+    self.world.params['CalibrationParams'] = json.dumps(
+      {'liveCalibration': {'calStatus': 'calibrated', 'wideFromDeviceEuler': [0.0, 0.0217, -0.0161], 'height': []}}).encode()
+    assert self.op.camera_calibration() is None, 'only a whole one'
+    self.world.params['CalibrationParams'] = b'not an event'
+    assert self.op.camera_calibration() is None, 'never raises'
+
   def test_camera_by_device(self):
     assert self.op.camera() == fakes.TICI
     self.world.device = 'mici'

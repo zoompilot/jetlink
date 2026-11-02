@@ -314,6 +314,13 @@ class BuildingOnroad(OpenpilotTest):
     link.open_link(self.parts, self.link)
     self.client.hello.assert_called_once_with(timeout=10.0, pick={'ref': 'f' * 40, 'age_s': 5.0})
 
+  def test_the_hello_carries_the_cameras_calibration_where_the_adapter_knows_it(self):
+    self.patch(self.parts.models, 'hello_pick', return_value=None)
+    calibration = {'wide_from_device_euler': [0.0, 0.0217, -0.0161], 'height': 1.374}
+    self.parts.op.camera_calibration = lambda: calibration
+    link.open_link(self.parts, self.link)
+    self.client.hello.assert_called_once_with(timeout=10.0, pick=None, camera=calibration)
+
   def test_a_newer_pick_on_the_server_is_what_drives_and_is_ours_now(self):
     # picked on the Jetson's web page while parked: it drives at the next join
     theirs = {'name': 'Cinque Terre V3', 'ref': 'e' * 40, 'oid': 'e' * 64, 'size': 99}

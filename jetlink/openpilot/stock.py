@@ -145,6 +145,25 @@ class Stock:
     from jetlink.comma.port import chestnut_attached
     return chestnut_attached(self.CHESTNUT_IDS)
 
+  def camera_calibration(self) -> dict | None:
+    # calibrationd's saved calibration: liveCalibration upstream,
+    # extrinsicsCalibration in a fork that renamed it
+    try:
+      from openpilot.cereal import log
+      raw = self._params().get('CalibrationParams')
+      if not raw:
+        return None
+      with log.Event.from_bytes(raw) as msg:
+        cal = getattr(msg, msg.which())
+        if str(cal.calStatus) != 'calibrated':
+          return None
+        euler, height = [float(v) for v in cal.wideFromDeviceEuler], [float(v) for v in cal.height]
+      if len(euler) != 3 or len(height) != 1 or not height[0] > 0:
+        return None
+      return {'wide_from_device_euler': euler, 'height': height[0]}
+    except Exception:
+      return None
+
   def camera(self) -> tuple[int, int, int, int]:
     # modeld takes the size from camerad's buffer; a comma four's os04c10 is
     # the 1344x760 one, every other device's the 1928x1208

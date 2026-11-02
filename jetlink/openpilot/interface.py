@@ -160,6 +160,14 @@ class ModelSide(WorkerSide, Protocol):
     frame thread at a hand-back, so it zeroes the history in place and
     allocates and compiles nothing; warp.reset_queues makes one."""
 
+  def camera_calibration(self) -> dict | None:
+    """Optional (OPTIONAL): what calibrationd saved of the cameras
+    (CalibrationParams), {wide_from_device_euler: [roll, pitch, yaw] of the
+    wide road camera from the device in radians, height: the camera's height
+    above the road in metres}, or None before it is calibrated. Read once a
+    link; the hello carries it, for the server to place what the cameras saw.
+    Never raises."""
+
   def model_warp(self, small: Any, cam_w: int, cam_h: int, model_w: int, model_h: int) -> FrameWarp | None:
     """Optional (OPTIONAL): the warp the link sends frames through, warmed,
     or None for openpilot's driving warp pickle at warp_path (warp.Warp). For
@@ -237,7 +245,7 @@ class FrameWarp(Protocol):
 # the protocols, where a name would be a member itself; a type checker still
 # asks for these, as typing has no optional member
 OPTIONAL: dict[type, tuple[str, ...]] = {
-  ModelSide: ('small_reset', 'model_warp'),
+  ModelSide: ('small_reset', 'model_warp', 'camera_calibration'),
   SmallModel: ('desire_key', 'numpy_inputs', 'lat_delay', 'PLANPLUS_CONTROL'),
   JoinedModel: ('get_action_from_model', 'constants', 'LAT_SMOOTH_SECONDS', 'LONG_SMOOTH_SECONDS', 'lat_delay'),
 }
