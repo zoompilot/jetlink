@@ -113,11 +113,45 @@ final class OrtSession: @unchecked Sendable {
   }
 }
 
+/// Host-accessible allocations tracked by QNN for RPC memory registration.
+/// Retaining the session keeps its allocator valid until every buffer is freed.
+final class OrtSharedAllocator: @unchecked Sendable {
+  let pointer: OpaquePointer
+  private let session: OrtSession
+
+  init(session: OrtSession) throws {
+    self.session = session
+    var allocator: OpaquePointer?
+    try OrtError.check(jl_shared_allocator_create(session.pointer, &allocator))
+    guard let allocator else { throw OrtError("QNN returned no shared allocator") }
+    pointer = allocator
+  }
+
+  deinit { jl_shared_allocator_release(pointer) }
+
+  var totalBytes: Int { jl_shared_allocator_total_bytes(pointer) }
+
+  var hostAllocator: HostAllocator {
+    HostAllocator(
+      allocate: { [self] bytes in
+        var memory: UnsafeMutableRawPointer?
+        try OrtError.check(jl_shared_allocator_alloc(pointer, bytes, &memory))
+        guard let memory else { throw OrtError("QNN shared allocation returned no pointer") }
+        return memory
+      },
+      free: { [self] memory in
+        jl_shared_allocator_free(pointer, memory)
+      })
+  }
+}
+
 /// Caller-owned buffers bound to one session's inputs and outputs.
 final class OrtBinding {
   private let pointer: OpaquePointer
+  private let sharedAllocator: OrtSharedAllocator?
 
-  init(session: OrtSession, inputs: [(TensorSpec, UnsafeMutableRawPointer)], outputs: [(TensorSpec, UnsafeMutableRawPointer)]) throws {
+  init(session: OrtSession, inputs: [(TensorSpec, UnsafeMutableRawPointer)], outputs: [(TensorSpec, UnsafeMutableRawPointer)], sharedAllocator: OrtSharedAllocator? = nil) throws {
+    self.sharedAllocator = sharedAllocator
     var names: [UnsafeMutablePointer<CChar>?] = []
     var dims: [UnsafeMutablePointer<Int64>] = []
     defer {
@@ -135,7 +169,7 @@ final class OrtBinding {
     let ins = inputs.map { tensor($0.0, $0.1) }
     let outs = outputs.map { tensor($0.0, $0.1) }
     var binding: OpaquePointer?
-    try OrtError.check(jl_binding_create(session.pointer, ins, ins.count, outs, outs.count, &binding))
+    try OrtError.check(jl_binding_create(session.pointer, ins, ins.count, outs, outs.count, sharedAllocator?.pointer, &binding))
     guard let binding else { throw OrtError("onnxruntime returned no binding") }
     pointer = binding
   }
