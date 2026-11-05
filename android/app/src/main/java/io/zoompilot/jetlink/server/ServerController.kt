@@ -4,7 +4,9 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.util.Log
+import io.zoompilot.jetlink.BuildConfig
 import io.zoompilot.jetlink.settings.Chip
+import io.zoompilot.jetlink.settings.Processor
 import io.zoompilot.jetlink.settings.SettingsValues
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +65,11 @@ class ServerController(private val context: Context, private val scope: Coroutin
 
     /** Starts the server with [settings], restarting one that runs. */
     suspend fun start(settings: SettingsValues) = lifecycle.withLock {
+        if (settings.processor.resolved() == Processor.NpuGpuParallel && !BuildConfig.EXPERIMENTAL_CAUSAL_PREFILL) {
+            withContext(Dispatchers.IO) { Native.stop() }
+            run.value = RunState.Failed("This build does not enable the causal-prefill experiment.")
+            return@withLock
+        }
         run.value = RunState.Starting
         // the server stops one that runs first
         val error = withContext(Dispatchers.IO) { Native.start(config(settings).toString()) }
@@ -99,6 +106,15 @@ class ServerController(private val context: Context, private val scope: Coroutin
         // a model compiled for the NPU is good for this system build alone
         put("firmware", Build.FINGERPRINT)
         put("native_library_dir", context.applicationInfo.nativeLibraryDir)
+        put("qnn_shared_io", BuildConfig.QNN_SHARED_IO)
+        put("qnn_strict", BuildConfig.QNN_STRICT)
+        put("qnn_no_activation_fusion", BuildConfig.QNN_NO_ACTIVATION_FUSION)
+        put("qnn_runtime_identity", BuildConfig.QNN_RUNTIME_IDENTITY)
+        if (processor == Processor.NpuGpuParallel) {
+            context.getExternalFilesDir(null)?.let {
+                put("parallel_bundle", File(it, "causal-prefill-v1").absolutePath)
+            }
+        }
     }
 
     /** Follows the snapshot and the log for as long as the app runs. */

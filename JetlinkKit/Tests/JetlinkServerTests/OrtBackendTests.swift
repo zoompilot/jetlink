@@ -24,6 +24,7 @@ struct OrtBackendTests {
       (.aneWhole, ["model"], [.coreML("ALL")], "aneWhole"),
       (.htp, ["vision", "policy"], [.htp, .qnnGPU], "split"),
       (.htpWhole, ["model"], [.htp], "aneWhole"),
+      (.htpParallel, ["vision", "history", "decode", "join"], [.htp, .qnnGPU, .htp, .cpu], "qnnPrefillBase"),
       (.gpu, ["model"], [.qnnGPU], "whole"),
       (.cpu, ["model"], [.cpu], cpuLayout),
     ]
@@ -37,7 +38,7 @@ struct OrtBackendTests {
     #if canImport(Metal)
       #expect(OrtProfile.available == [.ane, .aneWhole, .coreml, .cpu])
     #elseif os(Android)
-      #expect(OrtProfile.available == [.htp, .htpWhole, .gpu, .cpu])
+      #expect(OrtProfile.available == [.htp, .htpWhole, .htpParallel, .gpu, .cpu])
     #else
       #expect(OrtProfile.available == [.cpu])
     #endif

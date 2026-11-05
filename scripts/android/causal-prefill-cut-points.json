@@ -1,0 +1,110 @@
+[
+  {
+    "name": "vision",
+    "file": "vision.onnx",
+    "unit": "htp",
+    "after": [],
+    "inputs": [
+      "new_img",
+      "state_img_q"
+    ],
+    "outputs": [
+      "view_39",
+      "linear_76",
+      "linear_77",
+      "linear_78",
+      "linear_79",
+      "linear_80",
+      "mul_36",
+      "linear_82",
+      "linear_81",
+      "view_60",
+      "next_state_img_q"
+    ],
+    "nodes": 500,
+    "weight_bytes": 705804828,
+    "sha256": "56c0b305332e0de7ba2388c530287d3169c552a98ddd752520f4ef3766c1035f"
+  },
+  {
+    "name": "off",
+    "file": "off.onnx",
+    "unit": "htp",
+    "after": [
+      "vision"
+    ],
+    "inputs": [
+      "view_39",
+      "desire",
+      "traffic_convention",
+      "action_t",
+      "state_desire_q",
+      "state_feat_q"
+    ],
+    "outputs": [
+      "mul_41",
+      "mul_42",
+      "linear_120",
+      "linear_126",
+      "next_state_desire_q"
+    ],
+    "nodes": 230,
+    "weight_bytes": 32757604,
+    "sha256": "14304ea9fe4ca891ae7fb9a9c0e6f20c479837653944c4ff72777373adc52215"
+  },
+  {
+    "name": "on",
+    "file": "on.onnx",
+    "unit": "gpu",
+    "after": [
+      "vision"
+    ],
+    "inputs": [
+      "view_39",
+      "desire",
+      "traffic_convention",
+      "action_t",
+      "state_desire_q",
+      "state_feat_q"
+    ],
+    "outputs": [
+      "mul_48"
+    ],
+    "nodes": 208,
+    "weight_bytes": 25287078,
+    "sha256": "85d7c83ec14f8bafd7ae899ffb3f905840edf8c85de0b1a6ba1de41c315d903e"
+  },
+  {
+    "name": "join",
+    "file": "join.onnx",
+    "unit": "cpu",
+    "after": [
+      "vision",
+      "off",
+      "on"
+    ],
+    "inputs": [
+      "linear_76",
+      "linear_77",
+      "linear_78",
+      "linear_79",
+      "linear_80",
+      "mul_36",
+      "linear_82",
+      "linear_81",
+      "view_60",
+      "mul_41",
+      "mul_42",
+      "linear_120",
+      "linear_126",
+      "mul_48",
+      "state_feat_q"
+    ],
+    "outputs": [
+      "outputs",
+      "next_state_feat_q"
+    ],
+    "nodes": 6,
+    "weight_bytes": 44,
+    "sha256": "014a7415f2a15b6278e2217957ac8e5e65beeac55a2033fc123bfd3284cfb2e3"
+  }
+]
