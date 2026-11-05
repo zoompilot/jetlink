@@ -121,7 +121,7 @@ def graph() -> dict[str, tuple[Path, ast.Module, set[str]]]:
 
 def test_the_walk_reaches_the_comma_side():
   for name in ('jetlink.comma.owner', 'jetlink.comma.root', 'jetlink.transport.ffs', 'jetlink.client',
-               'jetlink.registry.catalog', 'jetlink.openpilot.provision'):
+               'jetlink.registry.index', 'jetlink.openpilot.provision'):
     assert name in graph(), name
 
 

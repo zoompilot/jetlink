@@ -57,7 +57,7 @@ class Stock:
   # the canonical names, which a fork declares in params_keys.h. No model
   # manager upstream: no big-model slot or catalog, so jetlink runs its default
   KEYS = Keys(link='JetlinkLink', offroad='IsOffroad', progress='JetlinkProgress', spec='JetlinkSpec',
-              pointers='JetlinkModelPointers', charge_phone='JetlinkChargePhone')
+              charge_phone='JetlinkChargePhone')
   # the model manager's catalog version; none upstream
   CATALOG_SELECTOR = 0
   # comma's chestnut, running and in its ROM (common.hardware.usb's

@@ -64,7 +64,7 @@ OPTIONAL = {'ModelSide': {'small_reset', 'model_warp'}, 'Openpilot': {'small_res
             'JoinedModel': {'get_action_from_model', 'constants', 'LAT_SMOOTH_SECONDS', 'LONG_SMOOTH_SECONDS', 'lat_delay'}}
 
 FIELDS = {
-  'Keys': ['link', 'offroad', 'progress', 'spec', 'pointers', 'big_model', 'catalog', 'charge_phone', 'select'],
+  'Keys': ['link', 'offroad', 'progress', 'spec', 'big_model', 'catalog', 'charge_phone', 'select', 'pointers'],
   'OwnerConfig': ['params_dir', 'keys', 'chestnut_ids', 'adapter', 'cwd', 'env', 'log_file'],
   'ModelFace': ['parser', 'frame_size', 'desire_len', 'constants', 'lat_smooth_seconds', 'long_smooth_seconds',
                 'get_action_from_model'],
@@ -78,7 +78,7 @@ def described(protocol: type) -> dict[str, str | None]:
 
 class TestTheContract(unittest.TestCase):
   def test_the_api_version(self):
-    self.assertEqual(jo.API, 3)
+    self.assertEqual(jo.API, 4)
 
   def test_every_side_is_as_pinned(self):
     for name, expected in SIDES.items():
@@ -110,7 +110,7 @@ class TestTheContract(unittest.TestCase):
 
   def test_keys_without_a_model_manager(self):
     # upstream openpilot has no model manager: no pick to watch, no catalog
-    keys = jo.Keys(link='JetlinkLink', offroad='IsOffroad', progress='P', spec='S', pointers='Q')
+    keys = jo.Keys(link='JetlinkLink', offroad='IsOffroad', progress='P', spec='S')
     self.assertIsNone(keys.big_model)
     self.assertIsNone(keys.catalog)
 

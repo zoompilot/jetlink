@@ -33,7 +33,7 @@ from jetlink.openpilot.testing import FakeDevice, FakeTensor, RecordingLog, fake
 
 # the fork's names, so a log line or an assertion reads as it would on a comma
 KEYS = Keys(link='JetlinkLink', offroad='IsOffroad', progress='AcceleratorProgress', spec='JetlinkSpec',
-            pointers='JetlinkModelPointers', big_model='ModelManager_ActiveBundleChestnut',
+            big_model='ModelManager_ActiveBundleChestnut',
             catalog='ModelManager_ModelsCache_Chestnut', charge_phone='JetlinkChargePhone')
 CHESTNUT_IDS = frozenset({(0xADD1, 0x0001), (0x3801, 0x0001), (0x174C, 0x2464), (0x174C, 0x2463)})
 # (cam_w, cam_h, model_w, model_h): a comma 3X, and a comma four

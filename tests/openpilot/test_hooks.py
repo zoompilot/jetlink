@@ -18,6 +18,7 @@ from jetlink.openpilot import STATES, Flags, Status, hooks
 from jetlink.openpilot.status import Runtime
 from jetlink.openpilot.hooks import COMPATIBLE, Hooks, Off
 from jetlink.openpilot.testing import HOOK_CALLS, FakeJoinedModel, RecordingLog
+from jetlink.registry.index import NetworkError
 from tests.openpilot.fakes import OpenpilotTest
 from tests.openpilot.test_api import plain
 
@@ -34,6 +35,9 @@ SIGNATURES = {
   'request_shutdown': "(reason='')",
   'shutdown_pending': '()',
   'model_state': '(ref)',
+  'lists_big_models': '()',
+  'big_catalog': '()',
+  'listed_ref': '(ref)',
   'should_extend_catalog': '()',
   'extend_catalog': '(catalog)',
   'swap_events': '(tick_s)',
@@ -58,17 +62,21 @@ def answers(h) -> dict:
     'request_shutdown': h.request_shutdown('test'),
     'shutdown_pending': h.shutdown_pending(),
     'model_state': h.model_state('f' * 40),
+    'lists_big_models': h.lists_big_models(),
+    'big_catalog': h.big_catalog(),
+    'listed_ref': h.listed_ref('f' * 40),
     'should_extend_catalog': h.should_extend_catalog(),
     'extend_catalog': h.extend_catalog(CATALOG) is CATALOG,
     'runtime': h.runtime(),
   }
 
 
-# the link off: modeld keeps its model, the catalog stays as fetched, a
-# power-off that is wanted goes ahead
+# the link off: modeld keeps its model, the model manager's list is
+# sunnypilot's, a power-off that is wanted goes ahead
 OFF = {'should_run': False, 'status': None, 'reason': None, 'prepare': False, 'attach': 'model',
        'handed_over': False, 'state': 'none', 'shutdown_step': (False, True), 'request_shutdown': False,
-       'shutdown_pending': False, 'model_state': None, 'should_extend_catalog': False, 'extend_catalog': True,
+       'shutdown_pending': False, 'model_state': None, 'lists_big_models': False, 'big_catalog': None, 'listed_ref': None,
+       'should_extend_catalog': False, 'extend_catalog': True,
        'runtime': None}
 # what answers without binding when link_on() says the link is off
 UNBOUND = ('should_run', 'reason', 'runtime', 'prepare')
@@ -119,11 +127,14 @@ class TestTheSurface(unittest.TestCase):
 
   def test_another_api_is_refused_at_once_and_says_why(self):
     factory = mock.Mock()
-    for api in (2, 4, None):
+    for api in (2, 5, None):
       with self.subTest(api), self.assertRaises(ValueError) as e:
         Hooks(api, factory)
-      self.assertEqual(str(e.exception), f"jetlink package API 3, this build expects {api}")
+      self.assertEqual(str(e.exception), f"jetlink package API 4, this build expects {api}")
     factory.assert_not_called()
+
+  def test_the_previous_api_is_accepted_for_a_minor_release(self):
+    self.assertIn(3, COMPATIBLE)
 
 
 class TestOff(unittest.TestCase):
@@ -467,15 +478,19 @@ class TestTheTrackersRuntime(unittest.TestCase):
 class TestOverTheRealJetlink(OpenpilotTest):
   def setUp(self):
     super().setUp()
-    self.h = Hooks(3, lambda: self.op)
+    self.h = Hooks(4, lambda: self.op)
+    # offline: the model index cannot be fetched, so the model manager keeps its list
+    fetch = mock.patch('jetlink.registry.index.fetch_index', side_effect=NetworkError('offline'))
+    fetch.start()
+    self.addCleanup(fetch.stop)
 
   def test_the_link_off_is_jetlinks_answer_not_the_nets(self):
     self.op.set_mode('off')
     found = answers(self.h)
     self.assertIsInstance(found.pop('status'), Status)
     found.pop('extend_catalog')
-    # the catalog is hardware, not the setting
-    expected = {**OFF, 'should_extend_catalog': True}
+    # the list is hardware, not the setting; with no index to fetch, the model manager keeps its own
+    expected = {**OFF, 'lists_big_models': True, 'should_extend_catalog': True}
     del expected['status'], expected['extend_catalog']
     self.assertEqual(found, expected)
     self.assertEqual(self.op.log.lines('exception'), [])

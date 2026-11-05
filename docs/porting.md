@@ -44,7 +44,6 @@ that ships a prebuilt params library must rebuild it.
     {"JetlinkLink", {PERSISTENT | BACKUP, INT, "0"}},
     {"JetlinkProgress", {CLEAR_ON_MANAGER_START, JSON}},
     {"JetlinkSpec", {PERSISTENT, JSON}},
-    {"JetlinkModelPointers", {PERSISTENT, JSON}},
     {"JetlinkChargePhone", {PERSISTENT, BOOL, "0"}},
     {"Offroad_JetlinkUnavailable", {CLEAR_ON_MANAGER_START, JSON}},
 ```
@@ -153,15 +152,18 @@ class _NoJetlink:
 
 A fork with sunnypilot's model manager also sets `KEYS.big_model` and
 `KEYS.catalog` (the model library and the user's choice) and
-`CATALOG_SELECTOR`, and calls `should_extend_catalog()` and `extend_catalog()`
-where it fetches the library. Without them Jetlink runs the model chosen on
-the Jetson or in an app, else its default big model.
+`CATALOG_SELECTOR`. Where it fetches the big-model library it asks
+`lists_big_models()`, and when that is true (no chestnut fitted) takes
+`big_catalog()`, the model index as a catalog in sunnypilot's shape, in place
+of sunnypilot's own; `None` is a fetch that failed, and it keeps the list it
+has. A pick a new list no longer names carries over to `listed_ref(ref)`, the
+ref the list names the same ONNX under. Without them Jetlink runs the model
+chosen on the Jetson or in an app, else its default big model.
 
 A fork with a model list of its own that knows each model by its ONNX's
 sha256, not by a comma commit, sets only `KEYS.big_model`, a JSON param it
 writes `{"sha256": ..., "displayName": ...}` into when the user chooses (and
-removes for no choice). Jetlink looks up the model's size from comma's
-servers. A newer choice made on the Jetson or in an app is written back into
+removes for no choice). Jetlink sizes the model from the model index. A newer choice made on the Jetson or in an app is written back into
 that param, with the model's `sha256` and `ref` where it has them, so the
 fork's list can show what drives. The param's write time is when the choice
 was made: write it only when the user chooses.

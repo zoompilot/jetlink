@@ -302,104 +302,11 @@
       }
     }
   },
-  "diff_pointers": [
-    {
-      "expected": {
-        "oid": "1563b85f6bd00d9e2edf50bdb69646f0d95d5ac0f218d5abe3fe54a13427d71b",
-        "size": 792485215
-      },
-      "name": "compiled",
-      "patch_file": "patch_219f4e7b.patch"
-    },
-    {
-      "expected": {
-        "oid": "1563b85f6bd00d9e2edf50bdb69646f0d95d5ac0f218d5abe3fe54a13427d71b",
-        "size": 792485215
-      },
-      "name": "pull",
-      "patch_file": "pull_39037.patch"
-    },
-    {
-      "expected": {
-        "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "size": 34
-      },
-      "name": "modified",
-      "text": "diff --git a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n--- a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n+++ b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n@@ -1,3 +1,3 @@\n-version https://git-lfs.github.com/spec/v1\n-oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\n-size 12\n+version https://git-lfs.github.com/spec/v1\n+oid sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n+size 34\n"
-    },
-    {
-      "expected": {
-        "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
-        "size": 12
-      },
-      "name": "deleted",
-      "text": "diff --git a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n--- a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n+++ b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n@@ -1,3 +1,3 @@\n-version https://git-lfs.github.com/spec/v1\n-oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\n-size 12\n"
-    },
-    {
-      "expected": {
-        "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "size": 34
-      },
-      "name": "added_then_modified",
-      "text": "diff --git a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n--- a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n+++ b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n@@ -1,3 +1,3 @@\n+version https://git-lfs.github.com/spec/v1\n+oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\n+size 34\ndiff --git a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n--- a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n+++ b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n@@ -1,3 +1,3 @@\n-version https://git-lfs.github.com/spec/v1\n-oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\n-size 12\n+version https://git-lfs.github.com/spec/v1\n+oid sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n+size 34\n"
-    },
-    {
-      "expected": {
-        "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
-        "size": 12
-      },
-      "name": "deleted_then_other_file",
-      "text": "diff --git a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n--- a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n+++ b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n@@ -1,3 +1,3 @@\n-version https://git-lfs.github.com/spec/v1\n-oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\n-size 12\ndiff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1,3 +1,3 @@\n-version https://git-lfs.github.com/spec/v1\n-oid sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n-size 12\n"
-    },
-    {
-      "expected": null,
-      "name": "pkl_only",
-      "text": "diff --git a/openpilot/selfdrive/modeld/models/big_driving_tinygrad.pkl b/openpilot/selfdrive/modeld/models/big_driving_tinygrad.pkl\n--- a/openpilot/selfdrive/modeld/models/big_driving_tinygrad.pkl\n+++ b/openpilot/selfdrive/modeld/models/big_driving_tinygrad.pkl\n@@ -1,3 +1,3 @@\n-version https://git-lfs.github.com/spec/v1\n-oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\n-size 12\n+version https://git-lfs.github.com/spec/v1\n+oid sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n+size 34\n"
-    },
-    {
-      "expected": null,
-      "name": "longer_name",
-      "text": "diff --git a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx.bak b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx.bak\n--- a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx.bak\n+++ b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx.bak\n@@ -1,3 +1,3 @@\n-version https://git-lfs.github.com/spec/v1\n-oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\n-size 12\n+version https://git-lfs.github.com/spec/v1\n+oid sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n+size 34\n"
-    },
-    {
-      "expected": null,
-      "name": "tab_after_path",
-      "text": "diff --git a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\tb/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n--- a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n+++ b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n@@ -1,3 +1,3 @@\n-version https://git-lfs.github.com/spec/v1\n-oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\n-size 12\n+version https://git-lfs.github.com/spec/v1\n+oid sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n+size 34\n"
-    },
-    {
-      "expected": {
-        "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "size": 34
-      },
-      "name": "older_tree",
-      "text": "diff --git a/selfdrive/modeld/models/big_driving_supercombo.onnx b/selfdrive/modeld/models/big_driving_supercombo.onnx\n--- a/selfdrive/modeld/models/big_driving_supercombo.onnx\n+++ b/selfdrive/modeld/models/big_driving_supercombo.onnx\n@@ -1,3 +1,3 @@\n-version https://git-lfs.github.com/spec/v1\n-oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\n-size 12\n+version https://git-lfs.github.com/spec/v1\n+oid sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n+size 34\n"
-    },
-    {
-      "expected": {
-        "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "size": 34
-      },
-      "name": "crlf",
-      "text": "diff --git a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\r\n--- a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\r\n+++ b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\r\n@@ -1,3 +1,3 @@\r\n-version https://git-lfs.github.com/spec/v1\r\n-oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\r\n-size 12\r\n+version https://git-lfs.github.com/spec/v1\r\n+oid sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\r\n+size 34\r\n"
-    },
-    {
-      "expected": {
-        "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
-        "size": 12
-      },
-      "name": "next_commit_ends_it",
-      "text": "diff --git a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n--- a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n+++ b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n@@ -1,3 +1,3 @@\n-version https://git-lfs.github.com/spec/v1\n-oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\n-size 12\nFrom 0000 Mon Sep 17 00:00:00 2001\n+oid sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n+size 34\n"
-    },
-    {
-      "expected": null,
-      "name": "not_a_pointer",
-      "text": "diff --git a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n--- a/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n+++ b/openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx\n@@ -1,3 +1,3 @@\n+oid sha256:nothex\n+size 3\n"
-    },
-    {
-      "expected": null,
-      "name": "empty",
-      "text": ""
-    }
+  "endpoints": [
+    "https://huggingface.co/buckets/commaai/openpilot-lfs",
+    "https://gitlab.com/commaai/openpilot-lfs.git/info/lfs",
+    "https://huggingface.co/commaai/openpilot-lfs.git/info/lfs",
+    "https://huggingface.co/commaai/openpilot_driving_models.git/info/lfs"
   ],
   "identities": [
     {
@@ -443,2853 +350,1376 @@
       "value": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
     }
   ],
-  "merges": [
-    {
-      "catalogs": [
-        {
-          "bundles": [
-            {
-              "build_time": "2026-09-01T06:38:29Z",
-              "display_name": "Lebowski Model (July 01, 2026)",
-              "environment": "development",
-              "generation": "12",
-              "index": 0,
-              "is_20hz": true,
-              "is_big": true,
-              "minimum_selector_version": "19",
-              "models": [
-                {
-                  "artifact": {
-                    "chunks": [
-                      {
-                        "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                        "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                      }
-                    ],
-                    "download_uri": {
-                      "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                      "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                    },
-                    "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "type": "chunked"
-                }
-              ],
-              "overrides": {
-                "folder": "Master Models",
-                "lat": ".1",
-                "long": ".3"
-              },
-              "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-              "runner": "tinygrad",
-              "short_name": "LM"
-            },
-            {
-              "build_time": "2026-09-01T10:49:49Z",
-              "display_name": "Tee Time (August 18, 2026)",
-              "environment": "development",
-              "generation": "12",
-              "index": 1,
-              "is_20hz": true,
-              "is_big": true,
-              "minimum_selector_version": "19",
-              "models": [
-                {
-                  "artifact": {
-                    "chunks": [
-                      {
-                        "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                        "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                      }
-                    ],
-                    "download_uri": {
-                      "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                      "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                    },
-                    "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "type": "chunked"
-                }
-              ],
-              "overrides": {
-                "folder": "2026 Deep RL Models",
-                "lat": ".1",
-                "long": ".3"
-              },
-              "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-              "runner": "tinygrad",
-              "short_name": "TT"
-            },
-            {
-              "build_time": "2026-09-01T07:49:46Z",
-              "display_name": "TTTTFBRLM (August 18, 2026)",
-              "environment": "development",
-              "generation": "12",
-              "index": 2,
-              "is_20hz": true,
-              "is_big": true,
-              "minimum_selector_version": "19",
-              "models": [
-                {
-                  "artifact": {
-                    "chunks": [
-                      {
-                        "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                        "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                      }
-                    ],
-                    "download_uri": {
-                      "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                      "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                    },
-                    "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "type": "chunked"
-                }
-              ],
-              "overrides": {
-                "folder": "2026 Deep RL Models",
-                "lat": ".1",
-                "long": ".3"
-              },
-              "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-              "runner": "tinygrad",
-              "short_name": "TTTTFBRL"
-            }
-          ],
-          "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-        }
-      ],
-      "expected": {
-        "bundles": [
-          {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
-          },
-          {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
-          }
-        ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "name": "one"
-    },
-    {
-      "catalogs": [
-        {
-          "bundles": [
-            {
-              "build_time": "2026-09-01T06:38:29Z",
-              "display_name": "Lebowski Model (July 01, 2026)",
-              "environment": "development",
-              "generation": "12",
-              "index": 0,
-              "is_20hz": true,
-              "is_big": true,
-              "minimum_selector_version": "19",
-              "models": [
-                {
-                  "artifact": {
-                    "chunks": [
-                      {
-                        "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                        "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                      }
-                    ],
-                    "download_uri": {
-                      "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                      "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                    },
-                    "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "type": "chunked"
-                }
-              ],
-              "overrides": {
-                "folder": "Master Models",
-                "lat": ".1",
-                "long": ".3"
-              },
-              "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-              "runner": "tinygrad",
-              "short_name": "LM"
-            },
-            {
-              "build_time": "2026-09-01T10:49:49Z",
-              "display_name": "Tee Time (August 18, 2026)",
-              "environment": "development",
-              "generation": "12",
-              "index": 1,
-              "is_20hz": true,
-              "is_big": true,
-              "minimum_selector_version": "19",
-              "models": [
-                {
-                  "artifact": {
-                    "chunks": [
-                      {
-                        "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                        "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                      }
-                    ],
-                    "download_uri": {
-                      "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                      "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                    },
-                    "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "type": "chunked"
-                }
-              ],
-              "overrides": {
-                "folder": "2026 Deep RL Models",
-                "lat": ".1",
-                "long": ".3"
-              },
-              "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-              "runner": "tinygrad",
-              "short_name": "TT"
-            },
-            {
-              "build_time": "2026-09-01T07:49:46Z",
-              "display_name": "TTTTFBRLM (August 18, 2026)",
-              "environment": "development",
-              "generation": "12",
-              "index": 2,
-              "is_20hz": true,
-              "is_big": true,
-              "minimum_selector_version": "19",
-              "models": [
-                {
-                  "artifact": {
-                    "chunks": [
-                      {
-                        "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                        "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                      }
-                    ],
-                    "download_uri": {
-                      "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                      "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                    },
-                    "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "type": "chunked"
-                }
-              ],
-              "overrides": {
-                "folder": "2026 Deep RL Models",
-                "lat": ".1",
-                "long": ".3"
-              },
-              "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-              "runner": "tinygrad",
-              "short_name": "TTTTFBRL"
-            }
-          ],
-          "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-        },
-        {
-          "bundles": [
-            {
-              "build_time": "2026-09-01T06:38:29Z",
-              "display_name": "moved on",
-              "environment": "development",
-              "generation": "12",
-              "index": 0,
-              "is_20hz": true,
-              "is_big": true,
-              "minimum_selector_version": "20",
-              "models": [
-                {
-                  "artifact": {
-                    "chunks": [
-                      {
-                        "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                        "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                      }
-                    ],
-                    "download_uri": {
-                      "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                      "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                    },
-                    "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "type": "chunked"
-                }
-              ],
-              "overrides": {
-                "folder": "Master Models",
-                "lat": ".1",
-                "long": ".3"
-              },
-              "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-              "runner": "tinygrad",
-              "short_name": "LM"
-            },
-            {
-              "build_time": "2026-09-20T00:00:00Z",
-              "display_name": "only newer",
-              "index": 99,
-              "is_big": true,
-              "minimum_selector_version": "20",
-              "models": [
-                {
-                  "x": 1
-                }
-              ],
-              "ref": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-              "short_name": "ON"
-            },
-            {
-              "index": 98,
-              "is_big": false,
-              "minimum_selector_version": "20",
-              "ref": "dddddddddddddddddddddddddddddddddddddddd"
-            }
-          ]
-        }
-      ],
-      "expected": {
-        "bundles": [
-          {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
-          },
-          {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
-          },
-          {
-            "build_time": "2026-09-20T00:00:00Z",
-            "display_name": "only newer",
-            "index": 99,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [],
-            "ref": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-            "short_name": "ON"
-          }
-        ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "name": "with_newer"
-    },
-    {
-      "catalogs": [
-        {
-          "bundles": [
-            {
-              "build_time": "2026-09-01T06:38:29Z",
-              "display_name": "Lebowski Model (July 01, 2026)",
-              "environment": "development",
-              "generation": "12",
-              "index": 0,
-              "is_20hz": true,
-              "is_big": true,
-              "minimum_selector_version": "19",
-              "models": [
-                {
-                  "artifact": {
-                    "chunks": [
-                      {
-                        "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                        "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                      }
-                    ],
-                    "download_uri": {
-                      "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                      "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                    },
-                    "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "type": "chunked"
-                }
-              ],
-              "overrides": {
-                "folder": "Master Models",
-                "lat": ".1",
-                "long": ".3"
-              },
-              "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-              "runner": "tinygrad",
-              "short_name": "LM"
-            },
-            {
-              "build_time": "2026-09-01T10:49:49Z",
-              "display_name": "Tee Time (August 18, 2026)",
-              "environment": "development",
-              "generation": "12",
-              "index": 1,
-              "is_20hz": true,
-              "is_big": true,
-              "minimum_selector_version": "19",
-              "models": [
-                {
-                  "artifact": {
-                    "chunks": [
-                      {
-                        "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                        "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                      }
-                    ],
-                    "download_uri": {
-                      "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                      "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                    },
-                    "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "type": "chunked"
-                }
-              ],
-              "overrides": {
-                "folder": "2026 Deep RL Models",
-                "lat": ".1",
-                "long": ".3"
-              },
-              "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-              "runner": "tinygrad",
-              "short_name": "TT"
-            },
-            {
-              "build_time": "2026-09-01T07:49:46Z",
-              "display_name": "TTTTFBRLM (August 18, 2026)",
-              "environment": "development",
-              "generation": "12",
-              "index": 2,
-              "is_20hz": true,
-              "is_big": true,
-              "minimum_selector_version": "19",
-              "models": [
-                {
-                  "artifact": {
-                    "chunks": [
-                      {
-                        "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                        "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                      }
-                    ],
-                    "download_uri": {
-                      "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                      "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                    },
-                    "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "type": "chunked"
-                }
-              ],
-              "overrides": {
-                "folder": "2026 Deep RL Models",
-                "lat": ".1",
-                "long": ".3"
-              },
-              "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-              "runner": "tinygrad",
-              "short_name": "TTTTFBRL"
-            }
-          ],
-          "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-        },
-        {
-          "bundles": [
-            {
-              "build_time": "2026-09-01T06:38:29Z",
-              "display_name": "moved on",
-              "environment": "development",
-              "generation": "12",
-              "index": 0,
-              "is_20hz": true,
-              "is_big": true,
-              "minimum_selector_version": "20",
-              "models": [
-                {
-                  "artifact": {
-                    "chunks": [
-                      {
-                        "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                        "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                      }
-                    ],
-                    "download_uri": {
-                      "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                      "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                    },
-                    "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "type": "chunked"
-                }
-              ],
-              "overrides": {
-                "folder": "Master Models",
-                "lat": ".1",
-                "long": ".3"
-              },
-              "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-              "runner": "tinygrad",
-              "short_name": "LM"
-            },
-            {
-              "build_time": "2026-09-20T00:00:00Z",
-              "display_name": "only newer",
-              "index": 99,
-              "is_big": true,
-              "minimum_selector_version": "20",
-              "models": [
-                {
-                  "x": 1
-                }
-              ],
-              "ref": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-              "short_name": "ON"
-            },
-            {
-              "index": 98,
-              "is_big": false,
-              "minimum_selector_version": "20",
-              "ref": "dddddddddddddddddddddddddddddddddddddddd"
-            }
-          ]
-        },
-        {
-          "bundles": [
-            {
-              "build_time": "2026-10-05T00:00:00Z",
-              "display_name": "A preview",
-              "index": 100,
-              "is_big": true,
-              "minimum_selector_version": "19",
-              "models": [],
-              "ref": "cccccccccccccccccccccccccccccccccccccccc",
-              "short_name": "AP"
-            },
-            {
-              "build_time": "2026-09-01T06:38:29Z",
-              "display_name": "our name for it",
-              "environment": "development",
-              "generation": "12",
-              "index": 0,
-              "is_20hz": true,
-              "is_big": true,
-              "minimum_selector_version": "19",
-              "models": [],
-              "overrides": {
-                "folder": "Master Models",
-                "lat": ".1",
-                "long": ".3"
-              },
-              "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-              "runner": "tinygrad",
-              "short_name": "LM"
-            }
-          ]
-        }
-      ],
-      "expected": {
-        "bundles": [
-          {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
-          },
-          {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
-          },
-          {
-            "build_time": "2026-10-05T00:00:00Z",
-            "display_name": "A preview",
-            "index": 100,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [],
-            "ref": "cccccccccccccccccccccccccccccccccccccccc",
-            "short_name": "AP"
-          },
-          {
-            "build_time": "2026-09-20T00:00:00Z",
-            "display_name": "only newer",
-            "index": 99,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [],
-            "ref": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-            "short_name": "ON"
-          }
-        ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "name": "with_extra"
-    },
-    {
-      "catalogs": [],
-      "expected": {},
-      "name": "none"
-    }
-  ],
   "parses": [
     {
-      "catalog_file": "catalog_chestnut_v25.json",
-      "expected": [
-        {
-          "build_time": "2026-09-08T23:11:14Z",
-          "index": 12,
-          "name": "Cinque Terre Model V2 (September 08, 2026)",
-          "ref": "37bfa1413edcdc2e8844984b83727c33f81d8f46",
-          "short_name": "CTMV2"
+      "expected": {
+        "models": [
+          {
+            "build_time": "2026-11-05T21:21:11Z",
+            "folder": "2026 Deep RL Models",
+            "name": "Light Speed 2 (November 04, 2026)",
+            "oid": "909a140019050a9d7f00db22dd4f4085928d2af9474a82244672ddab964f95a8",
+            "pr": null,
+            "ref": "b92fc4828664f8767bce5e92f1630ed319cbe509",
+            "short_name": "LS2",
+            "size": 768749892
+          },
+          {
+            "build_time": "2026-10-30T08:59:39Z",
+            "folder": "2026 Deep RL Models",
+            "name": "Light Speed Model v1.1 (October 29, 2026)",
+            "oid": "6274eb4a3f3eb7ad1ab341d222bbba2ba709b06645dbbd15ac4971d6cb22ab21",
+            "pr": null,
+            "ref": "c7cbe5de6a9dae4bab032bc5faeb24a248c41f8f",
+            "short_name": "LSMV1.1",
+            "size": 792305602
+          },
+          {
+            "build_time": "2026-10-24T18:35:41Z",
+            "folder": "2026 Deep RL Models",
+            "name": "Flip Flop Model (October 23, 2026)",
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "pr": null,
+            "ref": "35c5406aa5b03c51a6246a1f09ff84464b2a6b96",
+            "short_name": "FFM",
+            "size": 768750198
+          },
+          {
+            "build_time": "2026-10-17T13:31:18Z",
+            "folder": "2026 Deep RL Models",
+            "name": "Train Track Model (October 16, 2026)",
+            "oid": "ceb38c593005b3338aee4ca057d5ad9ee64c58f8fdba0b41641a9d4cc6c36e36",
+            "pr": null,
+            "ref": "e46b35b0dcce35761ba28ada1a7df6ae36589c30",
+            "short_name": "TTM",
+            "size": 792467570
+          },
+          {
+            "build_time": "2026-10-13T17:13:02Z",
+            "folder": "2026 Deep RL Models",
+            "name": "Cinque Terre Model V2 (September 08, 2026)",
+            "oid": "09d080f36965bb2a0790500452bd328aa03c484d0222aa79d1ad9f021a522aec",
+            "pr": null,
+            "ref": "37bfa1413edcdc2e8844984b83727c33f81d8f46",
+            "short_name": "CTMV2",
+            "size": 766040736
+          },
+          {
+            "build_time": "2026-10-13T16:47:37Z",
+            "folder": "2026 Deep RL Models",
+            "name": "Cinque Terre Model (September 04, 2026)",
+            "oid": "e8d821733be15ebe9e27498bc27ad8bbbd741980ece37d77f377294010b8ff28",
+            "pr": null,
+            "ref": "68b5f8e48602f4f88041efd7de6c99e97fda454e",
+            "short_name": "CTM",
+            "size": 765950064
+          },
+          {
+            "build_time": "2026-10-13T19:24:05Z",
+            "folder": "2026 Deep RL Models",
+            "name": "BMRLNAP Model v6 (September 01, 2026)",
+            "oid": "f3669cb7c8a9a8a13fcd6a8575958dd09a9ec76d9c9072ccdc76fad7cfa3a28d",
+            "pr": null,
+            "ref": "9d683c06518c0358fb402f38468a7030700c38ac",
+            "short_name": "BMV6",
+            "size": 765955335
+          },
+          {
+            "build_time": "2026-10-13T16:37:52Z",
+            "folder": "2026 Deep RL Models",
+            "name": "Sad Model (August 28, 2026)",
+            "oid": "3913109713cc782bdb001550a519f1fc6b36dbc7ade1cf6126622f044ff6adfb",
+            "pr": null,
+            "ref": "30de303d5ffb63957f8acbdb256fd4c7d360455a",
+            "short_name": "SM",
+            "size": 766082665
+          },
+          {
+            "build_time": "2026-10-13T18:42:51Z",
+            "folder": "2026 Deep RL Models",
+            "name": "BMRLNAP Model v3 (August 26, 2026)",
+            "oid": "9ef28165590af9be949230a36336e6d578bc656798e3d17c86656a2105460bea",
+            "pr": null,
+            "ref": "47377ac2f726651fc1470eb725cf73418307e5aa",
+            "short_name": "BMV3",
+            "size": 1757861459
+          },
+          {
+            "build_time": "2026-10-13T17:37:33Z",
+            "folder": "2026 Deep RL Models",
+            "name": "BMRLNAP Model v2 (August 24, 2026)",
+            "oid": "6afb28d58bfa7d7639832db8a61ff9209ef704ce1a9de2cdc20dd9004ec42bec",
+            "pr": null,
+            "ref": "ba37c02c7c64225b8aec79411d1a8c2f5c1aa343",
+            "short_name": "BMV2",
+            "size": 1757861459
+          },
+          {
+            "build_time": "2026-10-13T18:10:39Z",
+            "folder": "2026 Deep RL Models",
+            "name": "Happy Birthday Model (August 24, 2026)",
+            "oid": "ae90227c1ba51d325a006e95c7c231c988198864a7b59fd1b62b2cc485d176f3",
+            "pr": null,
+            "ref": "db06f5f36caa379e112bafd38423e37b66fa4149",
+            "short_name": "HBM",
+            "size": 1757855836
+          },
+          {
+            "build_time": "2026-10-13T19:40:15Z",
+            "folder": "2026 Deep RL Models",
+            "name": "I Desire Model (August 21, 2026)",
+            "oid": "dcd96339cae7ca50a04377be1edd9574d9cba1cbec5ab91b142d77bd5248d6b9",
+            "pr": null,
+            "ref": "6691f163a4ed8a9c4e2ca95efc29c04478ec0250",
+            "short_name": "IDM",
+            "size": 1757087312
+          },
+          {
+            "build_time": "2026-10-13T17:54:27Z",
+            "folder": "2026 Deep RL Models",
+            "name": "BMRLNAP Model (August 20, 2026)",
+            "oid": "57a3bf0c312dbf14c054b8f7f9282d1bc9216b44476f2c842c18bb9bca0a41f8",
+            "pr": null,
+            "ref": "7e3ff7e914a40ac25399a2caedbce3580fdde6a2",
+            "short_name": "BM",
+            "size": 1764417969
+          },
+          {
+            "build_time": "2026-10-13T18:26:41Z",
+            "folder": "2026 Deep RL Models",
+            "name": "TTTTFBRLM (August 18, 2026)",
+            "oid": "1c90cac0bb2b8f25940b3cca3be41704b90a42857fc9e735b7df1d6983ae2554",
+            "pr": null,
+            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
+            "short_name": "TTTTFBRL",
+            "size": 1757101084
+          },
+          {
+            "build_time": "2026-10-13T19:10:52Z",
+            "folder": "2026 Deep RL Models",
+            "name": "Tee Time (August 18, 2026)",
+            "oid": "62345fa8406e318599cb62a8dccc3eb4f7e4cd6750638f2dcf7075c42798cf34",
+            "pr": null,
+            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
+            "short_name": "TT",
+            "size": 1757103461
+          },
+          {
+            "build_time": "2026-10-14T17:00:01Z",
+            "folder": "Master Models",
+            "name": "Mountain Dew Model (October 10, 2026)",
+            "oid": "87fe86ca0813c099efddf9173ba503be2e40ea4c5362c36812a44141f4cb07d4",
+            "pr": null,
+            "ref": "6f4c0faf1f85132734e94aa39c67143f823b9324",
+            "short_name": "MDM",
+            "size": 792430559
+          },
+          {
+            "build_time": "2026-10-13T16:28:04Z",
+            "folder": "Master Models",
+            "name": "Cinque Terre V3 Model (September 17, 2026)",
+            "oid": "404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4",
+            "pr": null,
+            "ref": "bf3e3631b3f91d92a1020a5e0dd4298b93ff4244",
+            "short_name": "CTV3M",
+            "size": 766354845
+          },
+          {
+            "build_time": "2026-10-13T17:22:39Z",
+            "folder": "Master Models",
+            "name": "BMRLNAP Model v4 (August 30, 2026)",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "BMV4",
+            "size": 765953504
+          },
+          {
+            "build_time": "2026-10-13T17:00:54Z",
+            "folder": "Master Models",
+            "name": "Lebowski Model (July 01, 2026)",
+            "oid": "a501760a9d1d5fef0eab2b8c5d122d06124fc26dc8e0782e0aa94b82a208f0ff",
+            "pr": null,
+            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
+            "short_name": "LM",
+            "size": 1757355221
+          }
+        ],
+        "refs": {
+          "0152aab4a4db0971494847406bd875f938aee598": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "17476effed0a1433ea596c79a581f150ce54fa5f": {
+            "oid": "909a140019050a9d7f00db22dd4f4085928d2af9474a82244672ddab964f95a8",
+            "size": 768749892
+          },
+          "1d12f404b54dc8c5cadb73669ae27399ba35ba43": {
+            "oid": "1c90cac0bb2b8f25940b3cca3be41704b90a42857fc9e735b7df1d6983ae2554",
+            "size": 1757101084
+          },
+          "1e219d7785cfb7b7343c7f2366347fc86e7ce5f2": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "219f4e7ba38cda8788cc31f2d0a5ca49d9566231": {
+            "oid": "1563b85f6bd00d9e2edf50bdb69646f0d95d5ac0f218d5abe3fe54a13427d71b",
+            "size": 792485215
+          },
+          "21edbbcfb99af22d92818b7f4eee4161036de722": {
+            "oid": "87fe86ca0813c099efddf9173ba503be2e40ea4c5362c36812a44141f4cb07d4",
+            "size": 792430559
+          },
+          "2fb4ac4aa0b2e6438ae2b8330295aa71df9a184a": {
+            "oid": "1563b85f6bd00d9e2edf50bdb69646f0d95d5ac0f218d5abe3fe54a13427d71b",
+            "size": 792485215
+          },
+          "30de303d5ffb63957f8acbdb256fd4c7d360455a": {
+            "oid": "3913109713cc782bdb001550a519f1fc6b36dbc7ade1cf6126622f044ff6adfb",
+            "size": 766082665
+          },
+          "35c5406aa5b03c51a6246a1f09ff84464b2a6b96": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "37bfa1413edcdc2e8844984b83727c33f81d8f46": {
+            "oid": "09d080f36965bb2a0790500452bd328aa03c484d0222aa79d1ad9f021a522aec",
+            "size": 766040736
+          },
+          "3cd1b6e48347a57eec6e0364af46fba4a2362381": {
+            "oid": "c7b300083b8dd6ce17545ef52edb6b577e3a805e6372f9f9343090604690242f",
+            "size": 766320181
+          },
+          "46d78b8de0c7db5009239ab0439d9fe80e2e7ad8": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "47377ac2f726651fc1470eb725cf73418307e5aa": {
+            "oid": "9ef28165590af9be949230a36336e6d578bc656798e3d17c86656a2105460bea",
+            "size": 1757861459
+          },
+          "4adbb85742b465108ac579da680bcc633eedb2cc": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          },
+          "4bcf73282e35c49fa82e8f1ca9e10232a520e8f1": {
+            "oid": "1563b85f6bd00d9e2edf50bdb69646f0d95d5ac0f218d5abe3fe54a13427d71b",
+            "size": 792485215
+          },
+          "4bfb53406352e2c8716ab06e23b57b4e3c00b45c": {
+            "oid": "c392ba1aa1b4b89e850366024fa6c1beac1f1fdc3a7182e3c3b0234c55e08eeb",
+            "size": 792487890
+          },
+          "516ec1e68203439a73f340f1d0b3b91eabc626ee": {
+            "oid": "a501760a9d1d5fef0eab2b8c5d122d06124fc26dc8e0782e0aa94b82a208f0ff",
+            "size": 1757355221
+          },
+          "5edc0bd89d0830bc1ac86ee923d1d08d2915b770": {
+            "oid": "471f372751d5931e939320c211e35b7255f8fa8015125b3b3fd48ef43020257e",
+            "size": 195490097
+          },
+          "6080cc6168023229437b0ff06cf35bead00a5d0d": {
+            "oid": "c7b300083b8dd6ce17545ef52edb6b577e3a805e6372f9f9343090604690242f",
+            "size": 766320181
+          },
+          "6107da1cd655e3b2ac44c0b28728ab0619e42eb7": {
+            "oid": "09d080f36965bb2a0790500452bd328aa03c484d0222aa79d1ad9f021a522aec",
+            "size": 766040736
+          },
+          "64f9b47b6ea7b622967acd7042148e7a92f0ccc4": {
+            "oid": "6fee5937923c74848df4a63f6239eb6331c6274dd4bdb7a5d6ec0388a8b543d5",
+            "size": 766018462
+          },
+          "6691f163a4ed8a9c4e2ca95efc29c04478ec0250": {
+            "oid": "dcd96339cae7ca50a04377be1edd9574d9cba1cbec5ab91b142d77bd5248d6b9",
+            "size": 1757087312
+          },
+          "68b5f8e48602f4f88041efd7de6c99e97fda454e": {
+            "oid": "e8d821733be15ebe9e27498bc27ad8bbbd741980ece37d77f377294010b8ff28",
+            "size": 765950064
+          },
+          "6f4c0faf1f85132734e94aa39c67143f823b9324": {
+            "oid": "87fe86ca0813c099efddf9173ba503be2e40ea4c5362c36812a44141f4cb07d4",
+            "size": 792430559
+          },
+          "7a48e3cde569187ecf4cb5d2e8d0f948b6266cd7": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "7ba17e1a00f3bd58080daaea2c1da45c3acef4db": {
+            "oid": "c7b300083b8dd6ce17545ef52edb6b577e3a805e6372f9f9343090604690242f",
+            "size": 766320181
+          },
+          "7e3ff7e914a40ac25399a2caedbce3580fdde6a2": {
+            "oid": "57a3bf0c312dbf14c054b8f7f9282d1bc9216b44476f2c842c18bb9bca0a41f8",
+            "size": 1764417969
+          },
+          "80ae1afe19f0633510995dbf3fb1f87d186e537c": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "85476c4bceeea005357be283f23dce90b390e724": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "880b40e1926c7ec49ccbfe96e65f291d60211b15": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "963f3f4fdc43ff633231e90bf1c33ec861d4eb1e": {
+            "oid": "87fe86ca0813c099efddf9173ba503be2e40ea4c5362c36812a44141f4cb07d4",
+            "size": 792430559
+          },
+          "9d683c06518c0358fb402f38468a7030700c38ac": {
+            "oid": "f3669cb7c8a9a8a13fcd6a8575958dd09a9ec76d9c9072ccdc76fad7cfa3a28d",
+            "size": 765955335
+          },
+          "9fba666fd485983b5849dfc62550fa1fd37fe338": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "a2e422eee0e92523101329437b24bafa09538aa7": {
+            "oid": "1791d5940b2c048d0639813426dd2cf1d6f2a6727ed51e17c8bcea8bbe754123",
+            "size": 765950064
+          },
+          "a40fa3a0b0cfacb0010b50515bcd64aed3dbdac8": {
+            "oid": "471f372751d5931e939320c211e35b7255f8fa8015125b3b3fd48ef43020257e",
+            "size": 195490097
+          },
+          "a98ef068c1d3c2a202a5a869448bb1af63cdc7a4": {
+            "oid": "1563b85f6bd00d9e2edf50bdb69646f0d95d5ac0f218d5abe3fe54a13427d71b",
+            "size": 792485215
+          },
+          "ad4c9cdf1857034bb06c12e4b0cfba093e6ae3d6": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "afedebcfd4213a76b99b1f11b5310ed05cee04df": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "b903160792092ba0aaf4dc47289d7310c6833e10": {
+            "oid": "87fe86ca0813c099efddf9173ba503be2e40ea4c5362c36812a44141f4cb07d4",
+            "size": 792430559
+          },
+          "b92fc4828664f8767bce5e92f1630ed319cbe509": {
+            "oid": "909a140019050a9d7f00db22dd4f4085928d2af9474a82244672ddab964f95a8",
+            "size": 768749892
+          },
+          "ba37c02c7c64225b8aec79411d1a8c2f5c1aa343": {
+            "oid": "6afb28d58bfa7d7639832db8a61ff9209ef704ce1a9de2cdc20dd9004ec42bec",
+            "size": 1757861459
+          },
+          "bf3e3631b3f91d92a1020a5e0dd4298b93ff4244": {
+            "oid": "404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4",
+            "size": 766354845
+          },
+          "bf74ce544738189693dbd07266a46e63465710c1": {
+            "oid": "10926f2c0911821ca0e72439c1c3bf3ec11f0a08789aa14b7ee8f25379b2afa4",
+            "size": 1753235978
+          },
+          "c1d94adad4facfce493db6b58e0e3d5e4e09ae4c": {
+            "oid": "6274eb4a3f3eb7ad1ab341d222bbba2ba709b06645dbbd15ac4971d6cb22ab21",
+            "size": 792305602
+          },
+          "c51e3e5a71d6ea25e59c0683d683c1092c7c3f69": {
+            "oid": "e8d821733be15ebe9e27498bc27ad8bbbd741980ece37d77f377294010b8ff28",
+            "size": 765950064
+          },
+          "c6d13eb723e0f6eee47ea7d56e47a700fba21380": {
+            "oid": "404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4",
+            "size": 766354845
+          },
+          "c7cbe5de6a9dae4bab032bc5faeb24a248c41f8f": {
+            "oid": "6274eb4a3f3eb7ad1ab341d222bbba2ba709b06645dbbd15ac4971d6cb22ab21",
+            "size": 792305602
+          },
+          "d05c2d971b15ef29a329a6fcce46cc1e64e10778": {
+            "oid": "1563b85f6bd00d9e2edf50bdb69646f0d95d5ac0f218d5abe3fe54a13427d71b",
+            "size": 792485215
+          },
+          "d5307595468ccbdd94afe4455743eb130c97a202": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "db06f5f36caa379e112bafd38423e37b66fa4149": {
+            "oid": "ae90227c1ba51d325a006e95c7c231c988198864a7b59fd1b62b2cc485d176f3",
+            "size": 1757855836
+          },
+          "df7e0e5e77a41565fb4811787a42db8937dca2f5": {
+            "oid": "c7b300083b8dd6ce17545ef52edb6b577e3a805e6372f9f9343090604690242f",
+            "size": 766320181
+          },
+          "e46b35b0dcce35761ba28ada1a7df6ae36589c30": {
+            "oid": "ceb38c593005b3338aee4ca057d5ad9ee64c58f8fdba0b41641a9d4cc6c36e36",
+            "size": 792467570
+          },
+          "e4acf619d4eb8b726fc405c264109310ac2951df": {
+            "oid": "6274eb4a3f3eb7ad1ab341d222bbba2ba709b06645dbbd15ac4971d6cb22ab21",
+            "size": 792305602
+          },
+          "e86b58dc7b9fb499dd84ac6dbe514a03fa2bc428": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "e94d3eb27c4ecfd2152f1a5d2dfee459eec39f70": {
+            "oid": "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199",
+            "size": 768750198
+          },
+          "eb16a51a8de6a93f95b5a673f07c199c35deff14": {
+            "oid": "909a140019050a9d7f00db22dd4f4085928d2af9474a82244672ddab964f95a8",
+            "size": 768749892
+          },
+          "ebbd053974945f0b397ebe1baac578e450b62bc8": {
+            "oid": "1563b85f6bd00d9e2edf50bdb69646f0d95d5ac0f218d5abe3fe54a13427d71b",
+            "size": 792485215
+          },
+          "f59056e5b6f92e3136d59ae403097cf0653442ce": {
+            "oid": "1563b85f6bd00d9e2edf50bdb69646f0d95d5ac0f218d5abe3fe54a13427d71b",
+            "size": 792485215
+          },
+          "f7a158371f2caa0fcacdf61b0fdc2b7a35897ed0": {
+            "oid": "f3669cb7c8a9a8a13fcd6a8575958dd09a9ec76d9c9072ccdc76fad7cfa3a28d",
+            "size": 765955335
+          },
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          },
+          "fa0c6876d3cf070e91e25e5353ceadc68a5b3285": {
+            "oid": "a501760a9d1d5fef0eab2b8c5d122d06124fc26dc8e0782e0aa94b82a208f0ff",
+            "size": 1757355221
+          },
+          "ff27d6220e2869ede7ee3c83e7893ec06cb75551": {
+            "oid": "62345fa8406e318599cb62a8dccc3eb4f7e4cd6750638f2dcf7075c42798cf34",
+            "size": 1757103461
+          }
         },
-        {
-          "build_time": "2026-09-05T21:23:01Z",
-          "index": 11,
-          "name": "Cinque Terre Model (September 04, 2026)",
-          "ref": "68b5f8e48602f4f88041efd7de6c99e97fda454e",
-          "short_name": "CTM"
-        },
-        {
-          "build_time": "2026-09-02T03:06:35Z",
-          "index": 10,
-          "name": "BMRLNAP Model v6 (September 01, 2026)",
-          "ref": "9d683c06518c0358fb402f38468a7030700c38ac",
-          "short_name": "BMV6"
-        },
-        {
-          "build_time": "2026-09-01T05:39:17Z",
-          "index": 9,
-          "name": "BMRLNAP Model v4 (August 30, 2026)",
-          "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
-          "short_name": "BMV4"
-        },
-        {
-          "build_time": "2026-09-01T05:49:40Z",
-          "index": 8,
-          "name": "Sad Model (August 28, 2026)",
-          "ref": "30de303d5ffb63957f8acbdb256fd4c7d360455a",
-          "short_name": "SM"
-        },
-        {
-          "build_time": "2026-09-01T06:21:43Z",
-          "index": 7,
-          "name": "BMRLNAP Model v3 (August 26, 2026)",
-          "ref": "47377ac2f726651fc1470eb725cf73418307e5aa",
-          "short_name": "BMV3"
-        },
-        {
-          "build_time": "2026-09-01T06:59:13Z",
-          "index": 6,
-          "name": "BMRLNAP Model v2 (August 24, 2026)",
-          "ref": "ba37c02c7c64225b8aec79411d1a8c2f5c1aa343",
-          "short_name": "BMV2"
-        },
-        {
-          "build_time": "2026-09-01T07:32:34Z",
-          "index": 5,
-          "name": "Happy Birthday Model (August 24, 2026)",
-          "ref": "db06f5f36caa379e112bafd38423e37b66fa4149",
-          "short_name": "HBM"
-        },
-        {
-          "build_time": "2026-09-01T07:16:10Z",
-          "index": 4,
-          "name": "I Desire Model (August 21, 2026)",
-          "ref": "6691f163a4ed8a9c4e2ca95efc29c04478ec0250",
-          "short_name": "IDM"
-        },
-        {
-          "build_time": "2026-09-01T06:05:02Z",
-          "index": 3,
-          "name": "BMRLNAP Model (August 20, 2026)",
-          "ref": "7e3ff7e914a40ac25399a2caedbce3580fdde6a2",
-          "short_name": "BM"
-        },
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
-        },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
-        },
-        {
-          "build_time": "2026-09-01T06:38:29Z",
-          "index": 0,
-          "name": "Lebowski Model (July 01, 2026)",
-          "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-          "short_name": "LM"
+        "sizes": {
+          "01effc679eb46d6036ce0302673a87fe2dcfcc95a679daeeb929679e53c3647a": 814591107,
+          "09d080f36965bb2a0790500452bd328aa03c484d0222aa79d1ad9f021a522aec": 766040736,
+          "10926f2c0911821ca0e72439c1c3bf3ec11f0a08789aa14b7ee8f25379b2afa4": 1753235978,
+          "1563b85f6bd00d9e2edf50bdb69646f0d95d5ac0f218d5abe3fe54a13427d71b": 792485215,
+          "1791d5940b2c048d0639813426dd2cf1d6f2a6727ed51e17c8bcea8bbe754123": 765950064,
+          "1c90cac0bb2b8f25940b3cca3be41704b90a42857fc9e735b7df1d6983ae2554": 1757101084,
+          "35976b11be3904eb78e32f7dc55a6abf8e9433ac5aa391a1998f1e9ce001b199": 768750198,
+          "3913109713cc782bdb001550a519f1fc6b36dbc7ade1cf6126622f044ff6adfb": 766082665,
+          "404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4": 766354845,
+          "471f372751d5931e939320c211e35b7255f8fa8015125b3b3fd48ef43020257e": 195490097,
+          "57a3bf0c312dbf14c054b8f7f9282d1bc9216b44476f2c842c18bb9bca0a41f8": 1764417969,
+          "62345fa8406e318599cb62a8dccc3eb4f7e4cd6750638f2dcf7075c42798cf34": 1757103461,
+          "6274eb4a3f3eb7ad1ab341d222bbba2ba709b06645dbbd15ac4971d6cb22ab21": 792305602,
+          "6afb28d58bfa7d7639832db8a61ff9209ef704ce1a9de2cdc20dd9004ec42bec": 1757861459,
+          "6fee5937923c74848df4a63f6239eb6331c6274dd4bdb7a5d6ec0388a8b543d5": 766018462,
+          "87fe86ca0813c099efddf9173ba503be2e40ea4c5362c36812a44141f4cb07d4": 792430559,
+          "909a140019050a9d7f00db22dd4f4085928d2af9474a82244672ddab964f95a8": 768749892,
+          "9ef28165590af9be949230a36336e6d578bc656798e3d17c86656a2105460bea": 1757861459,
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504,
+          "a501760a9d1d5fef0eab2b8c5d122d06124fc26dc8e0782e0aa94b82a208f0ff": 1757355221,
+          "ae90227c1ba51d325a006e95c7c231c988198864a7b59fd1b62b2cc485d176f3": 1757855836,
+          "c392ba1aa1b4b89e850366024fa6c1beac1f1fdc3a7182e3c3b0234c55e08eeb": 792487890,
+          "c7b300083b8dd6ce17545ef52edb6b577e3a805e6372f9f9343090604690242f": 766320181,
+          "ceb38c593005b3338aee4ca057d5ad9ee64c58f8fdba0b41641a9d4cc6c36e36": 792467570,
+          "dcd96339cae7ca50a04377be1edd9574d9cba1cbec5ab91b142d77bd5248d6b9": 1757087312,
+          "e8d821733be15ebe9e27498bc27ad8bbbd741980ece37d77f377294010b8ff28": 765950064,
+          "f3669cb7c8a9a8a13fcd6a8575958dd09a9ec76d9c9072ccdc76fad7cfa3a28d": 765955335
         }
-      ],
+      },
+      "index_file": "model_index_v1.json",
       "name": "published"
     },
     {
-      "catalog": {
-        "bundles": [
+      "expected": {
+        "models": [
           {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
+            "build_time": "2026-10-29T00:00:00Z",
+            "folder": "2026 Deep RL Models",
+            "name": "Beta (October 29, 2026)",
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "pr": null,
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "short_name": "B",
+            "size": 20
           },
           {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": 39235,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
           }
         ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "expected": [
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
+        "refs": {
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 20
+          },
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
         },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
-        },
-        {
-          "build_time": "2026-09-01T06:38:29Z",
-          "index": 0,
-          "name": "Lebowski Model (July 01, 2026)",
-          "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-          "short_name": "LM"
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504,
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 20
         }
-      ],
-      "name": "first_three"
+      },
+      "index": {
+        "models": [
+          {
+            "build_time": "2026-10-29T00:00:00Z",
+            "folder": "2026 Deep RL Models",
+            "index": 20,
+            "is_20hz": true,
+            "name": "Beta (October 29, 2026)",
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "short_name": "B",
+            "size": 20
+          },
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": 39235,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          }
+        ],
+        "schema": 1
+      },
+      "name": "fields"
     },
     {
-      "catalog": {
-        "bundles": [
+      "expected": {
+        "models": [
           {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "18",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
           },
           {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "bbbbbbbbbb",
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "pr": null,
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "short_name": "",
+            "size": 2
           }
         ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "expected": [
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
+        "refs": {
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 2
+          },
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
         },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504,
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
         }
-      ],
-      "name": "selector_18"
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          },
+          {
+            "build_time": 1,
+            "folder": "",
+            "name": 7,
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "short_name": null,
+            "size": 2
+          }
+        ],
+        "schema": 1
+      },
+      "name": "missing_fields"
     },
     {
-      "catalog": {
-        "bundles": [
+      "expected": {
+        "models": [
           {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": 19,
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
           },
           {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "bbbbbbbbbb",
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "pr": null,
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "short_name": "",
+            "size": 2
           },
           {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "cccccccccc",
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "pr": null,
+            "ref": "cccccccccccccccccccccccccccccccccccccccc",
+            "short_name": "",
+            "size": 2
+          },
+          {
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "dddddddddd",
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "pr": null,
+            "ref": "dddddddddddddddddddddddddddddddddddddddd",
+            "short_name": "",
+            "size": 2
+          },
+          {
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "eeeeeeeeee",
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "pr": null,
+            "ref": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "short_name": "",
+            "size": 2
           }
         ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "expected": [
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
+        "refs": {
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 2
+          },
+          "cccccccccccccccccccccccccccccccccccccccc": {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 2
+          },
+          "dddddddddddddddddddddddddddddddddddddddd": {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 2
+          },
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 2
+          },
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
         },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
-        },
-        {
-          "build_time": "2026-09-01T06:38:29Z",
-          "index": 0,
-          "name": "Lebowski Model (July 01, 2026)",
-          "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-          "short_name": "LM"
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504,
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
         }
-      ],
-      "name": "selector_int"
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          },
+          {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "pr": true,
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 2
+          },
+          {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "pr": 0,
+            "ref": "cccccccccccccccccccccccccccccccccccccccc",
+            "size": 2
+          },
+          {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "pr": "5",
+            "ref": "dddddddddddddddddddddddddddddddddddddddd",
+            "size": 2
+          },
+          {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "pr": -1,
+            "ref": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "size": 2
+          }
+        ],
+        "schema": 1
+      },
+      "name": "pr_values"
     },
     {
-      "catalog": {
-        "bundles": [
+      "expected": {
+        "models": [
           {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": " 19 ",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
-          },
-          {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
           }
         ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "expected": [
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
+        "refs": {
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
         },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
-        },
-        {
-          "build_time": "2026-09-01T06:38:29Z",
-          "index": 0,
-          "name": "Lebowski Model (July 01, 2026)",
-          "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-          "short_name": "LM"
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504
         }
-      ],
-      "name": "selector_text"
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          },
+          {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 1
+          }
+        ],
+        "schema": 1
+      },
+      "name": "no_ref"
     },
     {
-      "catalog": {
-        "bundles": [
+      "expected": {
+        "models": [
           {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "nineteen",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
-          },
-          {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
           }
         ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "expected": [
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
+        "refs": {
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
         },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504
         }
-      ],
-      "name": "selector_rubbish"
-    },
-    {
-      "catalog": {
-        "bundles": [
+      },
+      "index": {
+        "models": [
           {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": false,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
           },
           {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ref": "F877D7A0CCC3CCE943C76E285214C020CD65C899",
+            "size": 1
           }
         ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
+        "schema": 1
       },
-      "expected": [
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
-        },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
-        }
-      ],
-      "name": "not_big"
-    },
-    {
-      "catalog": {
-        "bundles": [
-          {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "not-a-commit",
-            "runner": "tinygrad",
-            "short_name": "LM"
-          },
-          {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
-          }
-        ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "expected": [
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
-        },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
-        }
-      ],
       "name": "bad_ref"
     },
     {
-      "catalog": {
-        "bundles": [
+      "expected": {
+        "models": [
           {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": "42",
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
-          },
-          {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
           }
         ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "expected": [
-        {
-          "build_time": "2026-09-01T06:38:29Z",
-          "index": 42,
-          "name": "Lebowski Model (July 01, 2026)",
-          "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-          "short_name": "LM"
+        "refs": {
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
         },
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
-        },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504
         }
-      ],
-      "name": "index_text"
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          },
+          {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 1
+          }
+        ],
+        "schema": 1
+      },
+      "name": "bad_oid"
     },
     {
-      "catalog": {
-        "bundles": [
+      "expected": {
+        "models": [
           {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 4.7,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
-          },
-          {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
           }
         ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "expected": [
-        {
-          "build_time": "2026-09-01T06:38:29Z",
-          "index": 4,
-          "name": "Lebowski Model (July 01, 2026)",
-          "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-          "short_name": "LM"
+        "refs": {
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
         },
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
-        },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504
         }
-      ],
-      "name": "index_float"
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          },
+          {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 0
+          }
+        ],
+        "schema": 1
+      },
+      "name": "size_zero"
     },
     {
-      "catalog": {
-        "bundles": [
+      "expected": {
+        "models": [
           {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": "x",
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
-          },
-          {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
           }
         ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "expected": [
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
+        "refs": {
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
         },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504
         }
-      ],
-      "name": "index_rubbish"
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          },
+          {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": "1"
+          }
+        ],
+        "schema": 1
+      },
+      "name": "size_text"
     },
     {
-      "catalog": {
-        "bundles": [
+      "expected": {
+        "models": [
           {
-            "build_time": null,
-            "display_name": "",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": null
-          },
-          {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
           }
         ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "expected": [
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
+        "refs": {
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
         },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
-        },
-        {
-          "build_time": "",
-          "index": 0,
-          "name": "fa0c6876d3",
-          "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-          "short_name": ""
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504
         }
-      ],
-      "name": "no_name"
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          },
+          {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": true
+          }
+        ],
+        "schema": 1
+      },
+      "name": "size_bool"
     },
     {
-      "catalog": {
-        "bundles": [
+      "expected": {
+        "models": [
           {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
-          },
-          {
-            "build_time": "2026-09-01T10:49:49Z",
-            "display_name": "Tee Time (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 1,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "4375691a198541e644388ac740990d0552b69013063abe761043290a8d19aca0"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "d02104fab59d06861001230141dd7d9882817b83cc2a361640ac763a0425c6cf",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Tee%20Time%20%28August%2018%2C%202026%29-119/driving_tee_time_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_tee_time_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-            "runner": "tinygrad",
-            "short_name": "TT"
-          },
-          {
-            "build_time": "2026-09-01T07:49:46Z",
-            "display_name": "TTTTFBRLM (August 18, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 2,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "5b8f1f4c7e86b8d172a949faed342d925f2affe69e832cf559955a335d0f9a5d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "a309e390da8af0543724ec93f7c0b908d468894a5795ebf517d0b80300b2290b",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-TTTTFBRLM%20%28August%2018%2C%202026%29-119/driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_ttttfbrlm_august_18_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "2026 Deep RL Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-            "runner": "tinygrad",
-            "short_name": "TTTTFBRL"
-          },
-          {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "the second one",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
           }
         ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "expected": [
-        {
-          "build_time": "2026-09-01T07:49:46Z",
-          "index": 2,
-          "name": "TTTTFBRLM (August 18, 2026)",
-          "ref": "1d12f404b54dc8c5cadb73669ae27399ba35ba43",
-          "short_name": "TTTTFBRL"
+        "refs": {
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
         },
-        {
-          "build_time": "2026-09-01T10:49:49Z",
-          "index": 1,
-          "name": "Tee Time (August 18, 2026)",
-          "ref": "ff27d6220e2869ede7ee3c83e7893ec06cb75551",
-          "short_name": "TT"
-        },
-        {
-          "build_time": "2026-09-01T06:38:29Z",
-          "index": 0,
-          "name": "Lebowski Model (July 01, 2026)",
-          "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-          "short_name": "LM"
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504
         }
-      ],
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          },
+          {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 1.5
+          }
+        ],
+        "schema": 1
+      },
+      "name": "size_fraction"
+    },
+    {
+      "expected": {
+        "models": [
+          {
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
+          },
+          {
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "bbbbbbbbbb",
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "pr": null,
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "short_name": "",
+            "size": 1099511627776
+          }
+        ],
+        "refs": {
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 1099511627776
+          },
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
+        },
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504,
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 1099511627776
+        }
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          },
+          {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 1099511627776
+          }
+        ],
+        "schema": 1
+      },
+      "name": "size_big"
+    },
+    {
+      "expected": {
+        "models": [
+          {
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
+          }
+        ],
+        "refs": {
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
+        },
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504
+        }
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          },
+          {
+            "name": "the second one",
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          }
+        ],
+        "schema": 1
+      },
       "name": "duplicate"
     },
     {
-      "catalog": {
-        "bundles": [
+      "expected": {
+        "models": [
+          {
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
+          }
+        ],
+        "refs": {
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
+        },
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504
+        }
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          },
           1,
           "two",
           null,
-          [],
+          []
+        ],
+        "schema": 1
+      },
+      "name": "rubbish_models"
+    },
+    {
+      "expected": {
+        "models": [
           {
-            "build_time": "2026-09-01T06:38:29Z",
-            "display_name": "Lebowski Model (July 01, 2026)",
-            "environment": "development",
-            "generation": "12",
-            "index": 0,
-            "is_20hz": true,
-            "is_big": true,
-            "minimum_selector_version": "19",
-            "models": [
-              {
-                "artifact": {
-                  "chunks": [
-                    {
-                      "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38",
-                      "sha256": "11e17ea4ad039a1f26842521a7a9c85a0f1c33cd3f8339f81d436af4de009f9d"
-                    }
-                  ],
-                  "download_uri": {
-                    "sha256": "1ff3ada8e2252b3753354394b838038ce24f4d1c8c21ed20b55bd9b143e03821",
-                    "url": "https://huggingface.co/datasets/sunnypilot/sunnypilot_models_v1/resolve/main/models/recompiled24/model-Lebowski%20Model%20%28July%2001%2C%202026%29-119/driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                  },
-                  "file_name": "driving_lebowski_model_july_01_2026_tinygrad.pkl"
-                },
-                "type": "chunked"
-              }
-            ],
-            "overrides": {
-              "folder": "Master Models",
-              "lat": ".1",
-              "long": ".3"
-            },
-            "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-            "runner": "tinygrad",
-            "short_name": "LM"
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
           }
         ],
-        "tinygrad_ref": "e837e367aac9e1a66e689f4f32ce20ca9367df13"
-      },
-      "expected": [
-        {
-          "build_time": "2026-09-01T06:38:29Z",
-          "index": 0,
-          "name": "Lebowski Model (July 01, 2026)",
-          "ref": "fa0c6876d3cf070e91e25e5353ceadc68a5b3285",
-          "short_name": "LM"
-        }
-      ],
-      "name": "rubbish_bundles"
-    },
-    {
-      "catalog": {
-        "version": 1
-      },
-      "expected": [],
-      "name": "no_bundles"
-    },
-    {
-      "catalog": {
-        "bundles": {
-          "a": 1
+        "refs": {
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 2
+          },
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
+        },
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504,
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2,
+          "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": 3
         }
       },
-      "expected": [],
-      "name": "not_a_list"
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          }
+        ],
+        "onnx": {
+          "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {
+            "export": "e/1/big_driving_supercombo.onnx",
+            "size": 3
+          },
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": {
+            "size": -1
+          },
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "junk",
+          "nothex": {
+            "size": 4
+          }
+        },
+        "refs": {
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "method": "weights",
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 2
+          },
+          "cccccccccccccccccccccccccccccccccccccccc": {
+            "oid": "x",
+            "size": 2
+          },
+          "dddddddddddddddddddddddddddddddddddddddd": "junk",
+          "short": {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 2
+          }
+        },
+        "schema": 1
+      },
+      "name": "refs_and_onnx"
     },
     {
-      "catalog": [
-        "bundles"
+      "expected": {
+        "models": [
+          {
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
+          }
+        ],
+        "refs": {
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
+        },
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504
+        }
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          }
+        ],
+        "refs": {
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 9
+          }
+        },
+        "schema": 1
+      },
+      "name": "a_listed_ref_wins_over_refs"
+    },
+    {
+      "expected": {
+        "models": [
+          {
+            "build_time": "",
+            "folder": "Other Models",
+            "name": "f877d7a0cc",
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "pr": null,
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "short_name": "",
+            "size": 765953504
+          }
+        ],
+        "refs": {
+          "f877d7a0ccc3cce943c76e285214c020cd65c899": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "size": 765953504
+          }
+        },
+        "sizes": {
+          "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525": 765953504
+        }
+      },
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          }
+        ],
+        "onnx": "x",
+        "refs": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        "schema": 1
+      },
+      "name": "refs_not_an_object"
+    },
+    {
+      "expected": null,
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          }
+        ],
+        "schema": 2
+      },
+      "name": "schema_2"
+    },
+    {
+      "expected": null,
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          }
+        ],
+        "schema": "1"
+      },
+      "name": "schema_text"
+    },
+    {
+      "expected": null,
+      "index": {
+        "models": [
+          {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          }
+        ]
+      },
+      "name": "no_schema"
+    },
+    {
+      "expected": null,
+      "index": {
+        "models": [],
+        "refs": {
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 2
+          }
+        },
+        "schema": 1
+      },
+      "name": "nothing_listed"
+    },
+    {
+      "expected": null,
+      "index": {
+        "models": {
+          "a": {
+            "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
+            "ref": "f877d7a0ccc3cce943c76e285214c020cd65c899",
+            "size": 765953504
+          }
+        },
+        "schema": 1
+      },
+      "name": "models_not_a_list"
+    },
+    {
+      "expected": null,
+      "index": [
+        "models"
       ],
-      "expected": [],
       "name": "not_an_object"
-    }
-  ],
-  "pointers": [
-    {
-      "expected": {
-        "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
-        "size": 765953504
-      },
-      "text": "version https://git-lfs.github.com/spec/v1\noid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\nsize 765953504\n"
-    },
-    {
-      "expected": {
-        "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
-        "size": 765953504
-      },
-      "text": "version x\r\noid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\r\nsize 765_953_504\r\n"
-    },
-    {
-      "expected": null,
-      "text": "oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\n"
-    },
-    {
-      "expected": null,
-      "text": "oid sha256:nothex\nsize 12\n"
-    },
-    {
-      "expected": null,
-      "text": "oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\nsize twelve\n"
-    },
-    {
-      "expected": null,
-      "text": "oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\nsize 0\n"
-    },
-    {
-      "expected": null,
-      "text": "oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\nsize -4\n"
-    },
-    {
-      "expected": null,
-      "text": "oid sha256:A086D5249FC308BB73993D1E64630C669D4C7DF5BDE85F42AD61902543648525\nsize 12\n"
-    },
-    {
-      "expected": {
-        "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
-        "size": 12
-      },
-      "text": "oid a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\nsize 12\n"
-    },
-    {
-      "expected": {
-        "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
-        "size": 12
-      },
-      "text": "size 12\noid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\n"
-    },
-    {
-      "expected": {
-        "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
-        "size": 12
-      },
-      "text": "oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\nsize  12\n"
-    },
-    {
-      "expected": {
-        "oid": "a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525",
-        "size": 13
-      },
-      "text": "oid sha256:a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525\nsize 12\nsize 13\n"
-    },
-    {
-      "expected": null,
-      "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-    },
-    {
-      "expected": null,
-      "text": "not a pointer at all"
-    },
-    {
-      "expected": null,
-      "text": ""
-    }
-  ],
-  "pull_numbers": [
-    {
-      "expected": "39037",
-      "subject": "ResAction (#39037)"
-    },
-    {
-      "expected": "2",
-      "subject": "two (#1) (#2)"
-    },
-    {
-      "expected": null,
-      "subject": "ResAction (#39037) again"
-    },
-    {
-      "expected": null,
-      "subject": "(#)"
-    },
-    {
-      "expected": null,
-      "subject": "(#12a)"
-    },
-    {
-      "expected": null,
-      "subject": "compiled"
-    },
-    {
-      "expected": "38932",
-      "subject": "Cinque v3 (#38932)"
-    },
-    {
-      "expected": null,
-      "subject": "(#\u0661\u0662)"
-    },
-    {
-      "expected": "007",
-      "subject": "x (#007)"
     }
   ]
 }

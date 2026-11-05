@@ -39,7 +39,7 @@ from jetlink.openpilot import API, Flags, Jetlink, SwapEvents, bind
 
 # the APIs a fork's adapter may be written to: today's, and after a bump the
 # previous one too, for one minor release (jetlink/openpilot/__init__.py)
-COMPATIBLE = frozenset({API})
+COMPATIBLE = frozenset({API, 3})
 
 # the hooks that ask jetlink with link_on() saying off. status(): the UI shows
 # the big model's name from the model library. shutdown_step(): hardwared
@@ -47,7 +47,7 @@ COMPATIBLE = frozenset({API})
 # and its wait, for a link turned off while one is pending. The model
 # manager's: the catalog is hardware and the library, not the setting
 BINDS_WITH_LINK_OFF = frozenset({'status', 'shutdown_step', 'request_shutdown', 'shutdown_pending', 'model_state',
-                                 'should_extend_catalog', 'extend_catalog'})
+                                 'lists_big_models', 'big_catalog', 'listed_ref', 'should_extend_catalog', 'extend_catalog'})
 
 # what selfdrived is told when the swap events cannot run: none at all
 NO_EVENTS = Flags(False, False, False, False, False)
@@ -156,6 +156,17 @@ class _Hooks:
   def model_state(self, ref: str) -> str | None:
     return self._call('model_state', None, ref)
 
+  def lists_big_models(self) -> bool:
+    return self._call('lists_big_models', False)
+
+  def big_catalog(self) -> dict | None:
+    """None with the link off or on any failure: the model manager keeps its list."""
+    return self._call('big_catalog', None)
+
+  def listed_ref(self, ref: str) -> str | None:
+    return self._call('listed_ref', None, ref)
+
+  # API 3's, until the next minor release
   def should_extend_catalog(self) -> bool:
     return self._call('should_extend_catalog', False)
 

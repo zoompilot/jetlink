@@ -51,7 +51,6 @@ REGISTRY = Path('tests/fixtures/conformance/registry.json')
 
 SHA_A = 'a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525'
 REF_A = 'f877d7a0ccc3cce943c76e285214c020cd65c899'
-CATALOG_FILE = 'catalog_chestnut_v25.json'
 
 
 def dump(value) -> str:
@@ -368,133 +367,77 @@ def layout(root: Path) -> None:
 
 # -- registry -----------------------------------------------------------------
 
-POINTER_TEXTS = [
-  'version https://git-lfs.github.com/spec/v1\noid sha256:' + SHA_A + '\nsize 765953504\n',
-  'version x\r\noid sha256:' + SHA_A + '\r\nsize 765_953_504\r\n',
-  'oid sha256:' + SHA_A + '\n',
-  'oid sha256:nothex\nsize 12\n',
-  'oid sha256:' + SHA_A + '\nsize twelve\n',
-  'oid sha256:' + SHA_A + '\nsize 0\n',
-  'oid sha256:' + SHA_A + '\nsize -4\n',
-  'oid sha256:' + SHA_A.upper() + '\nsize 12\n',
-  'oid ' + SHA_A + '\nsize 12\n',
-  'size 12\noid sha256:' + SHA_A + '\n',
-  'oid sha256:' + SHA_A + '\nsize  12\n',
-  'oid sha256:' + SHA_A + '\nsize 12\nsize 13\n',
-  'x' * 5000,
-  'not a pointer at all',
-  '',
-]
-
-
-def _lfs_diff(path: str, old: str | None, new: str | None, sep: str = ' ') -> str:
-  lines = [f"diff --git a/{path}{sep}b/{path}", f"--- a/{path}", f"+++ b/{path}", '@@ -1,3 +1,3 @@']
-  lines += ['-version https://git-lfs.github.com/spec/v1', f"-oid sha256:{old}", '-size 12'] if old else []
-  lines += ['+version https://git-lfs.github.com/spec/v1', f"+oid sha256:{new}", '+size 34'] if new else []
-  return '\n'.join(lines) + '\n'
-
-
-MODEL_PATH = 'openpilot/selfdrive/modeld/models/big_driving_supercombo.onnx'
+INDEX_FILE = 'model_index_v1.json'
 SHA_B = 'b' * 64
-
-DIFF_PATCHES = [
-  ('compiled', None),   # tests/fixtures/patch_219f4e7b.patch
-  ('pull', None),       # tests/fixtures/pull_39037.patch
-  ('modified', _lfs_diff(MODEL_PATH, SHA_A, SHA_B)),
-  ('deleted', _lfs_diff(MODEL_PATH, SHA_A, None)),
-  ('added_then_modified', _lfs_diff(MODEL_PATH, None, SHA_A) + _lfs_diff(MODEL_PATH, SHA_A, SHA_B)),
-  ('deleted_then_other_file', _lfs_diff(MODEL_PATH, SHA_A, None) + _lfs_diff('README.md', SHA_B, None)),
-  ('pkl_only', _lfs_diff('openpilot/selfdrive/modeld/models/big_driving_tinygrad.pkl', SHA_A, SHA_B)),
-  ('longer_name', _lfs_diff(MODEL_PATH + '.bak', SHA_A, SHA_B)),
-  ('tab_after_path', _lfs_diff(MODEL_PATH, SHA_A, SHA_B, sep='\t')),
-  ('older_tree', _lfs_diff('selfdrive/modeld/models/big_driving_supercombo.onnx', SHA_A, SHA_B)),
-  ('crlf', _lfs_diff(MODEL_PATH, SHA_A, SHA_B).replace('\n', '\r\n')),
-  ('next_commit_ends_it', _lfs_diff(MODEL_PATH, SHA_A, None)
-   + 'From 0000 Mon Sep 17 00:00:00 2001\n+oid sha256:' + SHA_B + '\n+size 34\n'),
-  ('not_a_pointer', _lfs_diff(MODEL_PATH, None, None) + '+oid sha256:nothex\n+size 3\n'),
-  ('empty', ''),
-]
-
-PULL_SUBJECTS = ['ResAction (#39037)', 'two (#1) (#2)', 'ResAction (#39037) again', '(#)', '(#12a)', 'compiled',
-                 'Cinque v3 (#38932)', '(#١٢)', 'x (#007)']
+REF_B, REF_C = 'b' * 40, 'c' * 40
 
 
-def _catalog_cases(catalog: dict) -> list[tuple[str, object]]:
-  bundles = catalog['bundles']
-  first = dict(bundles[0])
+def _index_cases() -> list[tuple[str, object]]:
+  ok = {'ref': REF_A, 'oid': SHA_A, 'size': 765953504}
 
-  def with_first(**change):
-    return {**catalog, 'bundles': [{**first, **change}, *bundles[1:]]}
+  def models(*more):
+    return {'schema': 1, 'models': [ok, *more]}
 
   return [
-    ('first_three', catalog),
-    ('selector_18', with_first(minimum_selector_version='18')),
-    ('selector_int', with_first(minimum_selector_version=19)),
-    ('selector_text', with_first(minimum_selector_version=' 19 ')),
-    ('selector_rubbish', with_first(minimum_selector_version='nineteen')),
-    ('not_big', with_first(is_big=False)),
-    ('bad_ref', with_first(ref='not-a-commit')),
-    ('index_text', with_first(index='42')),
-    ('index_float', with_first(index=4.7)),
-    ('index_rubbish', with_first(index='x')),
-    ('no_name', with_first(display_name='', short_name=None, build_time=None)),
-    ('duplicate', {**catalog, 'bundles': [*bundles, {**first, 'display_name': 'the second one'}]}),
-    ('rubbish_bundles', {**catalog, 'bundles': [1, 'two', None, [], first]}),
-    ('no_bundles', {'version': 1}),
-    ('not_a_list', {'bundles': {'a': 1}}),
-    ('not_an_object', ['bundles']),
+    ('fields', {'schema': 1, 'models': [
+      {'ref': REF_B, 'oid': SHA_B, 'size': 20, 'name': 'Beta (October 29, 2026)', 'folder': '2026 Deep RL Models', 'short_name': 'B',
+       'build_time': '2026-10-29T00:00:00Z', 'index': 20, 'is_20hz': True},
+      {**ok, 'pr': 39235}]}),
+    ('missing_fields', models({'ref': REF_B, 'oid': SHA_B, 'size': 2, 'name': 7, 'folder': '', 'short_name': None, 'build_time': 1})),
+    ('pr_values', models(*({'ref': c * 40, 'oid': SHA_B, 'size': 2, 'pr': pr} for c, pr in zip('bcde', (True, 0, '5', -1), strict=True)))),
+    ('no_ref', models({'oid': SHA_B, 'size': 1})),
+    ('bad_ref', models({'ref': REF_A.upper(), 'oid': SHA_B, 'size': 1})),
+    ('bad_oid', models({'ref': REF_B, 'oid': SHA_B[:63], 'size': 1})),
+    ('size_zero', models({'ref': REF_B, 'oid': SHA_B, 'size': 0})),
+    ('size_text', models({'ref': REF_B, 'oid': SHA_B, 'size': '1'})),
+    ('size_bool', models({'ref': REF_B, 'oid': SHA_B, 'size': True})),
+    ('size_fraction', models({'ref': REF_B, 'oid': SHA_B, 'size': 1.5})),
+    ('size_big', models({'ref': REF_B, 'oid': SHA_B, 'size': 1 << 40})),
+    ('duplicate', models({**ok, 'oid': SHA_B, 'name': 'the second one'})),
+    ('rubbish_models', models(1, 'two', None, [])),
+    ('refs_and_onnx', {**models(), 'refs': {REF_B: {'oid': SHA_B, 'size': 2, 'method': 'weights'}, REF_C: {'oid': 'x', 'size': 2},
+                                           'short': {'oid': SHA_B, 'size': 2}, 'd' * 40: 'junk'},
+                       'onnx': {'c' * 64: {'size': 3, 'export': 'e/1/big_driving_supercombo.onnx'}, 'd' * 64: {'size': -1},
+                                'e' * 64: 'junk', 'nothex': {'size': 4}}}),
+    ('a_listed_ref_wins_over_refs', {**models(), 'refs': {REF_A: {'oid': SHA_B, 'size': 9}}}),
+    ('refs_not_an_object', {**models(), 'refs': [REF_B], 'onnx': 'x'}),
+    ('schema_2', {**models(), 'schema': 2}),
+    ('schema_text', {**models(), 'schema': '1'}),
+    ('no_schema', {'models': [ok]}),
+    ('nothing_listed', {'schema': 1, 'models': [], 'refs': {REF_B: {'oid': SHA_B, 'size': 2}}}),
+    ('models_not_a_list', {'schema': 1, 'models': {'a': ok}}),
+    ('not_an_object', ['models']),
   ]
 
 
-def registry(root: Path) -> None:
-  from jetlink.registry.catalog import is_ref, is_sha256, merge_catalogs, parse_catalog
-  from jetlink.registry.lfs import _PULL, diff_pointer, parse_pointer_text
+def _parsed(index) -> dict:
+  return {'models': [vars(m) for m in index.models], 'refs': {r: vars(p) for r, p in sorted(index.refs.items())},
+          'sizes': dict(sorted(index.sizes.items()))}
 
-  # frozen: the Python server's registry wrote it, and nothing here makes it now
+
+def registry(root: Path) -> None:
+  from jetlink.registry.index import IndexInvalid, is_ref, is_sha256, parse_index
+  from jetlink.registry.lfs import LFS_ENDPOINTS
+
+  # frozen: the server's own cache layout, which the Swift side writes
   frozen = json.loads((ROOT / REGISTRY).read_text())['cache']
   out = root / REGISTRY
   out.parent.mkdir(parents=True, exist_ok=True)
-  published = json.loads((ROOT / 'tests/fixtures' / CATALOG_FILE).read_text())
-  catalog = {**published, 'bundles': published['bundles'][:3]}
 
-  pointers = []
-  for text in POINTER_TEXTS:
-    p = parse_pointer_text(text)
-    pointers.append({'text': text, 'expected': None if p is None else {'oid': p.oid, 'size': p.size}})
+  def parse(data):
+    try:
+      return _parsed(parse_index(data))
+    except IndexInvalid:
+      return None
+
   identities = [{'value': v, 'is_ref': is_ref(v), 'is_sha256': is_sha256(v)}
                 for v in (REF_A, SHA_A, REF_A.upper(), SHA_A[:63], SHA_A + '0', '', 'g' * 40, 'g' * 64)]
-  parses = [{'name': 'published', 'catalog_file': CATALOG_FILE, 'expected': [vars(m) for m in parse_catalog(published)]}]
-  parses += [{'name': name, 'catalog': data,
-              'expected': [vars(m) for m in parse_catalog(data)]} for name, data in _catalog_cases(catalog)]
+  published = json.loads((ROOT / 'tests/fixtures' / INDEX_FILE).read_text())
+  # null for an index refused whole: the caller keeps the last one that parsed
+  parses = [{'name': 'published', 'index_file': INDEX_FILE, 'expected': parse(published)}]
+  parses += [{'name': name, 'index': data, 'expected': parse(data)} for name, data in _index_cases()]
 
-  newer = {'bundles': [
-    {**catalog['bundles'][0], 'minimum_selector_version': '20', 'display_name': 'moved on'},
-    {'ref': 'e' * 40, 'is_big': True, 'minimum_selector_version': '20', 'display_name': 'only newer',
-     'short_name': 'ON', 'index': 99, 'build_time': '2026-09-20T00:00:00Z', 'models': [{'x': 1}]},
-    {'ref': 'd' * 40, 'is_big': False, 'minimum_selector_version': '20', 'index': 98},
-  ]}
-  # zoompilot's extra list: one of its own, and one sunnypilot already lists
-  extra = {'bundles': [
-    {'ref': 'c' * 40, 'is_big': True, 'minimum_selector_version': '19', 'display_name': 'A preview',
-     'short_name': 'AP', 'index': 100, 'build_time': '2026-10-05T00:00:00Z', 'models': []},
-    {**catalog['bundles'][0], 'display_name': 'our name for it', 'models': []},
-  ]}
-  merges = [{'name': name, 'catalogs': cats, 'expected': merge_catalogs(cats)}
-            for name, cats in (('one', [catalog]), ('with_newer', [catalog, newer]), ('with_extra', [catalog, newer, extra]),
-                               ('none', []))]
-
-  diff_pointers = []
-  for name, text in DIFF_PATCHES:
-    patch_file = {'compiled': 'patch_219f4e7b.patch', 'pull': 'pull_39037.patch'}.get(name)
-    p = diff_pointer(text if patch_file is None else (ROOT / 'tests/fixtures' / patch_file).read_text())
-    diff_pointers.append({'name': name, **({'patch_file': patch_file} if patch_file else {'text': text}),
-                          'expected': None if p is None else {'oid': p.oid, 'size': p.size}})
-  pull_numbers = [{'subject': s, 'expected': m.group(1) if (m := _PULL.search(s)) else None} for s in PULL_SUBJECTS]
-
-  out.write_text(dump({
-    'pointers': pointers, 'identities': identities, 'parses': parses, 'merges': merges,
-    'diff_pointers': diff_pointers, 'pull_numbers': pull_numbers, 'cache': frozen,
-  }))
+  out.write_text(dump({'identities': identities, 'parses': parses, 'endpoints': list(LFS_ENDPOINTS), 'cache': frozen}))
 
 
 # -----------------------------------------------------------------------------

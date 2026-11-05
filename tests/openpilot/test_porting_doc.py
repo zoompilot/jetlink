@@ -194,7 +194,7 @@ def test_the_shutdown_cap_is_the_timeout_and_five_seconds():
 def test_its_keys_are_stocks():
   declared = re.findall(r'^\s+\{"(\w+)", \{', TEXT, re.M)
   keys = Stock.KEYS
-  assert {keys.link, keys.progress, keys.spec, keys.pointers, keys.charge_phone} <= set(declared)
+  assert {keys.link, keys.progress, keys.spec, keys.charge_phone} <= set(declared)
   assert keys.offroad not in declared   # openpilot's own
 
 

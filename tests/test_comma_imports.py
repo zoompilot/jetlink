@@ -45,7 +45,7 @@ FORK_IMPORTS = {
   'jetlink.spec': ('ModelSpec',),
   'jetlink.comma': ('gadget',),
   'jetlink.comma.gadget': ('gadget_error', 'link_configured'),
-  'jetlink.registry.catalog': ('fetch_catalogs',),
+  'jetlink.registry.index': ('fetch_index',),
 }
 # What jetlink.openpilot calls on a client and reads off one, off a loan, and
 # off the transport a client rides on: the comma's side of the link

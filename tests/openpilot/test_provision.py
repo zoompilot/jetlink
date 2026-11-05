@@ -107,21 +107,21 @@ class TestProvisionCost(OpenpilotTest):
     assert self.op.log.has('provisioning Fake (0 MB, sha deadbeef)')
     assert self.op.log.has('engine ready for deadbeef')
 
-  def test_a_model_asked_for_the_first_time_has_its_pointer_looked_up(self):
+  def test_a_model_the_comma_s_index_does_not_know_is_looked_up(self):
     d = self.run_with()
     with mock.patch.object(self.parts.models, 'selected_model', return_value={**self.ENTRY, 'oid': None, 'size': None}), \
-         mock.patch.object(self.parts.models, 'resolve_pointer', return_value=('deadbeef', 4096)) as resolve:
+         mock.patch.object(self.parts.models, 'resolve', return_value=('deadbeef', 4096)) as resolve:
       assert d.provision() is True
-    resolve.assert_called_once_with('f' * 40)
+    resolve.assert_called_once_with('f' * 40, None)
     args = d.client.ensure_engine.call_args.args
     assert args[0] == 'deadbeef' and args[1] == 4096
     self.progress.report.assert_any_call('connect', 0.0, 'finding model', code='finding_model')
 
-  def test_a_pointer_that_cannot_be_looked_up_is_a_failed_provision(self):
+  def test_a_model_that_cannot_be_looked_up_is_a_failed_provision(self):
     # the ordinary failure path: logged, backed off, tried again next poll
     d = self.run_with()
     with mock.patch.object(self.parts.models, 'selected_model', return_value={**self.ENTRY, 'oid': None, 'size': None}), \
-         mock.patch.object(self.parts.models, 'resolve_pointer', side_effect=OSError('offline')), \
+         mock.patch.object(self.parts.models, 'resolve', side_effect=OSError('offline')), \
          self.assertRaises(OSError):
       d.provision()
     d.client.ensure_engine.assert_not_called()

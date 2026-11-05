@@ -195,9 +195,9 @@ class TestShape(StockTest):
 
   def test_its_keys_are_the_canonical_names_with_jetlinks_default_model(self):
     keys = self.op.keys
-    assert (keys.link, keys.offroad, keys.progress, keys.spec, keys.pointers, keys.charge_phone) == \
-      ('JetlinkLink', 'IsOffroad', 'JetlinkProgress', 'JetlinkSpec', 'JetlinkModelPointers', 'JetlinkChargePhone')
-    assert keys.big_model is None and keys.catalog is None
+    assert (keys.link, keys.offroad, keys.progress, keys.spec, keys.charge_phone) == \
+      ('JetlinkLink', 'IsOffroad', 'JetlinkProgress', 'JetlinkSpec', 'JetlinkChargePhone')
+    assert keys.big_model is None and keys.catalog is None and keys.pointers is None
     assert self.op.catalog_selector == 0
 
   def test_a_subclass_overrides_the_data(self):

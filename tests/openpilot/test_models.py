@@ -4,31 +4,40 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of jetlink and is licensed under the MIT License.
 See the LICENSE file in the root directory for more details.
 
-Which large model runs and where its bytes come from: the model manager's
-catalog and pick as the fork's adapter hands them over, the pointer at the
-commit, the file on disk, and the newer catalogs folded in.
+Which large model runs and where its bytes come from: the model index the
+comma keeps a copy of, the model manager's pick as the fork's adapter hands it
+over, the file on disk, and the index as the model manager's list.
 """
 import dataclasses
+import json
 import os
 import time
 import unittest
-import urllib.request
 from unittest import mock
 
 from jetlink.openpilot import models
-from jetlink.registry.catalog import DEFAULT_BIG_MODEL_REF
+from jetlink.registry.index import DEFAULT_BIG_MODEL_NAME, DEFAULT_BIG_MODEL_REF, NetworkError, RegistryError, parse_index
 from tests.openpilot.fakes import OpenpilotTest
 
 
 def bundle(ref: str, name: str, index: int = 0, version=19) -> dict:
-  """A bundle as the catalog JSON carries it."""
+  """A bundle as the model manager's catalog JSON carries it."""
   return {'ref': ref, 'display_name': name, 'index': index, 'minimum_selector_version': str(version)}
+
+
+def entry(ref: str, name: str, oid: str, size: int, folder: str = 'Master Models', **extra) -> dict:
+  """A listed model as the index carries it."""
+  return {'ref': ref, 'name': name, 'oid': oid, 'size': size, 'folder': folder, **extra}
+
+
+def index_json(*listed, refs=None, onnx=None) -> dict:
+  return {'schema': 1, 'models': list(listed), 'refs': refs or {}, 'onnx': onnx or {}, 'unresolved': {}}
 
 
 REF_A, REF_B, REF_C = 'a' * 40, 'b' * 40, 'c' * 40
 SHA_D = 'd' * 64
-POINTERS = {REF_A: {'oid': '1' * 64, 'size': 766_000_000},
-            REF_B: {'oid': '2' * 64, 'size': 1_757_000_000}}
+ALPHA = entry(REF_A, 'Alpha', '1' * 64, 766_000_000)
+BETA = entry(REF_B, 'Beta', '2' * 64, 1_757_000_000)
 
 
 class ModelsTest(OpenpilotTest):
@@ -36,7 +45,20 @@ class ModelsTest(OpenpilotTest):
     super().setUp()
     self.models = self.parts.models
 
+  def index(self, *listed, refs=None, onnx=None):
+    """The comma's copy of the index, as a fetch leaves it."""
+    path = self.models.index_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(index_json(*listed, refs=refs, onnx=onnx)))
+    self.models._index_cache = None
+
+  def fetched(self, *listed, refs=None, onnx=None, **kw):
+    """fetch_index serving this index."""
+    data = index_json(*listed, refs=refs, onnx=onnx)
+    return mock.patch('jetlink.registry.index.fetch_index', return_value=(data, parse_index(data)), **kw)
+
   def catalog(self, *bundles):
+    """The model manager's cached catalog."""
     self.op.store['ModelManager_ModelsCache_Chestnut'] = {'bundles': list(bundles)}
 
   def write_slot(self, ago, **slot):
@@ -54,157 +76,94 @@ class ModelsTest(OpenpilotTest):
     return self.models.heard({'pick': {**pick, 'age_s': ago, 'by': 'here'}})
 
 
-class TestCatalog(ModelsTest):
-  """The list is sunnypilot's big-model catalog, read as the model manager cached it."""
+class TestIndex(ModelsTest):
+  """The comma's copy of the model index: what is listed, in its order, and
+  which ONNX every ref and hash is, with no network."""
 
-  def test_newest_first_with_names(self):
-    self.catalog(bundle(REF_A, 'Alpha (September 04, 2026)', 3), bundle(REF_B, 'Beta', 9))
-    self.assertEqual(self.models.catalog(), [{'name': 'Beta', 'ref': REF_B}, {'name': 'Alpha (September 04, 2026)', 'ref': REF_A}])
+  def test_the_rows_are_the_index_in_its_order(self):
+    self.index(BETA, ALPHA)
+    self.assertEqual(self.models.model_index(), [{k: e[k] for k in ('name', 'ref', 'oid', 'size', 'folder')} for e in (BETA, ALPHA)])
 
-  def test_only_commits_of_this_selector_version(self):
-    # a bundle without a comma commit has no ONNX to find; one for another
-    # selector version is one the model manager itself would not list
-    self.catalog(bundle('not-a-commit', 'Odd', 5), bundle(REF_A, 'Alpha', 1), {'display_name': 'Blank'},
-                 bundle(REF_C, 'Gamma', 7, version=18))
-    self.assertEqual([b['ref'] for b in self.models.catalog()], [REF_A])
+  def test_no_index_yet_is_empty(self):
+    self.assertIsNone(self.models.index())
+    self.assertEqual(self.models.model_index(), [])
 
-  def test_the_selector_is_the_adapters(self):
-    self.op.catalog_selector = 18
-    self.catalog(bundle(REF_A, 'Alpha', 1), bundle(REF_C, 'Gamma', 7, version=18))
-    self.assertEqual([b['ref'] for b in self.models.catalog()], [REF_C])
-
-  def test_a_nameless_bundle_is_named_by_its_ref(self):
-    self.catalog({'ref': REF_A, 'index': 1, 'minimum_selector_version': 19})
-    self.assertEqual(self.models.catalog(), [{'name': REF_A[:10], 'ref': REF_A}])
-
-  def test_no_catalog_yet_is_empty(self):
-    self.assertEqual(self.models.catalog(), [])
-    self.catalog()
-    self.assertEqual(self.models.catalog(), [])
-
-  def test_an_unreadable_catalog_is_empty_not_an_error(self):
+  def test_a_copy_that_does_not_parse_is_none_not_an_error(self):
     # read from the UI's param thread, where an exception takes the panel down
-    self.op.store['ModelManager_ModelsCache_Chestnut'] = {'bundles': [{'ref': REF_A, 'minimum_selector_version': 'x'}]}
-    self.assertEqual(self.models.catalog(), [])
-    self.assertTrue(self.op.log.has('could not read the big-model catalog', 'exception'))
-
-  def test_without_a_model_manager_there_is_no_catalog(self):
-    self.op.keys = dataclasses.replace(self.op.keys, catalog=None, big_model=None)
-    self.catalog(bundle(REF_A, 'Alpha', 1))
-    self.assertEqual(self.models.catalog(), [])
-
-
-class TestModelIndex(ModelsTest):
-  """Every catalog model, with the ONNX behind it once that has been looked up."""
-
-  def index_with(self, bundles, pointers=POINTERS):
-    with mock.patch.object(self.models, 'catalog', return_value=bundles), \
-         mock.patch.object(self.models, 'pointers', return_value=pointers):
-      return self.models.model_index()
-
-  def test_a_resolved_model_carries_its_identity(self):
-    (entry,) = self.index_with([{'name': 'Alpha', 'ref': REF_A}])
-    self.assertEqual(entry, {'name': 'Alpha', 'ref': REF_A, 'oid': '1' * 64, 'size': 766_000_000})
-
-  def test_an_unresolved_model_is_still_listed(self):
-    # the pointer is fetched when the model is first asked for
-    (entry,) = self.index_with([{'name': 'Gamma', 'ref': REF_C}])
-    self.assertEqual((entry['name'], entry['oid'], entry['size']), ('Gamma', None, None))
-
-  def test_a_size_is_known_only_once_resolved(self):
-    with mock.patch.object(self.models, 'catalog', return_value=[{'name': 'Alpha', 'ref': REF_A},
-                                                                 {'name': 'Gamma', 'ref': REF_C}]), \
-         mock.patch.object(self.models, 'pointers', return_value=POINTERS):
-      self.assertEqual(self.models.size_for('1' * 64), 766_000_000)
-      self.assertIsNone(self.models.size_for('9' * 64))
+    path = self.models.index_path()
+    path.parent.mkdir(parents=True)
+    path.write_text('{"schema": 1, "models": [')
+    self.assertEqual(self.models.model_index(), [])
+    self.assertTrue(self.op.log.has("the comma's model index does not parse", 'exception'))
 
   def test_a_second_read_within_the_ttl_costs_nothing(self):
     # the UI names the active model every frame
-    with mock.patch.object(self.models, 'catalog', return_value=[]) as read, \
-         mock.patch.object(self.models, 'pointers', return_value={}):
+    self.index(ALPHA)
+    with mock.patch.object(models, 'parse_index', wraps=models.parse_index) as parse:
       first = self.models.model_index()
       self.assertIs(self.models.model_index(), first)
-    self.assertEqual(read.call_count, 1)
+    self.assertEqual(parse.call_count, 1)
 
-  def test_after_the_ttl_it_is_read_again(self):
-    with mock.patch.object(self.models, 'catalog', return_value=[]) as read, \
-         mock.patch.object(self.models, 'pointers', return_value={}):
+  def test_after_the_ttl_only_a_changed_copy_is_parsed_again(self):
+    self.index(ALPHA)
+    later = mock.patch.object(models.time, 'monotonic', return_value=models.time.monotonic() + models.INDEX_TTL)
+    with mock.patch.object(models, 'parse_index', wraps=models.parse_index) as parse:
       self.models.model_index()
-      with mock.patch.object(models.time, 'monotonic', return_value=models.time.monotonic() + models.INDEX_TTL):
+      with later:
         self.models.model_index()
-    self.assertEqual(read.call_count, 2)
+      self.assertEqual(parse.call_count, 1)
+      self.index(ALPHA, BETA)
+      self.assertEqual([m['ref'] for m in self.models.model_index()], [REF_A, REF_B])
+    self.assertEqual(parse.call_count, 2)
 
+  def test_a_ref_the_index_resolves_but_does_not_list(self):
+    # a recompile, listed under the newest ref, or a pull request since closed
+    self.index(BETA, refs={REF_C: {'oid': '3' * 64, 'size': 5}})
+    with mock.patch('jetlink.registry.index.fetch_index') as fetch:
+      self.assertEqual(self.models.resolve(REF_C, None), ('3' * 64, 5))
+    fetch.assert_not_called()
 
-class TestResolvePointer(ModelsTest):
-  """The pointer at a commit is the oid and size the Jetson is asked for,
-  fetched the first time a model is asked for and kept for good."""
+  def test_a_hash_is_sized_from_the_onnx_the_index_knows(self):
+    self.index(BETA, onnx={SHA_D: {'size': 792_487_890}})
+    self.assertEqual(self.models.resolve(None, SHA_D), (SHA_D, 792_487_890))
+    self.assertEqual(self.models.size_for(SHA_D), 792_487_890)
+    self.assertIsNone(self.models.size_for('9' * 64))
 
-  POINTER = f"version https://git-lfs.github.com/spec/v1\noid sha256:{'3' * 64}\nsize 766040736\n"
+  def test_a_miss_fetches_the_index_and_keeps_it(self):
+    self.index(BETA)
+    with self.fetched(BETA, entry(REF_C, 'Gamma', '3' * 64, 5)) as fetch:
+      self.assertEqual(self.models.resolve(REF_C, None), ('3' * 64, 5))
+    fetch.assert_called_once_with()
+    kept = json.loads(self.models.index_path().read_text())
+    self.assertEqual([m['ref'] for m in kept['models']], [REF_B, REF_C])
 
-  def setUp(self):
-    super().setUp()
-    self.models._index_cache = (float('inf'), [], {})   # a stale index must be dropped on a hit
+  def test_a_miss_fetches_at_most_once_a_while(self):
+    self.index(BETA)
+    with self.fetched(BETA) as fetch:
+      for _ in range(2):
+        with self.assertRaises(RegistryError):
+          self.models.resolve(REF_C, None)
+    fetch.assert_called_once_with()
 
-  def response(self, body: bytes):
-    r = mock.MagicMock()
-    r.__enter__.return_value = r
-    r.read.return_value = body
-    return r
-
-  def test_fetches_once_and_records_it(self):
-    from jetlink.registry.lfs import POINTER_URL
-    self.op.store['JetlinkModelPointers'] = dict(POINTERS)
-    with mock.patch.object(urllib.request, 'urlopen', return_value=self.response(self.POINTER.encode())) as urlopen:
-      self.assertEqual(self.models.resolve_pointer(REF_C), ('3' * 64, 766040736))
-    self.assertEqual(urlopen.call_args.args[0], POINTER_URL.format(ref=REF_C))
-    written = self.op.store['JetlinkModelPointers']
-    self.assertEqual(written[REF_C], {'oid': '3' * 64, 'size': 766040736})
-    self.assertEqual(written[REF_A], POINTERS[REF_A])
-    self.assertIsNone(self.models._index_cache)
-    self.assertTrue(self.op.log.has(f"{REF_C[:10]} is {'3' * 16}, 730 MB"))
-
-  def test_it_is_written_blocking(self):
-    # the next lookup reads it back, and a put still in flight would be lost under it
-    with mock.patch.object(self.op, 'put') as put, \
-         mock.patch.object(self.models, 'fetch_pointer', return_value=('3' * 64, 1)):
-      self.models.resolve_pointer(REF_C)
-    self.assertIs(put.call_args.kwargs['block'], True)
-
-  def test_a_known_pointer_needs_no_fetch(self):
-    self.op.store['JetlinkModelPointers'] = dict(POINTERS)
-    with mock.patch.object(urllib.request, 'urlopen') as urlopen:
-      self.assertEqual(self.models.resolve_pointer(REF_A), ('1' * 64, 766_000_000))
-    urlopen.assert_not_called()
-
-  def test_a_miss_raises_and_records_nothing(self):
-    from jetlink.registry.catalog import RegistryError
-    for failure in ({'side_effect': OSError('offline')}, {'return_value': self.response(b'<html>not found</html>')}):
-      with self.subTest(failure), mock.patch.object(urllib.request, 'urlopen', **failure), \
-           self.assertRaises(RegistryError):
-        self.models.resolve_pointer(REF_C)
-    self.assertNotIn('JetlinkModelPointers', self.op.store)
-
-  def test_the_lookup_is_the_registry_s(self):
-    """One resolver for both ends; the precompiled-pkl commits are tested there."""
-    from jetlink.registry.lfs import Pointer
-    with mock.patch('jetlink.registry.lfs.fetch_pointer', return_value=Pointer('4' * 64, 766354845)) as fetch:
-      self.assertEqual(self.models.resolve_pointer(REF_C), ('4' * 64, 766354845))
-    fetch.assert_called_once_with(REF_C, timeout=models.POINTER_TIMEOUT)
+  def test_a_failed_fetch_raises_and_keeps_the_copy(self):
+    self.index(BETA)
+    with mock.patch('jetlink.registry.index.fetch_index', side_effect=NetworkError('offline')), \
+         self.assertRaises(NetworkError):
+      self.models.resolve(REF_C, None)
+    self.assertEqual([m['ref'] for m in self.models.model_index()], [REF_B])
 
 
 class TestSelectedModel(ModelsTest):
   """The pick is the model manager's big-model slot, the same one a chestnut runs
-  from, listed in the catalog or not; the catalog only supplies the default."""
+  from, listed or not; the index names its ONNX and supplies the default."""
 
-  INDEX = [
-    {'name': 'Alpha', 'ref': REF_A, 'oid': 'a' * 64, 'size': 10},
-    {'name': 'Beta', 'ref': REF_B, 'oid': 'b' * 64, 'size': 20},
-  ]
+  INDEX = (entry(REF_A, 'Alpha', 'a' * 64, 10), entry(REF_B, 'Beta', 'b' * 64, 20))
 
-  def select_with(self, slot_ref, default=REF_B, index=None, known=None):
+  def select_with(self, slot_ref, default=REF_B, listed=INDEX, refs=None):
+    if listed:
+      self.index(*listed, refs=refs)
     pick = {'name': 'Picked', 'ref': slot_ref, 'sha256': None} if slot_ref else None
-    with mock.patch.object(self.models, '_index', return_value=(self.INDEX if index is None else index, known or {})), \
-         mock.patch.object(models, 'DEFAULT_BIG_MODEL_REF', default), \
+    with mock.patch.object(models, 'DEFAULT_BIG_MODEL_REF', default), \
          mock.patch.object(self.models, 'selected_slot', return_value=pick):
       return self.models.selected_model()
 
@@ -213,26 +172,23 @@ class TestSelectedModel(ModelsTest):
 
   def test_the_default_is_jetlinks_not_the_chestnuts(self):
     # a chestnut's default is the model in the tree; the accelerator's is jetlink's
-    from jetlink.registry.catalog import DEFAULT_BIG_MODEL_REF
     assert models.DEFAULT_BIG_MODEL_REF == DEFAULT_BIG_MODEL_REF
 
-  def test_a_default_not_in_the_catalog_falls_to_the_newest(self):
+  def test_a_default_not_listed_falls_to_the_first_listed(self):
     assert self.select_with(None, default='f' * 40)['name'] == 'Alpha'
 
-  def test_the_pick_is_the_slot_with_its_pointer(self):
-    for ref in (REF_A, REF_C):   # listed or not
-      known = {ref: {'oid': 'c' * 64, 'size': '30'}}
-      assert self.select_with(ref, known=known) == {'name': 'Picked', 'ref': ref, 'oid': 'c' * 64, 'size': 30}
+  def test_the_pick_is_the_slot_with_its_onnx(self):
+    assert self.select_with(REF_A) == {'name': 'Picked', 'ref': REF_A, 'oid': 'a' * 64, 'size': 10}
+    # listed or not
+    assert self.select_with(REF_C, refs={REF_C: {'oid': 'c' * 64, 'size': 30}}) == \
+      {'name': 'Picked', 'ref': REF_C, 'oid': 'c' * 64, 'size': 30}
 
-  def test_a_pick_not_yet_resolved_has_no_oid(self):
-    # the worker resolves it from the ref, as for any catalog model
+  def test_a_pick_the_index_does_not_know_has_no_oid(self):
+    # the provisioning run fetches the index again for it (resolve)
     assert self.select_with(REF_C) == {'name': 'Picked', 'ref': REF_C, 'oid': None, 'size': None}
 
-  def test_a_pick_needs_no_catalog(self):
-    assert self.select_with(REF_C, index=[])['ref'] == REF_C
-
-  def test_no_pick_and_no_catalog_is_no_model(self):
-    assert self.select_with(None, index=[]) is None
+  def test_with_no_index_yet_the_default_is_named_by_its_ref(self):
+    assert self.select_with(None, listed=()) == {'name': DEFAULT_BIG_MODEL_NAME, 'ref': REF_B, 'oid': None, 'size': None}
 
   def test_the_name_is_the_picks_or_none(self):
     with mock.patch.object(self.models, 'selected_model', return_value={'name': 'Picked'}):
@@ -241,8 +197,7 @@ class TestSelectedModel(ModelsTest):
       self.assertIsNone(self.models.selected_model_name())
 
   def test_end_to_end_off_the_params(self):
-    self.catalog(bundle(REF_A, 'Alpha', 1), bundle(REF_B, 'Beta', 2))
-    self.op.store['JetlinkModelPointers'] = dict(POINTERS)
+    self.index(ALPHA, BETA)
     self.op.store['ModelManager_ActiveBundleChestnut'] = {'ref': REF_A, 'displayName': 'Alpha'}
     self.assertEqual(self.models.selected_model(), {'name': 'Alpha', 'ref': REF_A, 'oid': '1' * 64, 'size': 766_000_000})
 
@@ -257,8 +212,8 @@ class TestPicksOnBothEnds(ModelsTest):
   def setUp(self):
     super().setUp()
     self.op.keys = dataclasses.replace(self.op.keys, select='ModelManager_DownloadRef')
+    self.index(ALPHA, BETA)
     self.catalog(bundle(REF_A, 'Alpha', 1), bundle(REF_B, 'Beta', 2))
-    self.op.store['JetlinkModelPointers'] = dict(POINTERS)
 
   def pick_here(self, ref, name, ago):
     self.write_slot(ago, ref=ref, displayName=name)
@@ -315,14 +270,14 @@ class TestPicksOnBothEnds(ModelsTest):
     self.assertEqual(self.op.store['ModelManager_DownloadRef'], REF_B)
     self.assertTrue(self.op.log.has('was picked on the server'))
 
-  def test_one_we_do_not_list_is_not_asked_for(self):
+  def test_one_the_model_managers_list_lacks_is_not_asked_for(self):
     # the model manager would hold a ref it cannot resolve and never let go
     self.pick_here(REF_A, 'Alpha', ago=600)
     self.hear(REF_C, ago=60, sha256='3' * 64, nbytes=7)
     self.models.adopt()
     self.assertNotIn('ModelManager_DownloadRef', self.op.store)
-    # but its pointer is kept, so naming it again needs no network
-    self.assertEqual(self.models.pointers()[REF_C], {'oid': '3' * 64, 'size': 7})
+    # it drives all the same, by the server's oid and size
+    self.assertEqual(self.models.selected_model()['oid'], '3' * 64)
 
   def test_nothing_is_asked_for_when_ours_is_newer_or_the_same(self):
     self.pick_here(REF_B, 'Beta', ago=600)
@@ -357,7 +312,7 @@ class TestPicksOnBothEnds(ModelsTest):
 
   def test_the_default_chosen_here_is_a_pick_the_server_does_not_undo(self):
     # both ends named Beta; then the user chose the Default in the comma's list
-    self.catalog(bundle(DEFAULT_BIG_MODEL_REF, 'Cinque Terre V3', 0), bundle(REF_A, 'Alpha', 1), bundle(REF_B, 'Beta', 2))
+    self.index(entry(DEFAULT_BIG_MODEL_REF, 'Cinque Terre V3', 'c' * 64, 30), ALPHA, BETA)
     self.pick_here(REF_B, 'Beta', ago=600)
     self.answer(REF_B, self.models.hello_pick(), ago=600)
     self.empty_slot()
@@ -413,14 +368,15 @@ class TestPicksOnBothEnds(ModelsTest):
 class TestPicksByHash(ModelsTest):
   """StarPilot's shape: a picker of its own whose catalog knows a model by its
   ONNX's hash alone, no catalog for jetlink and no model manager to ask. The
-  pick names its model by the hash, is sized from comma's LFS servers, and a
-  newer pick on the server is written into the slot so the picker shows it."""
+  pick names its model by the hash, is sized from the index, and a newer pick
+  on the server is written into the slot so the picker shows it."""
 
   SLOT = 'JetlinkModel'
 
   def setUp(self):
     super().setUp()
     self.op.keys = dataclasses.replace(self.op.keys, big_model=self.SLOT, catalog=None, select=None)
+    self.index(entry(REF_B, 'Beta', '2' * 64, 20), onnx={SHA_D: {'size': 7}})
 
   def pick_here(self, sha256, name, ago):
     self.write_slot(ago, sha256=sha256, displayName=name)
@@ -428,29 +384,17 @@ class TestPicksByHash(ModelsTest):
   def hear(self, ref, sha256, ago, nbytes=None, name='On the server'):
     return self.hear_pick(ago, ref=ref, sha256=sha256, nbytes=nbytes, name=name)
 
-  def test_the_hash_is_its_identity(self):
+  def test_the_hash_is_its_identity_sized_from_the_index(self):
     self.pick_here(SHA_D, 'Delta', ago=60)
-    self.assertEqual(self.models.selected_model(), {'name': 'Delta', 'ref': None, 'oid': SHA_D, 'size': None})
+    self.assertEqual(self.models.selected_model(), {'name': 'Delta', 'ref': None, 'oid': SHA_D, 'size': 7})
+    self.assertEqual(self.models.resolve(None, SHA_D), (SHA_D, 7))
 
-  def test_it_is_sized_once_and_kept(self):
-    self.pick_here(SHA_D, 'Delta', ago=60)
-    with mock.patch.object(self.models, 'fetch_size', return_value=(SHA_D, 792_487_890)) as fetch:
-      self.assertEqual(self.models.resolve_size(SHA_D), (SHA_D, 792_487_890))
-      self.assertEqual(self.models.resolve_size(SHA_D), (SHA_D, 792_487_890))
-    fetch.assert_called_once_with(SHA_D)
-    self.assertEqual(self.models.pointers()[SHA_D], {'oid': SHA_D, 'size': 792_487_890})
-    self.models._index_cache = None
-    self.assertEqual(self.models.selected_model()['size'], 792_487_890)
-
-  def test_it_is_sized_by_the_servers_a_download_asks(self):
-    from jetlink.registry.lfs import Pointer
-    with mock.patch('jetlink.registry.lfs.fetch_size', return_value=Pointer(SHA_D, 5)) as fetch:
-      self.assertEqual(self.models.fetch_size(SHA_D), (SHA_D, 5))
-    fetch.assert_called_once_with(SHA_D, self.models.lfs_endpoints(), timeout=models.POINTER_TIMEOUT)
+  def test_a_hash_the_index_does_not_know_has_no_size(self):
+    self.pick_here('9' * 64, 'Mine', ago=60)
+    self.assertEqual(self.models.selected_model(), {'name': 'Mine', 'ref': None, 'oid': '9' * 64, 'size': None})
 
   def test_the_hello_carries_it(self):
     self.pick_here(SHA_D, 'Delta', ago=30)
-    self.op.store['JetlinkModelPointers'] = {SHA_D: {'oid': SHA_D, 'size': 7}}
     pick = self.models.hello_pick()
     self.assertEqual({k: pick[k] for k in ('ref', 'sha256', 'nbytes', 'name')},
                      {'ref': None, 'sha256': SHA_D, 'nbytes': 7, 'name': 'Delta'})
@@ -461,7 +405,6 @@ class TestPicksByHash(ModelsTest):
     self.hear(REF_B, SHA_D, ago=60, nbytes=7)
     self.models.adopt()
     self.assertEqual(self.op.store[self.SLOT], {'sha256': SHA_D, 'displayName': 'Delta'})
-    # the server's size is kept under the hash, so ours needs no lookup
     self.assertEqual(self.models.selected_model(), {'name': 'Delta', 'ref': None, 'oid': SHA_D, 'size': 7})
 
   def test_a_newer_pick_on_the_server_is_written_into_the_slot(self):
@@ -470,8 +413,7 @@ class TestPicksByHash(ModelsTest):
     self.models.adopt()
     self.assertEqual(self.op.store[self.SLOT], {'displayName': 'Beta', 'ref': REF_B, 'sha256': '2' * 64})
     self.assertTrue(self.op.log.has('was picked on the server'))
-    # its pointer is kept, and from now on it is our pick, made just now
-    self.assertEqual(self.models.pointers()[REF_B], {'oid': '2' * 64, 'size': 20})
+    # from now on it is our pick, made just now
     (self.op.store_dir / self.SLOT).write_text('{}')
     self.assertIsNone(self.models._newer_server_pick())
     self.assertEqual(self.models.selected_model(), {'name': 'Beta', 'ref': REF_B, 'oid': '2' * 64, 'size': 20})
@@ -489,10 +431,7 @@ class TestPicksByHash(ModelsTest):
 
   def test_a_server_pick_named_by_its_hash_alone_is_sized_here(self):
     self.hear(None, SHA_D, ago=60, name='Delta')
-    self.assertEqual(self.models.selected_model(), {'name': 'Delta', 'ref': None, 'oid': SHA_D, 'size': None})
-    self.op.store['JetlinkModelPointers'] = {SHA_D: {'oid': SHA_D, 'size': 7}}
-    self.models._index_cache = None
-    self.assertEqual(self.models.selected_model()['size'], 7)
+    self.assertEqual(self.models.selected_model(), {'name': 'Delta', 'ref': None, 'oid': SHA_D, 'size': 7})
 
   def test_it_is_provisioned_by_its_hash(self):
     from jetlink.openpilot import provision
@@ -502,10 +441,8 @@ class TestPicksByHash(ModelsTest):
     client.ensure_engine.return_value = mock.Mock(sha256=SHA_D, to_dict=lambda: {'sha256': SHA_D})
     run = provision.ProvisioningRun(self.parts)
     run.client = client
-    with mock.patch.object(self.models, 'fetch_size', return_value=(SHA_D, 792_487_890)) as fetch:
-      self.assertTrue(run.provision())
-    fetch.assert_called_once_with(SHA_D)
-    self.assertEqual(client.ensure_engine.call_args.args[:2], (SHA_D, 792_487_890))
+    self.assertTrue(run.provision())
+    self.assertEqual(client.ensure_engine.call_args.args[:2], (SHA_D, 7))
     # the server downloads it by the hash and size, with no ref to go by
     self.assertTrue(client.ensure_engine.call_args.kwargs['fetch'])
     self.assertIsNone(client.ensure_engine.call_args.kwargs['ref'])
@@ -526,49 +463,47 @@ class TestWithoutAModelManager(ModelsTest):
     self.assertEqual(self.models.selected_model(), {'name': 'Beta', 'ref': REF_B, 'oid': '2' * 64, 'size': 20})
 
   def test_jetlinks_default_runs(self):
-    from jetlink.registry.catalog import DEFAULT_BIG_MODEL_NAME, DEFAULT_BIG_MODEL_REF
     self.assertEqual(self.models.selected_model(),
                      {'name': DEFAULT_BIG_MODEL_NAME, 'ref': DEFAULT_BIG_MODEL_REF, 'oid': None, 'size': None})
     self.assertEqual(self.models.default_model_name(), 'Cinque Terre V3 Model')
     self.assertEqual(self.jl.status().model, 'Cinque Terre V3 Model')
 
-  def test_once_resolved_it_carries_its_identity(self):
-    from jetlink.registry.catalog import DEFAULT_BIG_MODEL_REF
-    self.op.store['JetlinkModelPointers'] = {DEFAULT_BIG_MODEL_REF: {'oid': '9' * 64, 'size': 766_000_000}}
+  def test_with_an_index_it_carries_its_identity(self):
+    self.index(BETA, entry(DEFAULT_BIG_MODEL_REF, 'Cinque Terre V3', '9' * 64, 766_000_000))
     self.assertEqual(self.models.selected_model()['oid'], '9' * 64)
     self.assertEqual(self.models.selected_model()['size'], 766_000_000)
 
   def test_it_is_provisioned_like_any_pick(self):
     from jetlink.openpilot import link, provision
-    from jetlink.registry.catalog import DEFAULT_BIG_MODEL_REF
     client = mock.Mock()
     client.hello.return_value = {}
     client.ensure_engine.return_value = mock.Mock(sha256='9' * 64, to_dict=lambda: {'sha256': '9' * 64})
     run = provision.ProvisioningRun(self.parts)
     run.client = client
-    with mock.patch.object(self.models, 'fetch_pointer', return_value=('9' * 64, 766_000_000)) as fetch:
+    # the comma has no index yet: the run fetches it
+    with self.fetched(entry(DEFAULT_BIG_MODEL_REF, 'Cinque Terre V3', '9' * 64, 766_000_000)) as fetch:
       self.assertTrue(run.provision())
-    fetch.assert_called_once_with(DEFAULT_BIG_MODEL_REF)
+    fetch.assert_called_once_with()
     self.assertEqual(client.ensure_engine.call_args.args[:2], ('9' * 64, 766_000_000))
     self.assertTrue(self.parts.spec.engine_ready_for('9' * 64))
     # neither end has the bytes, so the server is asked to download them, with the time that takes
     self.assertTrue(client.ensure_engine.call_args.kwargs['fetch'])
     self.assertEqual(client.ensure_engine.call_args.kwargs['build_timeout'], link.BUILD_TIMEOUT + link.FETCH_TIMEOUT)
 
-  def test_a_fork_whose_catalog_is_not_fetched_yet_still_waits_for_it(self):
-    # sunnypilot's model manager lists it shortly; its pick may not be the default
+  def test_a_model_manager_with_nothing_picked_runs_the_default_too(self):
+    # an empty slot is the default picked, whether or not the index is here yet
     self.op.keys = dataclasses.replace(self.op.keys, catalog='ModelManager_ModelsCache_Chestnut')
-    self.assertIsNone(self.models.selected_model())
+    self.assertEqual(self.models.selected_model()['ref'], DEFAULT_BIG_MODEL_REF)
 
 
 class TestDefaultModelName(ModelsTest):
   """The accelerator's default, named as the chestnut's DEFAULT_BIG_MODEL is: the
-  catalog's display name without its build date."""
+  index's name without its build date."""
 
   def name_with(self, names, default=REF_B):
-    index = [{'name': name, 'ref': ref, 'oid': None, 'size': None} for name, ref in zip(names, (REF_A, REF_B), strict=False)]
-    with mock.patch.object(self.models, '_index', return_value=(index, {})), \
-         mock.patch.object(models, 'DEFAULT_BIG_MODEL_REF', default):
+    if names:
+      self.index(*(entry(ref, name, ch * 64, 1) for name, ref, ch in zip(names, (REF_A, REF_B), '12', strict=False)))
+    with mock.patch.object(models, 'DEFAULT_BIG_MODEL_REF', default):
       return self.models.default_model_name()
 
   def test_the_build_date_is_dropped(self):
@@ -577,11 +512,11 @@ class TestDefaultModelName(ModelsTest):
   def test_a_parenthesis_that_is_not_a_date_stays(self):
     assert self.name_with(['Alpha', 'Beta (big)']) == 'Beta (big)'
 
-  def test_a_default_not_listed_names_the_newest(self):
+  def test_a_default_not_listed_names_the_first_listed(self):
     assert self.name_with(['Alpha (September 01, 2026)', 'Beta'], default='f' * 40) == 'Alpha'
 
-  def test_no_catalog_is_no_name(self):
-    assert self.name_with([]) is None
+  def test_no_index_yet_names_jetlinks_default(self):
+    assert self.name_with([]) == DEFAULT_BIG_MODEL_NAME
 
 
 class TestSelectedSlot(ModelsTest):
@@ -719,7 +654,7 @@ class TestFetchShippedModel(ModelsTest):
     return mock.patch.object(models, 'DOWNLOAD_RETRY_DELAYS', (0.0,))
 
   def test_nowhere_to_get_it_raises_once_the_attempts_are_spent(self):
-    from jetlink.registry.catalog import NetworkError
+    from jetlink.registry.index import NetworkError
     with mock.patch('jetlink.registry.lfs.lfs_resolve', return_value=None) as resolve, self.no_waits(), \
          self.assertRaises(NetworkError):
       self.models.fetch_shipped_model()
@@ -729,7 +664,7 @@ class TestFetchShippedModel(ModelsTest):
   def test_a_failed_transfer_is_tried_again_and_told_of(self):
     # a car's connection stalls; each attempt asks the LFS server for a fresh
     # address, which expires, and carries on from the .part (lfs_download)
-    from jetlink.registry.catalog import NetworkError
+    from jetlink.registry.index import NetworkError
     waits = []
     transfers = iter([NetworkError('read timed out'), None])
 
@@ -747,7 +682,7 @@ class TestFetchShippedModel(ModelsTest):
 
   def test_a_stopped_run_stops_waiting_to_try_again(self):
     from jetlink.openpilot import models
-    from jetlink.registry.catalog import NetworkError
+    from jetlink.registry.index import NetworkError
     with mock.patch('jetlink.registry.lfs.lfs_resolve', return_value=None), \
          mock.patch.object(models, 'DOWNLOAD_RETRY_DELAYS', (60.0,)), self.assertRaises(NetworkError):
       self.models.fetch_shipped_model(should_stop=lambda: True)
@@ -767,100 +702,70 @@ class TestFetchShippedModel(ModelsTest):
       self.assertIsNone(self.models.fetch_shipped_model())
 
 
-OLD, NEW = 'a' * 40, 'e' * 40
-
-
-def full_bundle(ref: str, index: int, selector: str, name: str) -> dict:
-  return {'ref': ref, 'index': index, 'minimum_selector_version': selector, 'is_big': True, 'is_20hz': True,
-          'display_name': name, 'short_name': name[:4], 'generation': '12', 'environment': 'development',
-          'runner': 'tinygrad', 'build_time': '2026-09-25T00:00:00Z', 'overrides': {'folder': 'Master Models'},
-          'models': [{'type': 'chunked', 'artifact': {'file_name': f'{name}.pkl', 'download_uri': {'url': 'x', 'sha256': 'y'}}}]}
-
-
-PINNED = {'tinygrad_ref': 'pinned', 'bundles': [full_bundle(OLD, 12, '19', 'Cinque Terre V3')]}
-NEWER = {'tinygrad_ref': 'next', 'bundles': [full_bundle(OLD, 12, '20', 'Cinque Terre V3'),
-                                             full_bundle(NEW, 13, '20', 'Cinque Terre V4')]}
-
-
 class TestBigCatalog(ModelsTest):
-  """A big model sunnypilot publishes after this build is still pickable with a
-  Jetson: the model manager's catalog has the newer catalogs' models folded
-  in, as entries a chestnut never downloads. That the model manager accepts
-  them is the fork's to test."""
+  """Without a chestnut fitted the model manager's big-model list is the
+  index's, so what the comma lists is what the Jetson runs. That the model
+  manager parses it is the fork's to test."""
 
-  def merged(self, newer=NEWER):
-    probe_result = {'side_effect': newer} if isinstance(newer, Exception) else {'return_value': newer}
-    with mock.patch('jetlink.registry.catalog.fetch_catalogs', **probe_result) as probe:
-      out = self.jl.extend_catalog(PINNED)
-    return out, probe
+  PR = entry(REF_C, '#39235 Light speed 2', '3' * 64, 5, folder='comma Pull Requests', pr=39235)
 
-  def test_a_model_only_a_newer_catalog_lists_is_folded_in(self):
-    out, probe = self.merged()
-    probe.assert_called_once_with()
-    self.assertEqual([b['ref'] for b in out['bundles']], [OLD, NEW])
-    # nothing for a chestnut to fetch
-    self.assertEqual(out['bundles'][1]['models'], [])
-    self.assertTrue(self.op.log.has('1 model(s) only newer catalogs list'))
-
-  def test_a_pin_overrides_the_kept_pointer_and_stays_offline(self):
-    right = {'oid': '9' * 64, 'size': 792430559}
-    self.op.store['JetlinkModelPointers'] = {REF_A: {'oid': '8' * 64, 'size': 792487890}, REF_B: POINTERS[REF_B]}
-    out, _ = self.merged(newer={**PINNED, 'pointers': {REF_A: right}})
-    self.assertNotIn('pointers', out, "the model manager's catalog carries no pins")
-    self.assertEqual(self.op.store['JetlinkModelPointers'], {REF_A: right, REF_B: POINTERS[REF_B]})
-    self.assertTrue(self.op.log.has('is pinned to 9999999999999999'))
-    # a list that drops the pin later, or no list at all, leaves it kept
-    self.merged(newer=PINNED)
-    self.merged(newer=OSError('offline'))
-    with mock.patch.object(urllib.request, 'urlopen') as urlopen:
-      self.assertEqual(self.models.resolve_pointer(REF_A), (right['oid'], right['size']))
-    urlopen.assert_not_called()
-
-  def test_a_pin_already_kept_writes_nothing(self):
-    self.op.store['JetlinkModelPointers'] = dict(POINTERS)
-    with mock.patch.object(self.op, 'put') as put:
-      self.merged(newer={**PINNED, 'pointers': {REF_A: POINTERS[REF_A]}})
-    put.assert_not_called()
-
-  def test_a_model_the_pinned_catalog_has_keeps_its_build(self):
-    out, _ = self.merged()
-    self.assertIs(out['bundles'][0], PINNED['bundles'][0])
-    self.assertEqual(out['tinygrad_ref'], 'pinned')
-
-  def test_nothing_newer_or_a_failed_probe_leaves_it_alone(self):
-    self.assertIs(self.merged(newer=PINNED)[0], PINNED)
-    self.assertIs(self.merged(newer=OSError('offline'))[0], PINNED)
-    self.assertTrue(self.op.log.has('could not check for newer catalogs', 'exception'))
-
-  def test_a_failed_probe_keeps_what_the_last_one_found(self):
-    # the model manager's cached copy has the newer model as merge_catalogs made
-    # it; a probe that fails now must not drop a pick that is only listed there
-    last, _ = self.merged()
-    self.op.put('ModelManager_ModelsCache_Chestnut', {**last, 'extended': True}, block=True)
-    out, _ = self.merged(newer=OSError('offline'))
-    self.assertEqual([b['ref'] for b in out['bundles']], [OLD, NEW])
-    self.assertEqual(out['bundles'][1], last['bundles'][1])
-    # sunnypilot's own entries come from the fetch, never the cache
-    self.assertIs(out['bundles'][0], PINNED['bundles'][0])
-    self.assertTrue(self.op.log.has('keeping 1 model(s) the last probe found'))
-
-  def test_a_failed_probe_keeps_a_model_a_newer_catalog_built_at_our_selector(self):
-    # the fork fetches v25 and v26 adds Cinque Terre V3 at selector 19, builds
-    # and all: one failed probe dropped it from the picker and reset the pick
-    newer = {'tinygrad_ref': 'pinned', 'bundles': [*PINNED['bundles'], full_bundle(NEW, 13, '19', 'Cinque Terre V4')]}
-    last, _ = self.merged(newer=newer)
-    self.assertEqual([b['ref'] for b in last['bundles']], [OLD, NEW])
-    self.op.put('ModelManager_ModelsCache_Chestnut', {**last, 'extended': True}, block=True)
-    out, _ = self.merged(newer=OSError('offline'))
-    self.assertEqual([b['ref'] for b in out['bundles']], [OLD, NEW])
-    self.assertEqual(out['bundles'][1], newer['bundles'][1])
-    self.assertTrue(self.op.log.has('keeping 1 model(s) the last probe found'))
+  def test_the_index_in_its_order_and_folders(self):
+    listed = entry(REF_B, 'Beta (October 29, 2026)', '2' * 64, 20, folder='2026 Deep RL Models', short_name='B',
+                   build_time='2026-10-29T00:00:00Z')
+    with self.fetched(listed, ALPHA, self.PR):
+      out = self.jl.big_catalog()
+    self.assertEqual([(b['ref'], b['index'], b['overrides']['folder']) for b in out['bundles']],
+                     [(REF_B, 3, '2026 Deep RL Models'), (REF_A, 2, 'Master Models'), (REF_C, 1, 'comma Pull Requests')])
+    first = out['bundles'][0]
+    self.assertEqual({k: first[k] for k in ('display_name', 'short_name', 'build_time', 'minimum_selector_version', 'is_big', 'models')},
+                     {'display_name': 'Beta (October 29, 2026)', 'short_name': 'B', 'build_time': '2026-10-29T00:00:00Z',
+                      'minimum_selector_version': '19', 'is_big': True, 'models': []})
+    # what the model manager's parser requires of every bundle
+    for b in out['bundles']:
+      self.assertTrue({'index', 'short_name', 'display_name', 'generation', 'environment', 'minimum_selector_version'} <= set(b))
+    self.assertEqual([b['short_name'] for b in out['bundles']][1:], [REF_A[:7], '#39235'])
 
   def test_the_selector_is_the_adapters(self):
-    with mock.patch('jetlink.registry.catalog.fetch_catalogs', return_value=NEWER), \
-         mock.patch('jetlink.registry.catalog.merge_catalogs', return_value=PINNED) as merge:
-      self.jl.extend_catalog(PINNED)
-    self.assertEqual(merge.call_args.kwargs['selector'], 19)
+    self.op.catalog_selector = 21
+    with self.fetched(ALPHA):
+      self.assertEqual(self.jl.big_catalog()['bundles'][0]['minimum_selector_version'], '21')
+
+  def test_the_index_it_lists_is_the_one_the_comma_keeps(self):
+    with self.fetched(ALPHA, BETA):
+      self.jl.big_catalog()
+    self.assertEqual([m['ref'] for m in self.models.model_index()], [REF_A, REF_B])
+
+  def test_a_failed_fetch_is_none_and_keeps_the_copy(self):
+    self.index(ALPHA)
+    with mock.patch('jetlink.registry.index.fetch_index', side_effect=NetworkError('offline')):
+      self.assertIsNone(self.jl.big_catalog())
+    self.assertEqual([m['ref'] for m in self.models.model_index()], [REF_A])
+    self.assertTrue(self.op.log.has('could not fetch the model index: offline', 'warning'))
+    self.assertEqual(self.op.log.lines('exception'), [])
+
+  def test_whether_it_lists_is_the_hardware(self):
+    self.assertTrue(self.jl.lists_big_models())
+    self.op.chestnut = True
+    self.parts._chestnut = None
+    with mock.patch.object(self.parts, 'chestnut_fitted', return_value=True):
+      self.assertFalse(self.jl.lists_big_models())
+
+  def test_a_pick_the_list_no_longer_names_carries_over_to_its_onnx(self):
+    # a recompile of a listed model is listed once, under the newest ref
+    self.index(BETA, refs={REF_C: {'oid': BETA['oid'], 'size': BETA['size']}, REF_A: {'oid': '9' * 64, 'size': 1}})
+    self.assertEqual(self.jl.listed_ref(REF_C), REF_B)
+    self.assertEqual(self.jl.listed_ref(REF_B), REF_B)
+    self.assertIsNone(self.jl.listed_ref(REF_A))
+    self.assertIsNone(self.jl.listed_ref('f' * 40))
+    self.assertIsNone(self.jl.listed_ref('not a ref'))
+
+  def test_api_3s_extended_catalog_is_now_the_index(self):
+    pinned = {'bundles': [bundle(REF_A, 'Alpha', 1)]}
+    with self.fetched(BETA):
+      self.assertEqual([b['ref'] for b in self.jl.extend_catalog(pinned)['bundles']], [REF_B])
+    with mock.patch('jetlink.registry.index.fetch_index', side_effect=NetworkError('offline')):
+      self.assertIs(self.jl.extend_catalog(pinned), pinned)
+    self.assertEqual(self.jl.should_extend_catalog(), self.jl.lists_big_models())
 
 
 if __name__ == '__main__':

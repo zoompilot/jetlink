@@ -45,7 +45,6 @@ class Keys:
   offroad: str                   # BOOL: is the car parked (manager's IsOffroad)
   progress: str                  # JSON {stage, frac, msg, drops}: provisioning and join progress
   spec: str                      # JSON: the built model's spec and whether its engine is built
-  pointers: str                  # JSON: catalog ref, or a hash-named pick's sha256 -> {oid, size}
   # sunnypilot's model manager: the big-model pick, JSON {ref, displayName},
   # and the big-model catalog, JSON {bundles}. Without one both are None, and
   # jetlink runs its own default big model, or the one picked on the server.
@@ -62,6 +61,8 @@ class Keys:
   # the server is written there, so the comma's own list shows it; without
   # the key it drives all the same
   select: str | None = None
+  # API 3's kept pointers, unread since the model index: until the next minor release
+  pointers: str | None = None
 
 
 @dataclass(frozen=True)

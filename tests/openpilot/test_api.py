@@ -43,6 +43,9 @@ JETLINK = {
   'request_shutdown': "(reason='')",
   'shutdown_pending': '()',
   'shutdown_step': "(should_shutdown, reason='')",
+  'lists_big_models': '()',
+  'big_catalog': '()',
+  'listed_ref': '(ref)',
   'should_extend_catalog': '()',
   'extend_catalog': '(catalog)',
   'runtime': '()',
@@ -544,7 +547,7 @@ def bind_again(test: OpenpilotTest) -> jo.Jetlink:
   return jo.bind(test.op)
 
 
-class TestExtendsCatalog(OpenpilotTest):
+class TestListsBigModels(OpenpilotTest):
   """Hardware, not the link setting: the model manager drops a pick its catalog
   does not list, so a catalog that followed the setting lost one on a boot with
   it off."""
@@ -553,13 +556,13 @@ class TestExtendsCatalog(OpenpilotTest):
     self.op.chestnut = chestnut
     self.op.set_mode(mode)
     self.parts._chestnut = None
-    return self.jl.should_extend_catalog()
+    return self.jl.lists_big_models()
 
-  def test_without_a_chestnut_it_is_extended_whatever_the_setting(self):
+  def test_without_a_chestnut_it_is_jetlinks_whatever_the_setting(self):
     self.assertTrue(self.extends(mode='off'))
     self.assertTrue(self.extends(mode='usb'))
 
-  def test_a_chestnut_leaves_it_as_fetched(self):
+  def test_with_a_chestnut_it_is_sunnypilots(self):
     self.assertFalse(self.extends(chestnut=True, mode='usb'))
     self.assertFalse(self.extends(chestnut=True, mode='off'))
 
