@@ -384,6 +384,12 @@ def _index_cases() -> list[tuple[str, object]]:
        'build_time': '2026-10-29T00:00:00Z', 'index': 20, 'is_20hz': True},
       {**ok, 'pr': 39235}]}),
     ('missing_fields', models({'ref': REF_B, 'oid': SHA_B, 'size': 2, 'name': 7, 'folder': '', 'short_name': None, 'build_time': 1})),
+    ('catalog_fields', models({'ref': REF_B, 'oid': SHA_B, 'size': 2, 'is_20hz': False, 'generation': '13', 'environment': 'release',
+                               'runner': 'tinygrad'},
+                              {'ref': REF_C, 'oid': SHA_B, 'size': 2, 'is_20hz': 'yes', 'generation': 13, 'environment': '', 'runner': None})),
+    ('default_listed', {**models({'ref': REF_B, 'oid': SHA_B, 'size': 2}), 'default': REF_B}),
+    ('default_not_listed', {**models(), 'default': REF_B, 'refs': {REF_B: {'oid': SHA_B, 'size': 2}}}),
+    ('default_rubbish', {**models(), 'default': 7}),
     ('pr_values', models(*({'ref': c * 40, 'oid': SHA_B, 'size': 2, 'pr': pr} for c, pr in zip('bcde', (True, 0, '5', -1), strict=True)))),
     ('no_ref', models({'oid': SHA_B, 'size': 1})),
     ('bad_ref', models({'ref': REF_A.upper(), 'oid': SHA_B, 'size': 1})),
@@ -411,7 +417,7 @@ def _index_cases() -> list[tuple[str, object]]:
 
 
 def _parsed(index) -> dict:
-  return {'models': [vars(m) for m in index.models], 'refs': {r: vars(p) for r, p in sorted(index.refs.items())},
+  return {'default': index.default, 'models': [vars(m) for m in index.models], 'refs': {r: vars(p) for r, p in sorted(index.refs.items())},
           'sizes': dict(sorted(index.sizes.items()))}
 
 

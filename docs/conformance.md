@@ -6,8 +6,8 @@ comma must work with it unchanged, so what crosses between them is held to the
 Python:
 
 - **Comma-facing contracts are Python-sourced.** Constants, wire bytes, queue
-  staging and the registry's pointers and catalog are generated from the
-  Python, committed, and read by the Swift tests. The Python tests check the
+  staging and the registry's model index parsing and LFS endpoints are
+  generated from the Python, committed, and read by the Swift tests. The Python tests check the
   Python still writes exactly those files.
 - **The server's own behaviour is Swift-owned.** Goldens the Python server
   wrote before it was deleted are frozen; nothing regenerates them.
@@ -21,7 +21,7 @@ Python:
 | Wire bytes: headers and INFER bodies; the byte streams of TCP, a USB host and the gadget's 16 KB bursts; frame datagrams' headers, how a message is cut, and the datagrams the comma sends for a frame | `make_conformance_fixtures.py wire` | `JetlinkServerTests/ConformanceTests.swift` |
 | Tensors the queues stage each frame at frame_skip 1, 2 and 4, each frame's hidden state fed into the next, with a reset, a hello, a non-finite frame and desires with NaNs, signed zeros and infinities | `make_conformance_fixtures.py staging` | the same file |
 | Where the reply leaves hidden_state out, for slices with open ends, ends counted from the back or past the end, and whether a queued graph's queues can feed it back | `make_conformance_fixtures.py layout` | the same file |
-| LFS pointers, model identities, catalog parsing and merging | `make_conformance_fixtures.py registry` | `JetlinkRegistryTests/ConformanceTests.swift` |
+| Model identities; how the model index parses, from the published `tests/fixtures/model_index_v1.json` and every malformed field the parser forgives or refuses; the LFS endpoints in the order they are asked | `make_conformance_fixtures.py registry` | `JetlinkRegistryTests/ConformanceTests.swift` |
 
 Generators live in `JetlinkKit/Scripts` and import the `jetlink` package of
 their own checkout, whatever the environment has installed.
@@ -31,7 +31,7 @@ their own checkout, whatever the environment has installed.
 | What | Where | Changed by |
 | --- | --- | --- |
 | The `stats` event from fixed samples | `JetlinkServerTests/Fixtures/conformance/stats.json` | editing the file |
-| One cache directory's catalog and inventory payloads | the `cache` block of `tests/fixtures/conformance/registry.json` | editing the file; the generator copies the block through |
+| One cache directory, with a kept `registry/index.json` (its `mtime` is the fetch time), and its catalog and inventory payloads | the `cache` block of `tests/fixtures/conformance/registry.json` | editing the file; the generator copies the block through |
 | Whole-server runs: driving output of the tiny queued and stateful graphs | `JetlinkServerTests/Fixtures/tiny_*` | editing the files |
 | ONNX preparation for every layout, byte for byte | `JetlinkONNXTests/Fixtures/*.expected.onnx` | editing the files |
 | The Android app's snapshot | `JetlinkKitTests/Fixtures/android_snapshot.json` | `JETLINK_WRITE_FIXTURES=1` on its test |

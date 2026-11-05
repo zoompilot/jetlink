@@ -115,12 +115,19 @@ angle brackets.
 // A Mac's. current: this server would load that artifact. After builds,
 // loads, downloads, imports, forget, and the inventory command.
 
-{"event":"catalog","t":0,"fetched_at":1757440000.0,"url":"<catalog url>",
+{"event":"catalog","t":0,"fetched_at":1757440000.0,"url":"<model index url>",
  "default_ref":"<ref>","error":"<why>|null",
  "models":[{"name":"Cinque Terre V3 Model","short_name":"CTV3M","ref":"<ref>",
-            "build_time":"<ISO 8601>","index":13,"sha256":"<sha256>|null","bytes":765953504}]}
-// Newest first. sha256 and bytes are null until that ref's pointer is
-// resolved. error is set when a refresh failed and this is the cached list.
+            "build_time":"<ISO 8601>","index":13,"sha256":"<sha256>","bytes":765953504,
+            "folder":"Master Models"}]}
+// The model index's list, in its order: index counts down from the number
+// listed, so sorting by it, highest first, keeps that order. sha256 and bytes
+// are always set; a server from before the index sent null for a ref it had
+// not resolved, and no folder. fetched_at is when the kept index was fetched.
+// default_ref is the index's own default when it lists it, else Cinque
+// Terre V3, which is also what a server with no index yet sends.
+// error is set when a refresh failed or the index served could not be used,
+// and this is the kept list.
 
 {"event":"download","t":0,"sha256":"<sha256>","ref":"<ref>|null","state":"progress",
  "frac":0.42,"bytes":321000000,"total":765953504,"rate_bps":41000000.0,"detail":"","source":"<url>"}
@@ -149,11 +156,11 @@ angle brackets.
 | cmd | arguments | reply extras | behaviour |
 | --- | --- | --- | --- |
 | `status` | | | re-sends `server`, `link`, `engine`, `inventory`, `catalog` |
-| `catalog` | `refresh` (default false) | `queued: true` | fetches the catalog if asked, or if the cache is missing or over an hour old, resolves missing pointers, then emits `catalog` |
-| `download` | `ref` or `sha256` | `sha256` | queues a download (one at a time, in order); `download` events follow |
+| `catalog` | `refresh` (default false) | `queued: true` | fetches the model index if asked, or if none is kept or the kept one is over an hour old, then emits `catalog` |
+| `download` | `ref` or `sha256` | `sha256` | queues a download (one at a time, in order); `download` events follow. Refused for a model the model index does not know |
 | `cancel_download` | `sha256` | | cancels it and removes the `.part` |
 | `import` | `path` | `queued: true` | hashes and copies the file in; `import` events, then `inventory` |
-| `prepare` | `sha256`, `frame_skip` (default 4), `ref` (the catalog row chosen, for a model two rows share) | `state`; `sha256` when downloading | builds if needed and loads it. With no model file or engine on disk it downloads first and replies `state: "downloading"`. It is a pick: the comma takes it at its next hello unless it picked another since |
+| `prepare` | `sha256`, `frame_skip` (default 4), `ref` (the catalog row chosen) | `state`; `sha256` when downloading | builds if needed and loads it. With no model file or engine on disk it downloads first, sized from the model index, and replies `state: "downloading"`. It is a pick: the comma takes it at its next hello unless it picked another since |
 | `unload` | | | releases the loaded engine |
 | `forget` | `sha256`, `artifacts` (default true), `model` (default false) | | unloads it if loaded, deletes its engines and/or download, then `inventory` |
 | `inventory` | | | emits `inventory` |

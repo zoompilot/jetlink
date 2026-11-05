@@ -1,6 +1,8 @@
 import Foundation
 
 public enum ModelStatus: Equatable, Sendable {
+  /// A catalog row with no sha256. The model index gives every listed model
+  /// one, so only a server from before the index sends such a row.
   case unresolved
   case notDownloaded
   case downloading(frac: Double, rateBps: Double)

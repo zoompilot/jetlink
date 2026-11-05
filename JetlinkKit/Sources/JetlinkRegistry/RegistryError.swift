@@ -2,8 +2,8 @@ import Foundation
 
 /// Anything the registry refuses to do, or could not do.
 ///
-/// The Python registry has a class per kind (RegistryError, NetworkError and
-/// its NotFound, VerifyError), and the control server writes a failure as
+/// The Python registry has a class per kind (RegistryError, NetworkError,
+/// VerifyError), and the control server writes a failure as
 /// `"<class>: <message>"`. `kind.pythonName` keeps that text the same.
 public struct RegistryError: Error, Sendable, Equatable, CustomStringConvertible, LocalizedError {
   public enum Kind: Sendable, Equatable {
@@ -11,8 +11,6 @@ public struct RegistryError: Error, Sendable, Equatable, CustomStringConvertible
     case registry
     /// A server could not be reached or did not answer sensibly.
     case network
-    /// The server answered that there is nothing at the URL. Also a network error.
-    case notFound
     /// Bytes arrived, but not the bytes that were asked for.
     case verify
     /// A download or an import was stopped by its caller.
@@ -24,7 +22,6 @@ public struct RegistryError: Error, Sendable, Equatable, CustomStringConvertible
       switch self {
       case .registry, .cancelled: return "RegistryError"
       case .network: return "NetworkError"
-      case .notFound: return "NotFound"
       case .verify: return "VerifyError"
       case .invalidIdentity: return "ValueError"
       }
@@ -39,16 +36,15 @@ public struct RegistryError: Error, Sendable, Equatable, CustomStringConvertible
     self.message = message
   }
 
-  /// NotFound is a NetworkError in Python, and a caller that treats network
-  /// failures apart must catch both.
-  public var isNetwork: Bool { kind == .network || kind == .notFound }
+  /// A server could not be reached or did not answer sensibly: offline,
+  /// rather than refused.
+  public var isNetwork: Bool { kind == .network }
 
   public var description: String { message }
   public var errorDescription: String? { message }
 
   static func registry(_ message: String) -> RegistryError { RegistryError(.registry, message) }
   static func network(_ message: String) -> RegistryError { RegistryError(.network, message) }
-  static func notFound(_ message: String) -> RegistryError { RegistryError(.notFound, message) }
   static func verify(_ message: String) -> RegistryError { RegistryError(.verify, message) }
   static func cancelled(_ message: String) -> RegistryError { RegistryError(.cancelled, message) }
   static let invalidIdentity = RegistryError(.invalidIdentity, "model identity must be a lowercase SHA-256 digest")

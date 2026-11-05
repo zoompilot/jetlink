@@ -7,8 +7,9 @@ import Testing
 
 /// tests/fixtures/conformance/registry.json, which
 /// JetlinkKit/Scripts/make_conformance_fixtures.py writes from the Python
-/// registry: pointers, identities, catalog parsing and merging, and the
-/// catalog and inventory payloads the Python makes of one cache directory.
+/// registry: identities, model index parsing and the LFS endpoints. Its
+/// `cache` block, the catalog and inventory payloads of one cache directory,
+/// is Swift-owned and copied through.
 extension JSON {
   fileprivate var int64: Int64? {
     if case .int(let value) = self { return value }
@@ -24,16 +25,6 @@ extension JSON {
 struct RegistryConformanceTests {
   private var fixture: JSON { RegistryFixture.json("conformance/registry.json") }
 
-  @Test func pointersParseAsPythonParsesThem() throws {
-    let cases = try #require(fixture["pointers"]?.array)
-    #expect(cases.count > 10)
-    for c in cases {
-      let text = try #require(c["text"]?.string)
-      let expected = c["expected"]?.object.map { Pointer(oid: $0["oid"]!.string!, size: $0["size"]!.int64!) }
-      #expect(LFS.parsePointer(text) == expected, "\(text.prefix(60).debugDescription)")
-    }
-  }
-
   @Test func identitiesAreWhatPythonCallsThem() throws {
     for c in try #require(fixture["identities"]?.array) {
       let value = try #require(c["value"]?.string)
@@ -42,45 +33,44 @@ struct RegistryConformanceTests {
     }
   }
 
-  @Test func catalogsParseAsPythonParsesThem() throws {
+  @Test func indexesParseAsPythonParsesThem() throws {
     let cases = try #require(fixture["parses"]?.array)
+    #expect(cases.count > 20)
     for c in cases {
       let name = c["name"]?.string ?? "?"
-      let catalog = c["catalog_file"]?.string.map { RegistryFixture.json($0) } ?? c["catalog"] ?? .null
-      let expected = (c["expected"]?.array ?? []).map { m in
-        Catalog.Entry(
-          name: m["name"]?.string ?? "", shortName: m["short_name"]?.string ?? "", ref: m["ref"]?.string ?? "",
-          buildTime: m["build_time"]?.string ?? "", index: Int(m["index"]?.int64 ?? -1))
+      let data = c["index_file"]?.string.map { RegistryFixture.json($0) } ?? c["index"] ?? .null
+      let parsed = try? ModelIndex.parse(data)
+      guard let expected = c["expected"]?.object else {
+        #expect(parsed == nil, "\(name): Python refuses it whole")
+        continue
       }
-      #expect(Catalog.parse(catalog) == expected, "\(name)")
+      let index = try #require(parsed, "\(name): Python parses it")
+      let models = (expected["models"]?.array ?? []).map { m in
+        ModelIndex.Model(
+          ref: m["ref"]?.string ?? "", oid: m["oid"]?.string ?? "", size: m["size"]?.int64 ?? -1, name: m["name"]?.string ?? "",
+          shortName: m["short_name"]?.string ?? "", folder: m["folder"]?.string ?? "", buildTime: m["build_time"]?.string ?? "",
+          pr: m["pr"]?.int64, is20Hz: m["is_20hz"]?.bool ?? false, generation: m["generation"]?.string ?? "",
+          environment: m["environment"]?.string ?? "", runner: m["runner"]?.string ?? "")
+      }
+      #expect(index.default == expected["default"]?.string, "\(name)")
+      #expect(index.models == models, "\(name)")
+      var refs: [String: Pointer] = [:]
+      for (ref, p) in expected["refs"]?.object ?? JSONObject() {
+        refs[ref] = Pointer(oid: p["oid"]?.string ?? "", size: p["size"]?.int64 ?? -1)
+      }
+      #expect(index.refs == refs, "\(name)")
+      var sizes: [String: Int64] = [:]
+      for (oid, size) in expected["sizes"]?.object ?? JSONObject() {
+        sizes[oid] = size.int64 ?? -1
+      }
+      #expect(index.sizes == sizes, "\(name)")
     }
   }
 
-  @Test func catalogsMergeAsPythonMergesThem() throws {
-    for c in try #require(fixture["merges"]?.array) {
-      let catalogs = (c["catalogs"]?.array ?? []).compactMap(\.object)
-      let merged = Catalog.merge(catalogs)
-      let expected = c["expected"]?.object ?? JSONObject()
-      #expect(merged == expected, "\(c["name"]?.string ?? "?")")
-    }
-  }
-
-  @Test func diffsGiveThePointerPythonFindsInThem() throws {
-    let cases = try #require(fixture["diff_pointers"]?.array)
-    #expect(cases.count > 10)
-    for c in cases {
-      let name = c["name"]?.string ?? "?"
-      let text = try c["patch_file"]?.string.map { String(decoding: RegistryFixture.data($0), as: UTF8.self) } ?? #require(c["text"]?.string)
-      let expected = c["expected"]?.object.map { Pointer(oid: $0["oid"]!.string!, size: $0["size"]!.int64!) }
-      #expect(LFS.diffPointer(text) == expected, "\(name)")
-    }
-  }
-
-  @Test func squashMergesAreReadAsPythonReadsThem() throws {
-    for c in try #require(fixture["pull_numbers"]?.array) {
-      let subject = try #require(c["subject"]?.string)
-      #expect(LFS.pullNumber(in: subject) == c["expected"]?.string, "\(subject)")
-    }
+  @Test func theEndpointsAreAskedInPythonsOrder() throws {
+    let endpoints = try #require(fixture["endpoints"]?.array).compactMap(\.string)
+    #expect(endpoints.count == 4)
+    #expect(LFS.endpoints == endpoints)
   }
 
   /// The cache directory the Python registry was shown, written again here.
@@ -88,15 +78,16 @@ struct RegistryConformanceTests {
     for (relative, content) in tree {
       let url = root.appending(path: relative)
       try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-      if let file = content["raw_file"]?.string, var object = content["json"]?.object {
-        object["raw"] = RegistryFixture.json(file)
-        try JSON.object(object).data().write(to: url)
-      } else if let json = content["json"] {
+      if let json = content["json"] {
         try json.data().write(to: url)
       } else if let text = content["text"]?.string {
         try Data(text.utf8).write(to: url)
       } else {
         try Data(count: Int(content["bytes"]?.int64 ?? 0)).write(to: url)
+      }
+      // the kept index's mtime is when it was fetched
+      if let mtime = content["mtime"]?.pythonNumber {
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: mtime)], ofItemAtPath: url.path(percentEncoded: false))
       }
     }
   }

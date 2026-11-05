@@ -27,6 +27,7 @@ public final class MockNet: Sendable {
     public let url: String
     public let method: String
     public let body: Data?
+    public let headers: [String: String]
   }
 
   static let header = "X-Jetlink-Test-Net"
@@ -72,12 +73,6 @@ public final class MockNet: Sendable {
   public var urls: [String] { calls.map(\.url) }
 
   public func count(_ url: String) -> Int { urls.filter { $0 == url }.count }
-
-  /// A numbered JSON file with no route, "..._v27.json", is a 404, as
-  /// GitHub answers for a catalog version not published yet. So is the extra list.
-  static func isNumberedJSON(_ url: String) -> Bool {
-    Catalog.version(of: url) != nil || url == Catalog.extraURL
-  }
 }
 
 class MockProtocol: URLProtocol, @unchecked Sendable {
@@ -96,7 +91,8 @@ class MockProtocol: URLProtocol, @unchecked Sendable {
   override func startLoading() {
     guard let client, let url = request.url, let id = request.value(forHTTPHeaderField: MockNet.header) ?? Self.table else { return }
     let body = request.httpBody ?? request.httpBodyStream.map(MockProtocol.drain)
-    let call = MockNet.Call(url: url.absoluteString, method: request.httpMethod ?? "GET", body: body)
+    let headers = (request.allHTTPHeaderFields ?? [:]).filter { $0.key != MockNet.header }
+    let call = MockNet.Call(url: url.absoluteString, method: request.httpMethod ?? "GET", body: body, headers: headers)
     let reply = MockNet.tables.withLock { tables -> MockNet.Reply? in
       tables[id]?.calls.append(call)
       return tables[id]?.routes[url.absoluteString]
@@ -111,7 +107,6 @@ class MockProtocol: URLProtocol, @unchecked Sendable {
     case .body(let data): respond(200, [data])
     case .chunks(let pieces): respond(200, pieces)
     case .status(let status): respond(status, [Data("error \(status)".utf8)])
-    case .none where MockNet.isNumberedJSON(url.absoluteString): respond(404, [Data("error 404".utf8)])
     case .failure, nil:
       client.urlProtocol(self, didFailWithError: URLError(.cannotFindHost, userInfo: [NSURLErrorFailingURLStringErrorKey: url.absoluteString]))
     }

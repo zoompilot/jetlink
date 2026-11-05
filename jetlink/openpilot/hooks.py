@@ -11,9 +11,10 @@ manager, hardwared, the UI and the model manager call these on every device,
 link on or off, and modeld on every drive: whatever jetlink does wrong turns
 the link off and is logged, and never takes one of them down. Each hook has
 the answer it gets with the link off, and gives it on any failure. They are
-not all False: attach() keeps modeld's model, extend_catalog() the catalog,
-and shutdown_step() says yes to a power-off that is wanted, since a broken
-jetlink must never keep a comma on to drain the car's battery. selfdrived's
+not all False: attach() keeps modeld's model, big_catalog() is None so the
+model manager keeps its own list, and shutdown_step() says yes to a power-off
+that is wanted, since a broken jetlink must never keep a comma on to drain the
+car's battery. selfdrived's
 swap events (swap_events()) answer no event at all.
 
 The fork's guard, which builds Hooks or else Off inside a function, and its

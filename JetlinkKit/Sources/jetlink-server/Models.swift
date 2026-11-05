@@ -66,35 +66,22 @@
 
   extension Models {
     struct List: ModelsCommand {
-      static let configuration = CommandConfiguration(abstract: "The big-model catalog.")
+      static let configuration = CommandConfiguration(abstract: "The big models the model index lists.")
 
-      @Flag(help: "Refetch the catalog and resolve the pointers it is missing.")
+      @Flag(help: "Refetch the model index.")
       var refresh = false
-      @Flag(help: "The catalog as JSON.")
+      @Flag(help: "The list as JSON: the catalog event.")
       var json = false
       @OptionGroup var cache: CacheArguments
 
       func run(_ registry: Registry, _ console: Console) async throws {
-        var payload = await registry.catalog(refresh: refresh)
-        if refresh {
-          let missing = payload.models.filter { $0.sha256 == nil }.map(\.ref)
-          if !missing.isEmpty {
-            let resolved = await registry.resolveMissing(missing)
-            for ref in missing {
-              if case .failure(let error) = resolved[ref] {
-                console.err("could not resolve \(ref.prefix(10)): \(error)\n")
-              }
-            }
-          }
-          // The catalog is fresh now, so this touches no network.
-          payload = await registry.catalog()
-        }
+        let payload = await registry.catalog(refresh: refresh)
         if json {
           console.out(jsonText(ControlEvent.catalog(payload).payload()) ?? "{}")
           return
         }
         if let error = payload.error {
-          console.err("catalog refresh failed: \(error)\n")
+          console.err("model index refresh failed: \(error)\n")
         }
         let state = states(registry)
         console.out("\(right("#", 3))  \(left("name", 44)) \(left("ref", 10)) \(left("built", 10)) \(right("size", 7))  state")
@@ -117,9 +104,9 @@
     }
 
     struct Resolve: ModelsCommand {
-      static let configuration = CommandConfiguration(abstract: "The sha256 and size behind a catalog ref.")
+      static let configuration = CommandConfiguration(abstract: "The sha256 and size the model index gives a ref.")
 
-      @Argument(help: "A catalog ref: the model's 40 character commit.")
+      @Argument(help: "A ref: the model's 40 character commit.")
       var ref: String
       @Flag(help: "As JSON: ref, sha256, bytes.")
       var json = false
@@ -135,7 +122,7 @@
     struct Fetch: ModelsCommand {
       static let configuration = CommandConfiguration(abstract: "Download a model into the cache, and print where it is.")
 
-      @Argument(help: ArgumentHelp("A catalog ref, or the sha256 of a model whose ref was resolved here before.", valueName: "ref-or-sha256"))
+      @Argument(help: ArgumentHelp("A ref, or the sha256 of a model the model index knows.", valueName: "ref-or-sha256"))
       var refOrSHA256: String
       @OptionGroup var cache: CacheArguments
 
@@ -228,7 +215,7 @@
         abstract: "Download a model if it is not here, then build its engine.",
         discussion: "Stop a running server on the same cache first: both would build into it.")
 
-      @Argument(help: ArgumentHelp("A catalog ref, or the sha256 of a model whose ref was resolved here before.", valueName: "ref-or-sha256"))
+      @Argument(help: ArgumentHelp("A ref, or the sha256 of a model the model index knows.", valueName: "ref-or-sha256"))
       var refOrSHA256: String
       @OptionGroup var chosen: BackendArguments
       @OptionGroup var cache: CacheArguments
@@ -238,25 +225,22 @@
 
       func run(_ registry: Registry, _ console: Console) async throws {
         console.err("building outside the server; stop any running jetlink-server that uses this cache first\n")
-        let path = try await fetch(refOrSHA256, registry, console)
-        let sha256 = CacheLayout.isSHA256(refOrSHA256) ? refOrSHA256 : try await registry.resolve(ref: refOrSHA256).oid
-        try await buildEngine(model: path, sha256: sha256, frameSkip: Pinned.defaultFrameSkip, backend: chosen.pick(), root: registry.layout.root)
+        let pointer = try await registry.pointer(for: refOrSHA256)
+        let path = try await fetch(pointer, registry, console)
+        try await buildEngine(model: path, sha256: pointer.oid, frameSkip: Pinned.defaultFrameSkip, backend: chosen.pick(), root: registry.layout.root)
       }
     }
   }
 
   /// Downloads a model if it is not here yet, with its progress on stderr.
   private func fetch(_ refOrSHA256: String, _ registry: Registry, _ console: Console) async throws -> URL {
-    let path = try await registry.fetch(refOrSHA256, progress: progressLine(total: await sizeHint(refOrSHA256, registry), console))
-    console.err("\n")
-    return path
+    try await fetch(try await registry.pointer(for: refOrSHA256), registry, console)
   }
 
-  /// The download's size for the progress line, or 0 when it is not known.
-  private func sizeHint(_ refOrSHA256: String, _ registry: Registry) async -> Int64 {
-    let ref = CacheLayout.isRef(refOrSHA256) ? refOrSHA256 : CacheLayout.isSHA256(refOrSHA256) ? registry.ref(for: refOrSHA256) : nil
-    guard let ref else { return 0 }
-    return (try? await registry.resolve(ref: ref).size) ?? 0
+  private func fetch(_ pointer: Pointer, _ registry: Registry, _ console: Console) async throws -> URL {
+    let path = try await registry.fetch(pointer: pointer, progress: progressLine(total: pointer.size, console))
+    console.err("\n")
+    return path
   }
 
   /// "\r 42% 321/730 MB" on stderr at each whole percent.

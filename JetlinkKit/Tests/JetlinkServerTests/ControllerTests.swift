@@ -6,7 +6,7 @@ import Testing
 
 @testable import JetlinkServer
 
-/// A registry with one catalog model, the tiny queued graph, whose "download"
+/// A registry with one listed model, the tiny queued graph, whose "download"
 /// is a copy from the fixtures. Nothing touches the network.
 final class FakeRegistry: ModelRegistry, @unchecked Sendable {
   static let ref = String(repeating: "a", count: 40)
@@ -36,7 +36,7 @@ final class FakeRegistry: ModelRegistry, @unchecked Sendable {
 
   func cachedCatalog() -> CatalogEvent? { catalogEvent }
   func catalog(refresh: Bool, maxAge: TimeInterval) async -> CatalogEvent { catalogEvent }
-  func resolveMissingPointers(_ refs: [String]) async {}
+  func size(for sha256: String) -> Int64? { sha256 == self.sha256 ? size : nil }
   func ref(for sha256: String) -> String? { sha256 == self.sha256 ? FakeRegistry.ref : nil }
   func name(for sha256: String) -> (name: String?, ref: String?) { sha256 == self.sha256 ? ("Tiny", FakeRegistry.ref) : (nil, nil) }
 

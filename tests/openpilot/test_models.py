@@ -16,7 +16,7 @@ import unittest
 from unittest import mock
 
 from jetlink.openpilot import models
-from jetlink.registry.index import DEFAULT_BIG_MODEL_NAME, DEFAULT_BIG_MODEL_REF, NetworkError, RegistryError, parse_index
+from jetlink.registry.index import DEFAULT_BIG_MODEL_NAME, DEFAULT_BIG_MODEL_REF, RUNTIME, NetworkError, RegistryError, parse_index
 from tests.openpilot.fakes import OpenpilotTest
 
 
@@ -30,8 +30,8 @@ def entry(ref: str, name: str, oid: str, size: int, folder: str = 'Master Models
   return {'ref': ref, 'name': name, 'oid': oid, 'size': size, 'folder': folder, **extra}
 
 
-def index_json(*listed, refs=None, onnx=None) -> dict:
-  return {'schema': 1, 'models': list(listed), 'refs': refs or {}, 'onnx': onnx or {}, 'unresolved': {}}
+def index_json(*listed, refs=None, onnx=None, default=None) -> dict:
+  return {'schema': 1, 'default': default, 'models': list(listed), 'refs': refs or {}, 'onnx': onnx or {}}
 
 
 REF_A, REF_B, REF_C = 'a' * 40, 'b' * 40, 'c' * 40
@@ -45,16 +45,16 @@ class ModelsTest(OpenpilotTest):
     super().setUp()
     self.models = self.parts.models
 
-  def index(self, *listed, refs=None, onnx=None):
+  def index(self, *listed, refs=None, onnx=None, default=None):
     """The comma's copy of the index, as a fetch leaves it."""
     path = self.models.index_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(index_json(*listed, refs=refs, onnx=onnx)))
+    path.write_text(json.dumps(index_json(*listed, refs=refs, onnx=onnx, default=default)))
     self.models._index_cache = None
 
-  def fetched(self, *listed, refs=None, onnx=None, **kw):
+  def fetched(self, *listed, refs=None, onnx=None, default=None, **kw):
     """fetch_index serving this index."""
-    data = index_json(*listed, refs=refs, onnx=onnx)
+    data = index_json(*listed, refs=refs, onnx=onnx, default=default)
     return mock.patch('jetlink.registry.index.fetch_index', return_value=(data, parse_index(data)), **kw)
 
   def catalog(self, *bundles):
@@ -82,7 +82,7 @@ class TestIndex(ModelsTest):
 
   def test_the_rows_are_the_index_in_its_order(self):
     self.index(BETA, ALPHA)
-    self.assertEqual(self.models.model_index(), [{k: e[k] for k in ('name', 'ref', 'oid', 'size', 'folder')} for e in (BETA, ALPHA)])
+    self.assertEqual(self.models.model_index(), [{k: e[k] for k in ('name', 'ref', 'oid', 'size')} for e in (BETA, ALPHA)])
 
   def test_no_index_yet_is_empty(self):
     self.assertIsNone(self.models.index())
@@ -95,6 +95,10 @@ class TestIndex(ModelsTest):
     path.write_text('{"schema": 1, "models": [')
     self.assertEqual(self.models.model_index(), [])
     self.assertTrue(self.op.log.has("the comma's model index does not parse", 'exception'))
+    # the same copy is told of once, not every INDEX_TTL
+    with mock.patch.object(models.time, 'monotonic', return_value=models.time.monotonic() + models.INDEX_TTL):
+      self.models.model_index()
+    self.assertEqual(len(self.op.log.lines('exception')), 1)
 
   def test_a_second_read_within_the_ttl_costs_nothing(self):
     # the UI names the active model every frame
@@ -137,6 +141,16 @@ class TestIndex(ModelsTest):
     kept = json.loads(self.models.index_path().read_text())
     self.assertEqual([m['ref'] for m in kept['models']], [REF_B, REF_C])
 
+  def test_an_index_that_did_not_change_is_not_written_again(self):
+    # every reader would parse it again
+    with self.fetched(BETA):
+      self.models.refresh_index()
+    before = self.models.index_path().stat().st_mtime_ns
+    with self.fetched(BETA), mock.patch('jetlink.comma.gadget.write_record') as write:
+      self.models.refresh_index()
+    write.assert_not_called()
+    self.assertEqual(self.models.index_path().stat().st_mtime_ns, before)
+
   def test_a_miss_fetches_at_most_once_a_while(self):
     self.index(BETA)
     with self.fetched(BETA) as fetch:
@@ -161,21 +175,18 @@ class TestSelectedModel(ModelsTest):
 
   def select_with(self, slot_ref, default=REF_B, listed=INDEX, refs=None):
     if listed:
-      self.index(*listed, refs=refs)
+      self.index(*listed, refs=refs, default=default)
     pick = {'name': 'Picked', 'ref': slot_ref, 'sha256': None} if slot_ref else None
-    with mock.patch.object(models, 'DEFAULT_BIG_MODEL_REF', default), \
-         mock.patch.object(self.models, 'selected_slot', return_value=pick):
+    with mock.patch.object(self.models, 'selected_slot', return_value=pick):
       return self.models.selected_model()
 
-  def test_an_empty_slot_takes_the_default_big_model(self):
+  def test_an_empty_slot_takes_the_index_s_default(self):
+    # a chestnut's default is the model in the tree; the accelerator's is the index's
     assert self.select_with(None)['name'] == 'Beta'
-
-  def test_the_default_is_jetlinks_not_the_chestnuts(self):
-    # a chestnut's default is the model in the tree; the accelerator's is jetlink's
-    assert models.DEFAULT_BIG_MODEL_REF == DEFAULT_BIG_MODEL_REF
 
   def test_a_default_not_listed_falls_to_the_first_listed(self):
     assert self.select_with(None, default='f' * 40)['name'] == 'Alpha'
+    assert self.select_with(None, default=None)['name'] == 'Alpha'
 
   def test_the_pick_is_the_slot_with_its_onnx(self):
     assert self.select_with(REF_A) == {'name': 'Picked', 'ref': REF_A, 'oid': 'a' * 64, 'size': 10}
@@ -188,7 +199,7 @@ class TestSelectedModel(ModelsTest):
     assert self.select_with(REF_C) == {'name': 'Picked', 'ref': REF_C, 'oid': None, 'size': None}
 
   def test_with_no_index_yet_the_default_is_named_by_its_ref(self):
-    assert self.select_with(None, listed=()) == {'name': DEFAULT_BIG_MODEL_NAME, 'ref': REF_B, 'oid': None, 'size': None}
+    assert self.select_with(None, listed=()) == {'name': DEFAULT_BIG_MODEL_NAME, 'ref': DEFAULT_BIG_MODEL_REF, 'oid': None, 'size': None}
 
   def test_the_name_is_the_picks_or_none(self):
     with mock.patch.object(self.models, 'selected_model', return_value={'name': 'Picked'}):
@@ -312,7 +323,7 @@ class TestPicksOnBothEnds(ModelsTest):
 
   def test_the_default_chosen_here_is_a_pick_the_server_does_not_undo(self):
     # both ends named Beta; then the user chose the Default in the comma's list
-    self.index(entry(DEFAULT_BIG_MODEL_REF, 'Cinque Terre V3', 'c' * 64, 30), ALPHA, BETA)
+    self.index(entry(DEFAULT_BIG_MODEL_REF, 'Cinque Terre V3', 'c' * 64, 30), ALPHA, BETA, default=DEFAULT_BIG_MODEL_REF)
     self.pick_here(REF_B, 'Beta', ago=600)
     self.answer(REF_B, self.models.hello_pick(), ago=600)
     self.empty_slot()
@@ -469,7 +480,7 @@ class TestWithoutAModelManager(ModelsTest):
     self.assertEqual(self.jl.status().model, 'Cinque Terre V3 Model')
 
   def test_with_an_index_it_carries_its_identity(self):
-    self.index(BETA, entry(DEFAULT_BIG_MODEL_REF, 'Cinque Terre V3', '9' * 64, 766_000_000))
+    self.index(BETA, entry(DEFAULT_BIG_MODEL_REF, 'Cinque Terre V3', '9' * 64, 766_000_000), default=DEFAULT_BIG_MODEL_REF)
     self.assertEqual(self.models.selected_model()['oid'], '9' * 64)
     self.assertEqual(self.models.selected_model()['size'], 766_000_000)
 
@@ -502,9 +513,8 @@ class TestDefaultModelName(ModelsTest):
 
   def name_with(self, names, default=REF_B):
     if names:
-      self.index(*(entry(ref, name, ch * 64, 1) for name, ref, ch in zip(names, (REF_A, REF_B), '12', strict=False)))
-    with mock.patch.object(models, 'DEFAULT_BIG_MODEL_REF', default):
-      return self.models.default_model_name()
+      self.index(*(entry(ref, name, ch * 64, 1) for name, ref, ch in zip(names, (REF_A, REF_B), '12', strict=False)), default=default)
+    return self.models.default_model_name()
 
   def test_the_build_date_is_dropped(self):
     assert self.name_with(['Alpha', 'Cinque Terre V3 Model (September 17, 2026)']) == 'Cinque Terre V3 Model'
@@ -711,19 +721,23 @@ class TestBigCatalog(ModelsTest):
 
   def test_the_index_in_its_order_and_folders(self):
     listed = entry(REF_B, 'Beta (October 29, 2026)', '2' * 64, 20, folder='2026 Deep RL Models', short_name='B',
-                   build_time='2026-10-29T00:00:00Z')
+                   build_time='2026-10-29T00:00:00Z', is_20hz=True, generation='13', environment='development', runner='tinygrad')
     with self.fetched(listed, ALPHA, self.PR):
       out = self.jl.big_catalog()
     self.assertEqual([(b['ref'], b['index'], b['overrides']['folder']) for b in out['bundles']],
                      [(REF_B, 3, '2026 Deep RL Models'), (REF_A, 2, 'Master Models'), (REF_C, 1, 'comma Pull Requests')])
     first = out['bundles'][0]
-    self.assertEqual({k: first[k] for k in ('display_name', 'short_name', 'build_time', 'minimum_selector_version', 'is_big', 'models')},
+    # the index's fields, the fork's selector, and nothing for a chestnut to fetch
+    self.assertEqual({k: first[k] for k in ('display_name', 'short_name', 'build_time', 'generation', 'environment', 'runner',
+                                            'is_20hz', 'minimum_selector_version', 'is_big', 'models')},
                      {'display_name': 'Beta (October 29, 2026)', 'short_name': 'B', 'build_time': '2026-10-29T00:00:00Z',
+                      'generation': '13', 'environment': 'development', 'runner': 'tinygrad', 'is_20hz': True,
                       'minimum_selector_version': '19', 'is_big': True, 'models': []})
     # what the model manager's parser requires of every bundle
     for b in out['bundles']:
       self.assertTrue({'index', 'short_name', 'display_name', 'generation', 'environment', 'minimum_selector_version'} <= set(b))
-    self.assertEqual([b['short_name'] for b in out['bundles']][1:], [REF_A[:7], '#39235'])
+    # an entry from an index older than its runtime fields gets sunnypilot's
+    self.assertEqual({k: out['bundles'][1][k] for k in ('generation', 'environment', 'runner')}, RUNTIME)
 
   def test_the_selector_is_the_adapters(self):
     self.op.catalog_selector = 21
@@ -758,14 +772,15 @@ class TestBigCatalog(ModelsTest):
     self.assertIsNone(self.jl.listed_ref(REF_A))
     self.assertIsNone(self.jl.listed_ref('f' * 40))
     self.assertIsNone(self.jl.listed_ref('not a ref'))
+    # beside a chestnut the list is sunnypilot's, and jetlink names nothing in it
+    with mock.patch.object(self.parts, 'chestnut_fitted', return_value=True):
+      self.assertIsNone(self.jl.listed_ref(REF_C))
 
-  def test_api_3s_extended_catalog_is_now_the_index(self):
+  def test_api_3_leaves_the_catalog_as_fetched(self):
+    # its picks still drive: the index knows every ref it ever saw
     pinned = {'bundles': [bundle(REF_A, 'Alpha', 1)]}
-    with self.fetched(BETA):
-      self.assertEqual([b['ref'] for b in self.jl.extend_catalog(pinned)['bundles']], [REF_B])
-    with mock.patch('jetlink.registry.index.fetch_index', side_effect=NetworkError('offline')):
-      self.assertIs(self.jl.extend_catalog(pinned), pinned)
-    self.assertEqual(self.jl.should_extend_catalog(), self.jl.lists_big_models())
+    self.assertFalse(self.jl.should_extend_catalog())
+    self.assertIs(self.jl.extend_catalog(pinned), pinned)
 
 
 if __name__ == '__main__':

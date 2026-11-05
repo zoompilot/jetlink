@@ -490,7 +490,7 @@ class TestOverTheRealJetlink(OpenpilotTest):
     self.assertIsInstance(found.pop('status'), Status)
     found.pop('extend_catalog')
     # the list is hardware, not the setting; with no index to fetch, the model manager keeps its own
-    expected = {**OFF, 'lists_big_models': True, 'should_extend_catalog': True}
+    expected = {**OFF, 'lists_big_models': True}
     del expected['status'], expected['extend_catalog']
     self.assertEqual(found, expected)
     self.assertEqual(self.op.log.lines('exception'), [])

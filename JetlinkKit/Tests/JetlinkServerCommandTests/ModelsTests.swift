@@ -10,24 +10,22 @@
   /// tests/test_registry.py's cli section, against `jetlink-server models`:
   /// the same subcommands, JSON and exit codes.
   struct ModelsTests {
-    @Test func listJSONIsTheCatalogWithItsNulls() async throws {
+    @Test func listJSONIsTheCatalogEvent() async throws {
       let tmp = try TemporaryDirectory()
-      let run = try await models(Models.List.self, ["--json"], cache: tmp, net: MockNet(RegistryFixture.catalogRoutes()))
+      let run = try await models(Models.List.self, ["--json"], cache: tmp, net: MockNet(RegistryFixture.indexRoutes()))
       #expect(run.code == 0, "\(run.err)")
       let payload = try #require(try JSONSerialization.jsonObject(with: Data(run.out.utf8)) as? [String: Any])
       let rows = try #require(payload["models"] as? [[String: Any]])
-      #expect(rows.count == 13 && rows.first?["ref"] as? String == RegistryFixture.newestRef)
-      #expect(payload["error"] == nil && rows.first?["sha256"] == nil, "absent is left out")
+      #expect(rows.count == RegistryFixture.listed && rows.first?["ref"] as? String == RegistryFixture.newestRef)
+      #expect(rows.first?["sha256"] is String && rows.first?["folder"] as? String == "2026 Deep RL Models")
+      #expect(payload["error"] == nil, "absent is left out")
       #expect(Set(payload.keys) == ["fetched_at", "url", "default_ref", "models"])
     }
 
     @Test func theListTableShowsWhatIsDownloaded() async throws {
       let tmp = try TemporaryDirectory()
-      let pointer = RegistryFixture.pointerText(oid: RegistryFixture.oid, size: RegistryFixture.size)
-      let net = MockNet(RegistryFixture.catalogRoutes().merging([LFS.pointerURL(ref: RegistryFixture.ref): .body(pointer)]) { _, new in new })
-      let registry = Registry(layout: CacheLayout(root: tmp.url), session: net.session)
+      let registry = Registry(layout: CacheLayout(root: tmp.url), session: MockNet(RegistryFixture.indexRoutes()).session)
       _ = await registry.catalog()
-      _ = try await registry.resolve(ref: RegistryFixture.ref)
       try Data("x".utf8).write(to: try registry.modelPath(sha256: RegistryFixture.oid))
 
       let run = try await models(Models.List.self, [], cache: tmp)
@@ -36,19 +34,21 @@
       #expect(lines.first == "  #  name                                         ref        built         size  state")
       let line = try #require(lines.first { $0.contains(RegistryFixture.ref.prefix(10)) })
       #expect(line.hasSuffix("downloaded") && line.contains("730 MB"), "\(line)")
-      #expect(lines.filter { $0.hasSuffix("  -") }.count == 12)
+      #expect(lines.filter { $0.hasSuffix("  -") }.count == RegistryFixture.listed - 1)
     }
 
     @Test func resolve() async throws {
       let tmp = try TemporaryDirectory()
-      let net = MockNet([LFS.pointerURL(ref: RegistryFixture.ref): .body(RegistryFixture.data("pointer_f877d7a0.txt"))])
+      let net = MockNet(RegistryFixture.indexRoutes())
       let run = try await models(Models.Resolve.self, [RegistryFixture.ref, "--json"], cache: tmp, net: net)
       #expect(run.code == 0, "\(run.err)")
       let payload = try #require(try JSONSerialization.jsonObject(with: Data(run.out.utf8)) as? [String: Any])
       #expect(payload["ref"] as? String == RegistryFixture.ref && payload["sha256"] as? String == RegistryFixture.oid)
       #expect((payload["bytes"] as? NSNumber)?.int64Value == RegistryFixture.size)
       let plain = try await models(Models.Resolve.self, [RegistryFixture.ref], cache: tmp)
-      #expect(plain.out == "\(RegistryFixture.oid) \(RegistryFixture.size)\n", "known now: no network")
+      #expect(plain.out == "\(RegistryFixture.oid) \(RegistryFixture.size)\n", "the index is kept: no network")
+      let unlisted = try await models(Models.Resolve.self, [RegistryFixture.unlistedRef], cache: tmp)
+      #expect(unlisted.out == plain.out, "a recompile is the ONNX it was built from")
       let refused = try await models(Models.Resolve.self, ["nothex"], cache: tmp)
       #expect(refused.code == 1 && refused.err == "jetlink-server: 'nothex' is not a 40 character commit\n")
     }
@@ -101,8 +101,8 @@
       let wrong = MockNet(RegistryFixture.smallRoutes(blob, oid: String(repeating: "b", count: 64)))
       let unverified = try await models(Models.Fetch.self, [RegistryFixture.smallRef], cache: tmp, net: wrong)
       #expect(unverified.code == 3, "bytes that do not verify are 3: \(unverified.err)")
-      let unknown = try await models(Models.Fetch.self, [String(repeating: "c", count: 64)], cache: tmp)
-      #expect(unknown.code == 1, "a sha256 with no known size is 1: \(unknown.err)")
+      let unknown = try await models(Models.Fetch.self, [String(repeating: "c", count: 64)], cache: tmp, net: MockNet(RegistryFixture.indexRoutes()))
+      #expect(unknown.code == 1, "a sha256 the index does not know is 1: \(unknown.err)")
     }
 
     @Test func prepareFetchesThenBuilds() async throws {

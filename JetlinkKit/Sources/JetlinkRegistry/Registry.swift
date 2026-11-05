@@ -16,7 +16,7 @@ import Synchronization
   import JetlinkLog
 #endif
 
-/// A model imported from disk rather than fetched from the catalog.
+/// A model imported from disk rather than fetched by the model index.
 public struct LocalModel: Sendable, Equatable {
   public let sha256: String
   public let bytes: Int64
@@ -33,18 +33,17 @@ public struct LocalModel: Sendable, Equatable {
 }
 
 /// Which large models exist, which one is which file, and how to get the
-/// bytes. A port of `jetlink/registry`: the same state files, URLs, rules and
+/// bytes. A port of `jetlink/registry`: the same model index, URLs, rules and
 /// payloads, so the iPhone's server answers the control protocol as the
-/// Python one does.
+/// Python one did.
 ///
 /// State lives in `<cache>/registry/`:
 ///
-///     catalog.json       {"fetched_at", "url", "raw"} as fetched, refreshed hourly
-///     pointers.json      {ref: {"oid", "size"}}; a commit's tree never changes, so this is kept forever
+///     index.json         the last model index that parsed, as served; its mtime is when it was fetched
 ///     local-models.json  [{"sha256", "bytes", "name", "added_at"}] for models imported from disk
 ///
 /// Each is written atomically, and every read-modify-write holds a lock,
-/// because the control layer, a download and a catalog refresh can all be
+/// because the control layer, a download and an index refresh can all be
 /// writing while a comma is asking for a model. Calls are safe from any number
 /// of tasks at once.
 public final class Registry: Sendable {
@@ -60,6 +59,9 @@ public final class Registry: Sendable {
   let session: URLSession
   let http: HTTP
   private let lock = Mutex(())
+  /// The kept index as last parsed, and the file's (mtime, size) then: it is
+  /// read for every name a payload carries, and parsed again only when it changed.
+  private let kept = Mutex<(stamp: [Double], index: ModelIndex?)?>(nil)
   private static let log = Logger(subsystem: "io.zoompilot.jetlink", category: "registry")
 
   /// Opens the registry of a cache, making its registry and models directories.
@@ -70,248 +72,145 @@ public final class Registry: Sendable {
     layout.makeRegistryDirectories()
   }
 
-  // MARK: - the catalog
+  // MARK: - the model index
+
+  /// The kept index and when it was fetched, from disk alone; nil before the
+  /// first fetch, or for a file that does not parse.
+  public func modelIndex() -> ModelIndex? {
+    keptIndex()?.index
+  }
+
+  private func keptIndex() -> (index: ModelIndex, fetchedAt: Double)? {
+    guard let status = Files.status(layout.indexURL), status.isFile else { return nil }
+    let stamp = [status.modified, Double(status.size)]
+    if let memo = kept.withLock({ $0 }), memo.stamp == stamp {
+      return memo.index.map { ($0, status.modified) }
+    }
+    let index = Files.readJSON(layout.indexURL).flatMap { try? ModelIndex.parse($0) }
+    kept.withLock { $0 = (stamp, index) }
+    return index.map { ($0, status.modified) }
+  }
 
   /// The `catalog` event from disk alone, never the network: what a client
-  /// gets the moment it connects. Nil when nothing usable is cached; send
+  /// gets the moment it connects. Nil when no index is kept; send
   /// `Registry.emptyCatalog` then and refresh off the connect path.
   public func cachedCatalog() -> CatalogEvent? {
-    guard let cached = Files.readJSON(layout.catalogURL)?.object, let raw = cached["raw"], raw != .null else { return nil }
-    return payload(raw: raw, fetchedAt: cached["fetched_at"]?.pythonNumber, error: nil)
+    keptIndex().map { payload($0.index, fetchedAt: $0.fetchedAt, error: nil) }
   }
 
-  /// The payload for a cache with no catalog in it yet.
+  /// The payload for a cache with no index in it yet.
   public static func emptyCatalog(error: String? = nil) -> CatalogEvent {
-    CatalogEvent(fetchedAt: nil, url: Catalog.url, defaultRef: Catalog.defaultBigModelRef, error: error, models: [])
+    CatalogEvent(fetchedAt: nil, url: ModelIndex.url, defaultRef: ModelIndex.defaultBigModelRef, error: error, models: [])
   }
 
-  /// The `catalog` event, from the cache when it is fresh enough.
-  ///
-  /// Pointers are not resolved here: that is one request per model, thirteen
-  /// of them today, and `resolveMissing` does it. A failed refresh is not
-  /// fatal; the previous list comes back with `error` set.
-  public func catalog(refresh: Bool = false, maxAge: TimeInterval = Catalog.maxAge) async -> CatalogEvent {
-    let cached = Files.readJSON(layout.catalogURL)?.object
-    var raw = cached?["raw"].flatMap { $0 == .null ? nil : $0 }
-    var fetchedAt = cached?["fetched_at"]?.pythonNumber
+  /// The `catalog` event: the model index, fetched again when the kept one
+  /// is older than `maxAge`. A failed fetch, or an index that cannot be used,
+  /// is not fatal: the previous list comes back with `error` set.
+  public func catalog(refresh: Bool = false, maxAge: TimeInterval = ModelIndex.maxAge) async -> CatalogEvent {
+    var current = keptIndex()
     var error: String?
-
-    if refresh || raw == nil || fetchedAt == nil || Date().timeIntervalSince1970 - (fetchedAt ?? 0) > maxAge {
+    if refresh || current == nil || Date().timeIntervalSince1970 - (current?.fetchedAt ?? 0) > maxAge {
       do {
-        // The pinned catalog and whatever sunnypilot has published since: the
-        // server runs any of their commits. Then zoompilot's extra models.
-        let pinned = try await fetchCatalog(Catalog.url)
-        let newer = try await newerCatalogs(after: Catalog.url)
-        let extra = try await extraCatalog()
-        keepPins(extra.flatMap(Catalog.pinnedPointers))
-        let fresh = JSON.object(Catalog.merge([pinned] + newer + extra))
-        let now = Date().timeIntervalSince1970
-        raw = fresh
-        fetchedAt = now
-        do {
-          try Files.writeJSON(["fetched_at": .double(now), "url": .string(Catalog.url), "raw": fresh], to: layout.catalogURL)
-        } catch {
-          Registry.log.warning("could not keep the catalog: \(String(describing: error), privacy: .public)")
-        }
+        current = try await fetchIndex()
       } catch let failure {
         error = failure.message
       }
     }
-    return payload(raw: raw, fetchedAt: fetchedAt, error: error)
+    guard let current else { return Registry.emptyCatalog(error: error) }
+    return payload(current.index, fetchedAt: current.fetchedAt, error: error)
   }
 
-  private func payload(raw: JSON?, fetchedAt: Double?, error: String?) -> CatalogEvent {
-    let pointers = Dictionary(pointers().map { ($0.ref, $0.pointer) }, uniquingKeysWith: { first, _ in first })
-    let source: JSON = raw.map { $0.truthy ? $0 : [:] } ?? [:]
-    let models = Catalog.parse(source).map { entry in
-      let pointer = pointers[entry.ref]
-      return CatalogModel(
-        name: entry.name, shortName: entry.shortName, ref: entry.ref, buildTime: entry.buildTime, index: entry.index,
-        sha256: pointer?.oid, bytes: pointer?.size)
-    }
-    return CatalogEvent(fetchedAt: fetchedAt, url: Catalog.url, defaultRef: Catalog.defaultBigModelRef, error: error, models: models)
-  }
-
-  /// The catalog JSON. Every failure, transport or content, is a network error.
-  func fetchCatalog(_ url: String) async throws(RegistryError) -> JSONObject {
-    try await http.getJSON(url, timeout: Catalog.timeout, shape: .object).object ?? JSONObject()
-  }
-
-  /// zoompilot's extra list, or nothing when it is not there. Any other
-  /// failure throws, as `newerCatalogs` does.
-  func extraCatalog() async throws(RegistryError) -> [JSONObject] {
+  /// The index as served, kept only once it parses: `fetch_index` then the
+  /// comma's `refresh_index`. A transport failure or a body that is not JSON
+  /// is a network error, an index that cannot be used a registry error.
+  private func fetchIndex() async throws(RegistryError) -> (index: ModelIndex, fetchedAt: Double) {
+    let url = ModelIndex.url
+    let body = try await http.get(url, timeout: ModelIndex.timeout)
+    let data: JSON
     do {
-      return [try await fetchCatalog(Catalog.extraURL)]
-    } catch  where error.kind == .notFound {
-      return []
+      data = try JSON.parse(body)
+    } catch {
+      throw .network("\(url) did not serve JSON: \(error)")
     }
-  }
-
-  /// Every catalog sunnypilot has published after the one at `url`, oldest
-  /// first. Stops at the first version that is not there. Any other failure
-  /// throws: a short list would drop a model found only past it from the kept
-  /// catalog, so the caller keeps its last complete one instead.
-  func newerCatalogs(after url: String, limit: Int = Catalog.probeLimit) async throws(RegistryError) -> [JSONObject] {
-    guard let version = Catalog.version(of: url), limit > 0 else { return [] }
-    var found: [JSONObject] = []
-    for next in (version + 1)...(version + limit) {
-      do {
-        found.append(try await fetchCatalog(Catalog.url(version: next)))
-      } catch  where error.kind == .notFound {
-        break
+    let index = try ModelIndex.parse(data)
+    var fetchedAt = Date().timeIntervalSince1970
+    do {
+      try body.write(to: layout.indexURL, options: .atomic)
+      if let status = Files.status(layout.indexURL) {
+        fetchedAt = status.modified
+        kept.withLock { $0 = ([status.modified, Double(status.size)], index) }
       }
+    } catch {
+      Registry.log.warning("could not keep the model index: \(String(describing: error), privacy: .public)")
     }
-    return found
+    return (index, fetchedAt)
   }
 
-  // MARK: - pointers
+  /// The models in the index's order. `index` counts down from the number
+  /// listed, so a client that sorts by it, newest first, keeps that order.
+  private func payload(_ index: ModelIndex, fetchedAt: Double?, error: String?) -> CatalogEvent {
+    let count = index.models.count
+    let models = index.models.enumerated().map { i, model in
+      CatalogModel(
+        name: model.name, shortName: model.shortName, ref: model.ref, buildTime: model.buildTime, index: count - i,
+        sha256: model.oid, bytes: model.size, folder: model.folder)
+    }
+    // the index names its own default; the constant is for a cache with none
+    let defaultRef = index.default ?? ModelIndex.defaultBigModelRef
+    return CatalogEvent(fetchedAt: fetchedAt, url: ModelIndex.url, defaultRef: defaultRef, error: error, models: models)
+  }
 
-  /// The pointer behind a catalog ref, fetched the first time and kept for good.
+  // MARK: - lookups
+
+  /// The ONNX a ref is, from the model index. A ref the kept index does not
+  /// know fetches it again, once: the index may have learnt it since.
   public func resolve(ref: String) async throws(RegistryError) -> Pointer {
     guard CacheLayout.isRef(ref) else {
       throw .registry("\(JSON.pythonRepr(ref)) is not a 40 character commit")
     }
-    if let known = pointers().first(where: { $0.ref == ref }) {
-      return known.pointer
-    }
-    let pointer = try await LFS.fetchPointer(ref: ref, http: http)
-    savePointers([(ref, pointer)])
-    Registry.log.info("\(ref.prefix(10), privacy: .public) is \(pointer.oid.prefix(16), privacy: .public), \(pointer.size >> 20) MB")
-    return pointer
+    return try await lookup({ $0.pointer(ref: ref) }, missing: "\(ref.prefix(10)) is not in the model index")
   }
 
-  /// Resolves several refs at once, `workers` at a time, and keeps what
-  /// resolved. A failure comes back per ref: one bad ref must not lose the
-  /// other twelve.
-  @discardableResult
-  public func resolveMissing(_ refs: [String], workers: Int = 8) async -> [String: Result<Pointer, RegistryError>] {
-    let known = Dictionary(pointers().map { ($0.ref, $0.pointer) }, uniquingKeysWith: { first, _ in first })
-    var out: [String: Result<Pointer, RegistryError>] = [:]
-    var todo: [String] = []
-    var seen = Set<String>()
-    for ref in refs where seen.insert(ref).inserted {
-      if !CacheLayout.isRef(ref) {
-        out[ref] = .failure(.registry("\(JSON.pythonRepr(ref)) is not a 40 character commit"))
-      } else if let pointer = known[ref] {
-        out[ref] = .success(pointer)
-      } else {
-        todo.append(ref)
-      }
-    }
-    guard !todo.isEmpty else { return out }
-
-    let http = self.http
-    let results = await withTaskGroup(of: (Int, Result<Pointer, RegistryError>).self) { group in
-      var results = [Result<Pointer, RegistryError>?](repeating: nil, count: todo.count)
-      var next = 0
-      let width = max(1, min(workers, todo.count))
-      while next < width {
-        let (index, ref) = (next, todo[next])
-        group.addTask { (index, await Registry.fetchPointerResult(ref, http: http)) }
-        next += 1
-      }
-      for await (index, result) in group {
-        results[index] = result
-        if next < todo.count {
-          let (index, ref) = (next, todo[next])
-          group.addTask { (index, await Registry.fetchPointerResult(ref, http: http)) }
-          next += 1
-        }
-      }
-      return results
-    }
-
-    var fresh: [(String, Pointer)] = []
-    for (ref, result) in zip(todo, results) {
-      guard let result else { continue }
-      out[ref] = result
-      if case .success(let pointer) = result { fresh.append((ref, pointer)) }
-    }
-    if !fresh.isEmpty { savePointers(fresh) }
-    return out
-  }
-
-  private static func fetchPointerResult(_ ref: String, http: HTTP) async -> Result<Pointer, RegistryError> {
+  /// `find` in the kept index, else in one fetched again. A fetch that fails
+  /// says so, as the kind of failure it was: offline is a network error.
+  private func lookup<T>(_ find: (ModelIndex) -> T?, missing: String) async throws(RegistryError) -> T {
+    if let index = modelIndex(), let found = find(index) { return found }
+    let fresh: ModelIndex
     do {
-      return .success(try await LFS.fetchPointer(ref: ref, http: http))
+      fresh = try await fetchIndex().index
     } catch {
-      return .failure(error)
+      throw RegistryError(error.kind, "\(missing), and it could not be fetched again: \(error.message)")
     }
+    guard let found = find(fresh) else { throw .registry(missing) }
+    return found
   }
 
-  /// A human name and the catalog ref for a model identity; either may be nil.
+  /// The size the model index gives an ONNX, nil for one it does not know.
+  /// Disk only.
+  public func size(for sha256: String) -> Int64? {
+    modelIndex()?.size(oid: sha256)
+  }
+
+  /// A human name and a ref for a model identity; either may be nil.
   public func name(for sha256: String) -> (name: String?, ref: String?) {
     nameLookup()(sha256)
   }
 
-  /// `name(for:)` with the pointers, the cached catalog and the local models
-  /// read once, for a loop over many models.
+  /// `name(for:)` with the index and the local models read once, for a loop
+  /// over many models. The name is the listed model's, else the import's;
+  /// the ref is the listed model's, else any ref the index has for it.
   private func nameLookup() -> (String) -> (name: String?, ref: String?) {
-    let pointers = pointers()
-    let raw = Files.readJSON(layout.catalogURL)?["raw"] ?? [:]
-    let entries = Catalog.parse(raw.truthy ? raw : [:])
+    let index = modelIndex()
     let locals = localModels()
     return { sha256 in
-      if let match = pointers.first(where: { $0.pointer.oid == sha256 }) {
-        return (entries.first { $0.ref == match.ref }?.name, match.ref)
-      }
-      if let local = locals.first(where: { $0.sha256 == sha256 }) {
-        return (local.name, nil)
-      }
-      return (nil, nil)
+      let name = index?.listed(oid: sha256)?.name ?? locals.first { $0.sha256 == sha256 }?.name
+      return (name, index?.ref(oid: sha256))
     }
   }
 
-  /// The catalog ref whose model has this identity, from the pointers or the
-  /// cached list. Disk only.
+  /// The ref whose model has this identity, from the model index. Disk only.
   public func ref(for sha256: String) -> String? {
-    if let ref = name(for: sha256).ref { return ref }
-    return cachedCatalog()?.models.first { $0.sha256 == sha256 }?.ref
-  }
-
-  /// pointers.json, in file order, without the entries the Python registry
-  /// skips (no oid or no size).
-  private func pointerTable() -> JSONObject {
-    guard let known = Files.readJSON(layout.pointersURL)?.object else { return JSONObject() }
-    var out = JSONObject()
-    for (ref, entry) in known {
-      guard let object = entry.object, object["oid"]?.truthy == true, object["size"]?.truthy == true else { continue }
-      out[ref] = entry
-    }
-    return out
-  }
-
-  private func pointers() -> [(ref: String, pointer: Pointer)] {
-    pointerTable().compactMap { ref, entry in
-      guard let oid = entry["oid"]?.pythonString, let size = entry["size"]?.pythonInt else { return nil }
-      return (ref, Pointer(oid: oid, size: size))
-    }
-  }
-
-  /// The list's pins written over the kept pointers, when one differs:
-  /// `Models.keep_pins`.
-  private func keepPins(_ pins: [(String, Pointer)]) {
-    let known = Dictionary(pointers().map { ($0.ref, $0.pointer) }, uniquingKeysWith: { first, _ in first })
-    let changed = pins.filter { known[$0.0] != $0.1 }
-    if changed.isEmpty { return }
-    savePointers(changed)
-    for (ref, pin) in changed {
-      Registry.log.warning("\(ref.prefix(10), privacy: .public) is pinned to \(pin.oid.prefix(16), privacy: .public)")
-    }
-  }
-
-  private func savePointers(_ fresh: [(String, Pointer)]) {
-    lock.withLock { _ in
-      var known = pointerTable()
-      for (ref, pointer) in fresh {
-        known[ref] = pointer.json
-      }
-      do {
-        try Files.writeJSON(.object(known), to: layout.pointersURL)
-      } catch {
-        Registry.log.warning("could not keep the pointers: \(String(describing: error), privacy: .public)")
-      }
-    }
+    modelIndex()?.ref(oid: sha256)
   }
 
   // MARK: - models on disk
@@ -323,11 +222,10 @@ public final class Registry: Sendable {
 
   /// Materialises one model's ONNX, from whichever LFS server has it.
   ///
-  /// A ref is resolved first (and kept); a sha256 must already be in a
-  /// pointer, because an LFS object is an oid plus a size. The servers are
-  /// asked in order and the first with the object serves it. `progress` is
-  /// called whenever the whole percent changes, and once with 1.0 at the end;
-  /// `shouldStop` is asked between chunks.
+  /// A ref or a sha256 is sized from the model index, because an LFS object
+  /// is an oid plus a size. The servers are asked in order and the first with
+  /// the object serves it. `progress` is called whenever the whole percent
+  /// changes, and once with 1.0 at the end; `shouldStop` is asked between chunks.
   public func fetch(
     _ refOrSHA256: String,
     progress: @escaping @Sendable (Double) -> Void = { _ in },
@@ -337,8 +235,7 @@ public final class Registry: Sendable {
   }
 
   /// `fetch(_:)` for a pointer known already: the comma names its model by
-  /// the oid and size its own lookup found, whether or not this registry has
-  /// resolved that ref.
+  /// the oid and size its own copy of the index gave it.
   public func fetch(
     pointer: Pointer,
     progress: @escaping @Sendable (Double) -> Void = { _ in },
@@ -356,15 +253,16 @@ public final class Registry: Sendable {
     throw .network("no LFS server has \(pointer.oid.prefix(16))")
   }
 
-  private func pointer(for refOrSHA256: String) async throws(RegistryError) -> Pointer {
+  /// The pointer for a ref or a sha256, from the model index. A sha256 the
+  /// kept index does not size fetches it again, once, as a ref does.
+  public func pointer(for refOrSHA256: String) async throws(RegistryError) -> Pointer {
     if CacheLayout.isRef(refOrSHA256) {
       return try await resolve(ref: refOrSHA256)
     }
     if CacheLayout.isSHA256(refOrSHA256) {
-      if let known = pointers().first(where: { $0.pointer.oid == refOrSHA256 }) {
-        return Pointer(oid: refOrSHA256, size: known.pointer.size)
-      }
-      throw .registry("size for \(refOrSHA256.prefix(16)) unknown; fetch by catalog ref")
+      let size = try await lookup(
+        { $0.size(oid: refOrSHA256) }, missing: "size for \(refOrSHA256.prefix(16)) unknown: it is not in the model index")
+      return Pointer(oid: refOrSHA256, size: size)
     }
     throw .registry("\(JSON.pythonRepr(refOrSHA256)) is neither a 40 character ref nor a 64 character sha256")
   }
@@ -504,7 +402,7 @@ public final class Registry: Sendable {
   /// The `inventory` event: what is on disk and what it belongs to.
   ///
   /// A model file is named by the first 16 characters of its identity, so a
-  /// file whose full identity is in no pointer, no local record and no sidecar
+  /// file whose full identity is in no index, no local record and no sidecar
   /// is listed with a 16 character `sha256`: the prefix is all anyone knows.
   /// Artifacts of every backend are listed; `current` marks the one whose key
   /// is `<sha16>.<artifactTag>` with `artifactSuffix`, the one this server
@@ -593,8 +491,8 @@ public final class Registry: Sendable {
   /// prefix16 to full identity, from every place a full identity is written down.
   private func knownSHAs() -> [String: String] {
     var out: [String: String] = [:]
-    for (_, pointer) in pointers() where CacheLayout.isSHA256(pointer.oid) {
-      out[String(pointer.oid.prefix(16))] = pointer.oid
+    for oid in modelIndex()?.sizes.keys.sorted() ?? [] {
+      out[String(oid.prefix(16))] = oid
     }
     for local in localModels() where CacheLayout.isSHA256(local.sha256) {
       out[String(local.sha256.prefix(16))] = local.sha256

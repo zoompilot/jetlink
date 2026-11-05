@@ -2,20 +2,21 @@ import Foundation
 import JetlinkKit
 import JetlinkRegistry
 
-/// What the control layer needs from the model registry: the catalog, the
-/// bytes, and what is on disk. JetlinkRegistry's `Registry` is the one the
+/// What the control layer needs from the model registry: the model index,
+/// the bytes, and what is on disk. JetlinkRegistry's `Registry` is the one the
 /// apps use; the seam keeps this file testable without the network.
 public protocol ModelRegistry: Sendable {
   func cachedCatalog() -> CatalogEvent?
   func catalog(refresh: Bool, maxAge: TimeInterval) async -> CatalogEvent
-  func resolveMissingPointers(_ refs: [String]) async
-  /// The LFS pointer behind a catalog ref: the model's sha256 and size.
+  /// The ONNX the model index gives a ref: the model's sha256 and size.
   func resolvePointer(ref: String) async throws -> (sha256: String, size: Int64)
+  /// The size the model index gives a model, nil for one it does not know.
+  func size(for sha256: String) -> Int64?
   func ref(for sha256: String) -> String?
-  /// The catalog's name and ref for a model, as far as it knows them.
+  /// The index's name and ref for a model, as far as it knows them.
   func name(for sha256: String) -> (name: String?, ref: String?)
-  /// The model behind an LFS pointer: one a catalog ref resolved to, or one
-  /// the comma named, which needs no catalog.
+  /// The model behind an LFS pointer: one the index gave, or one the comma
+  /// named from its own copy of it.
   func fetch(sha256: String, size: Int64, progress: @escaping @Sendable (Double) -> Void, shouldStop: @escaping @Sendable () -> Bool) async throws -> URL
   /// Copies a model in and returns its sha256.
   func importModelFile(at url: URL, name: String?, progress: @escaping @Sendable (Double) -> Void) async throws -> String
@@ -344,17 +345,7 @@ public final class ServerController: @unchecked Sendable {
   }
 
   private func refreshCatalog(_ refresh: Bool) async {
-    var payload = await registry.catalog(refresh: refresh, maxAge: ServerController.catalogMaxAge)
-    let missing = payload.models.filter { $0.sha256 == nil }.map(\.ref)
-    if !missing.isEmpty {
-      await registry.resolveMissingPointers(missing)
-      // Re-read rather than patch: the registry owns what a pointer means.
-      payload =
-        registry.cachedCatalog().map {
-          CatalogEvent(fetchedAt: $0.fetchedAt, url: $0.url, defaultRef: $0.defaultRef, error: payload.error, models: $0.models)
-        } ?? payload
-    }
-    publish(.catalog(payload))
+    publish(.catalog(await registry.catalog(refresh: refresh, maxAge: ServerController.catalogMaxAge)))
   }
 
   // MARK: downloads
@@ -364,19 +355,21 @@ public final class ServerController: @unchecked Sendable {
       throw ControlError.refused("a download needs exactly one of ref and sha256")
     }
     var ref = ref
+    let pointer: (sha256: String, size: Int64)
     if let sha256 {
       guard CacheLayout.isSHA256(sha256) else { throw ControlError.refused("sha256 must be a lowercase SHA-256 digest") }
-      // An LFS object is an oid plus a size: its ref is what can ask for one.
-      guard let known = registry.ref(for: sha256) else {
-        throw ControlError.refused("model \(sha256.prefix(16)) is not in the catalog")
+      // An LFS object is an oid plus a size, and the index has the size.
+      guard let size = registry.size(for: sha256) else {
+        throw ControlError.refused("model \(sha256.prefix(16)) is not in the model index")
       }
-      ref = known
-    }
-    let pointer: (sha256: String, size: Int64)
-    do {
-      pointer = try await registry.resolvePointer(ref: ref!)
-    } catch {
-      throw ControlError.refused("could not resolve \(ref!): \(error)")
+      pointer = (sha256, size)
+      ref = registry.ref(for: sha256)
+    } else {
+      do {
+        pointer = try await registry.resolvePointer(ref: ref!)
+      } catch {
+        throw ControlError.refused("could not resolve \(ref!): \(error)")
+      }
     }
     let path = try server.cache.modelPath(pointer.sha256)
     if FileManager.default.fileExists(atPath: path.path) && (pointer.size == 0 || Files.size(of: path) == pointer.size) {
@@ -443,7 +436,7 @@ public final class ServerController: @unchecked Sendable {
       } else {
         log.warning("downloading \(state.sha256.prefix(16)) failed: \(String(describing: error))")
         downloadEvent(state, "failed", detail: "\(type(of: error)): \(error)")
-        if let error = error as? RegistryError, [.network, .notFound].contains(error.kind) {
+        if let error = error as? RegistryError, error.isNetwork {
           lock.withLock { offlineAt = ProcessInfo.processInfo.systemUptime }
         }
       }
@@ -623,25 +616,17 @@ public final class ServerController: @unchecked Sendable {
     if let joined {
       return (["state": .string("downloading"), "sha256": .string(sha256)], joined)
     }
-    guard let ref = registry.ref(for: sha256) else {
-      throw ControlError.refused("model \(sha256.prefix(16)) is not downloaded, and is not in the catalog")
+    guard let size = registry.size(for: sha256) else {
+      throw ControlError.refused("model \(sha256.prefix(16)) is not downloaded, and is not in the model index")
     }
-    let pointer: (sha256: String, size: Int64)
-    do {
-      pointer = try await registry.resolvePointer(ref: ref)
-    } catch {
-      throw ControlError.refused("could not resolve \(ref): \(error)")
-    }
-    guard pointer.sha256 == sha256 else {
-      throw ControlError.refused("\(ref) points at \(pointer.sha256.prefix(16)), not \(sha256.prefix(16))")
-    }
+    let ref = registry.ref(for: sha256)
     lock.withLock {
       // Joined by the lock with forgetDownload, so a download still listed
       // here is one that will read `prepare` when it finishes.
-      preparing(active[sha256] ?? enqueue(Download(sha256: sha256, ref: ref, total: pointer.size)), frameSkip: frameSkip)
+      preparing(active[sha256] ?? enqueue(Download(sha256: sha256, ref: ref, total: size)), frameSkip: frameSkip)
         .askedHere = overComma
     }
-    return (["state": .string("downloading"), "sha256": .string(sha256)], pointer.size)
+    return (["state": .string("downloading"), "sha256": .string(sha256)], size)
   }
 
   /// What the model weighs, for a request that has no client behind it.

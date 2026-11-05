@@ -191,7 +191,7 @@
       var downloading = PreviewData.loadedRow
       downloading.status = .downloading(frac: 0.4, rateBps: 1)
       #expect(!ModelStore.canUse(downloading))
-      // The catalog has not resolved its checksum yet, so there is nothing to ask for.
+      // A row with no checksum (a server from before the model index): nothing to ask for.
       #expect(PreviewData.notDownloadedRow.sha256 == nil)
       #expect(!ModelStore.canUse(PreviewData.notDownloadedRow))
     }

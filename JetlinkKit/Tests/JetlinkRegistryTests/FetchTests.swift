@@ -23,17 +23,17 @@ struct FetchTests {
     #expect(try Data(contentsOf: path) == RegistryFixture.blob)
     #expect(tmp.names("models") == ["\(RegistryFixture.blobSHA.prefix(16)).onnx"])
     #expect(seen.all.last == 1.0)
-    #expect(net.urls.contains("\(LFS.endpoints[0])/objects/batch"))
-    #expect(!net.urls.contains("\(LFS.endpoints[2])/objects/batch"), "the first server with the object serves it")
+    #expect(net.urls.contains(LFS.bucketURL(oid: RegistryFixture.blobSHA)) && net.urls.contains("\(LFS.endpoints[1])/objects/batch"))
+    #expect(!net.urls.contains("\(LFS.endpoints[3])/objects/batch"), "the first server with the object serves it")
   }
 
   @Test func aModelAlreadyOnDiskTouchesNoNetwork() async throws {
     let tmp = try TemporaryDirectory()
     _ = try await Registry(layout: tmp.layout, session: MockNet(RegistryFixture.smallRoutes()).session).fetch(RegistryFixture.smallRef)
-    let offline = MockNet([LFS.pointerURL(ref: RegistryFixture.smallRef): .body(RegistryFixture.pointerText())])
+    let offline = MockNet()
     let path = try await Registry(layout: tmp.layout, session: offline.session).fetch(RegistryFixture.smallRef)
     #expect(try Data(contentsOf: path) == RegistryFixture.blob)
-    // the pointer was kept, so even that is not asked for again
+    // the index was kept, so even that is not asked for again
     #expect(offline.calls.isEmpty)
   }
 
@@ -93,7 +93,7 @@ struct FetchTests {
   @Test func noServerHasIt() async throws {
     let tmp = try TemporaryDirectory()
     var routes = RegistryFixture.smallRoutes()
-    routes["\(LFS.endpoints[1])/objects/batch"] = .body(RegistryFixture.batch(oid: RegistryFixture.blobSHA, size: Int64(RegistryFixture.blob.count), href: nil))
+    routes["\(LFS.endpoints[2])/objects/batch"] = .body(RegistryFixture.batch(oid: RegistryFixture.blobSHA, size: Int64(RegistryFixture.blob.count), href: nil))
     let error = await #expect(throws: RegistryError.self) {
       try await Registry(layout: tmp.layout, session: MockNet(routes).session).fetch(RegistryFixture.smallRef)
     }
@@ -118,24 +118,6 @@ struct FetchTests {
     }
     #expect(dropped?.kind == .network)
     #expect(tmp.names("models").isEmpty)
-  }
-
-  @Test func fetchingBySHA256NeedsAKnownSize() async throws {
-    let tmp = try TemporaryDirectory()
-    let registry = Registry(layout: tmp.layout, session: MockNet().session)
-    let unknown = await #expect(throws: RegistryError.self) { try await registry.fetch(RegistryFixture.blobSHA) }
-    #expect(unknown?.message.contains("fetch by catalog ref") == true)
-    let neither = await #expect(throws: RegistryError.self) { try await registry.fetch("nothex") }
-    #expect(neither?.message == "'nothex' is neither a 40 character ref nor a 64 character sha256")
-  }
-
-  @Test func aKnownSHA256IsFetchedByItsPointer() async throws {
-    let tmp = try TemporaryDirectory()
-    let net = MockNet(RegistryFixture.smallRoutes())
-    let registry = Registry(layout: tmp.layout, session: net.session)
-    _ = try await registry.resolve(ref: RegistryFixture.smallRef)
-    let path = try await registry.fetch(RegistryFixture.blobSHA)
-    #expect(try Data(contentsOf: path) == RegistryFixture.blob)
   }
 
   @Test func tooLittleDiskIsRefusedBeforeAnyBytes() async throws {
@@ -192,6 +174,19 @@ struct FetchTests {
       #expect(tmp.names("models") == [dest.lastPathComponent])
       let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
       return (seconds, seen.all)
+    }
+
+    /// comma's bucket answers an object's address with a redirect to where
+    /// the bytes are, and the href it gives is that address.
+    @Test func followsARedirectAsTheBucketAnswers() async throws {
+      let tmp = try TemporaryDirectory()
+      let server = try LocalServer(total: 1 << 20)
+      defer { server.stop() }
+      let pointer = Pointer(oid: server.sha256, size: server.total)
+      let dest = try tmp.layout.modelPath(sha256: pointer.oid)
+      let path = try await LFS.download(
+        href: server.redirectURL, pointer: pointer, dest: dest, session: .shared, progress: { _ in }, shouldStop: { false })
+      #expect(Files.status(path)?.size == server.total)
     }
 
     @Test func streamsHashesAndVerifiesOverARealSocket() async throws {

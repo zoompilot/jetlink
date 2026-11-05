@@ -111,9 +111,9 @@ def jetlink_params() -> dict:
   from openpilot.common.params import Params
   params = Params()
   out: dict = {'JetlinkLink': 1}   # Jetlink USB
-  # the selection is the big-model slot and the identity its pointer, both params
-  for key in ('JetlinkSpec', 'JetlinkModelPointers',
-              'ModelManager_ActiveBundleChestnut', 'ModelManager_ModelsCache_Chestnut'):
+  # the selection is the big-model slot; its identity is the comma's copy of the
+  # model index, a file under the model root rather than a param
+  for key in ('JetlinkSpec', 'ModelManager_ActiveBundleChestnut', 'ModelManager_ModelsCache_Chestnut'):
     value = params.get(key)
     if value is not None:
       out[key] = value

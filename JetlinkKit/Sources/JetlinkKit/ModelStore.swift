@@ -156,7 +156,7 @@ public final class ModelStore {
   /// disk, prepares it when it has no engine, and loads it.
   public func use(_ row: ModelRow, confirmedInterruption: Bool) {
     guard let sha = row.sha256 else {
-      lastError = "Jetlink does not know that model's checksum yet. Refresh the model list and try again."
+      lastError = "The model index does not know that model's checksum. Refresh the model list and try again."
       return
     }
     if useNeedsConfirmation(row) && !confirmedInterruption {

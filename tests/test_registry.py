@@ -87,7 +87,9 @@ def published() -> dict:
 def test_the_published_index_parses():
   index = parse_index(published())
   assert index.models, 'it lists models'
-  assert DEFAULT_BIG_MODEL_REF in {m.ref for m in index.models}, "jetlink's default is listed"
+  assert index.default in {m.ref for m in index.models}, 'the index names a listed default'
+  assert DEFAULT_BIG_MODEL_REF in {m.ref for m in index.models}, "jetlink's fallback default is listed"
+  assert all(m.short_name and m.generation.isdigit() for m in index.models), 'every model has what a catalog needs'
   # every listed model, and every ref, has its ONNX's size
   assert all(index.size(m.oid) == m.size for m in index.models)
   assert all(index.size(p.oid) == p.size for p in index.refs.values())
@@ -102,6 +104,13 @@ def test_the_models_keep_their_order_and_fields():
   assert [(m.ref, m.name, m.folder, m.short_name, m.build_time, m.pr) for m in index.models] == [
     (B, 'Beta (October 29, 2026)', '2026 Deep RL Models', 'B', '2026-10-29T00:00:00Z', None),
     (A, A[:10], OTHER_FOLDER, '', '', 39235)]
+
+
+def test_the_default_must_be_listed():
+  listed = [{'ref': A, 'oid': ONNX_A, 'size': 1}]
+  assert parse_index({'schema': 1, 'default': A, 'models': listed}).default == A
+  for default in (B, 'junk', None, 7):
+    assert parse_index({'schema': 1, 'default': default, 'models': listed, 'refs': {B: {'oid': ONNX_B, 'size': 2}}}).default is None
 
 
 @pytest.mark.parametrize('bad', [

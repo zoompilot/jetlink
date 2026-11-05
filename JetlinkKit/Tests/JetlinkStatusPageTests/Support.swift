@@ -62,7 +62,10 @@ final class CountingRegistry: ModelRegistry, @unchecked Sendable {
     return CatalogEvent(fetchedAt: nil, url: "", defaultRef: "", error: nil, models: [])
   }
 
-  func resolveMissingPointers(_ refs: [String]) async { called("resolveMissingPointers") }
+  func size(for sha256: String) -> Int64? {
+    called("size")
+    return nil
+  }
 
   func resolvePointer(ref: String) async throws -> (sha256: String, size: Int64) {
     called("resolvePointer")

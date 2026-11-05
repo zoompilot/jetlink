@@ -22,7 +22,10 @@ If the Jetson only has power while the car is on, prepare a new model by
 starting the car, forcing offroad, and waiting for the Big Model panel to say
 it is ready.
 
-If the list is empty, use **Refresh Model List**. On Jetson, the 766 MB models
+The list is jetlink's model index
+([zoompilot/jetlink-model-index](https://github.com/zoompilot/jetlink-model-index)),
+refreshed hourly, so new models appear without a Jetlink update. If the list
+is empty, use **Refresh Model List**. On Jetson, the 766 MB models
 leave more time in the 50 ms frame budget than the 1.7 GB Lebowski.
 
 **Preview Models** are comma models that are not merged into openpilot yet.

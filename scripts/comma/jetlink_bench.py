@@ -85,7 +85,7 @@ def main():
   # find, and the join asks for a model that has not been picked
   keys = ('CarParamsPersistent', 'CalibrationParams', 'ModelManager_ActiveBundle', 'ModelManager_ActiveBundleChestnut',
           'ModelManager_ModelsCache_Chestnut', 'RecordFront', 'IsRhdDetected', 'ExperimentalMode',
-          KEYS.pointers, KEYS.spec, KEYS.big_model, KEYS.catalog)
+          KEYS.spec, KEYS.big_model, KEYS.catalog)
   # the adapter's get is None for a key this fork does not have
   saved = {key: adapter.get(key) for key in dict.fromkeys(k for k in keys if k)}
   if saved['CarParamsPersistent'] is None:

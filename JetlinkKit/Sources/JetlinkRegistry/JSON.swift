@@ -4,11 +4,12 @@ import Foundation
 /// in the order they were read or first set, as a Python dict does, and an
 /// integer stays an integer.
 ///
-/// The registry's state files and sunnypilot's catalog go through this rather
+/// The registry's state files and the model index go through this rather
 /// than `JSONSerialization` because the Python registry depends on dict order
-/// in places: `pointers.json` is walked in the order refs were resolved, and
-/// the first ref with a given oid names the model. An unordered dictionary
-/// would name a different one.
+/// in places: the index's `refs` are walked in the order it lists them, and
+/// the first ref with a given oid names an unlisted model. An unordered
+/// dictionary would name a different one, and a size of 1.0 or true would
+/// read as an integer.
 enum JSON: Sendable, Equatable {
   case null
   case bool(Bool)

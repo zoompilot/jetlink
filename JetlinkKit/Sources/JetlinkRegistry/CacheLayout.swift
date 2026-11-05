@@ -7,11 +7,11 @@ import Foundation
 ///     <root>/engines/<sha16>.<backend tag><suffix>     the artifact
 ///     <root>/engines/<sha16>.<backend tag>.json        its sidecar: build facts and the model spec
 ///     <root>/models/<sha16>.onnx                       the model as uploaded, never pruned
-///     <root>/registry/                                 catalog.json, pointers.json, local-models.json
+///     <root>/registry/                                 index.json, local-models.json
 ///     <root>/last-loaded.json                          what the server loaded last
 public struct CacheLayout: Sendable, Equatable {
-  /// Artifacts of one backend kept by `EngineCache.prune`. One per catalog
-  /// entry or so: a rebuild costs minutes, so a smaller cap rebuilds on every
+  /// Artifacts of one backend kept by `EngineCache.prune`. One per listed
+  /// model or so: a rebuild costs minutes, so a smaller cap rebuilds on every
   /// A/B switch.
   public static let keepArtifacts = 6
 
@@ -25,8 +25,8 @@ public struct CacheLayout: Sendable, Equatable {
   public var engines: URL { root.appending(path: "engines", directoryHint: .isDirectory) }
   public var registry: URL { root.appending(path: "registry", directoryHint: .isDirectory) }
 
-  public var catalogURL: URL { registry.appending(path: "catalog.json") }
-  public var pointersURL: URL { registry.appending(path: "pointers.json") }
+  /// The last model index that parsed, as it was served.
+  public var indexURL: URL { registry.appending(path: "index.json") }
   public var localModelsURL: URL { registry.appending(path: "local-models.json") }
 
   /// Beside the caches rather than in them: it describes the server, not an

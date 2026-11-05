@@ -321,13 +321,14 @@ class Jetlink:
 
   def listed_ref(self, ref: str) -> str | None:
     """The ref big_catalog() lists a pick's model under, for a pick a new list
-    no longer names: a recompile is listed once, under its newest ref."""
-    return self._parts.models.listed_ref(ref)
+    no longer names: a recompile is listed once, under its newest ref. None
+    while the list is not jetlink's (lists_big_models)."""
+    return self._parts.models.listed_ref(ref) if self.lists_big_models() else None
 
-  # API 3, until the next minor release: the model manager's catalog with
-  # jetlink's models folded in, which is now jetlink's list in its place
+  # API 3's, until the next minor release: the catalog is left as fetched.
+  # Its picks still drive, since the index knows every ref it ever saw
   def should_extend_catalog(self) -> bool:
-    return self.lists_big_models()
+    return False
 
   def extend_catalog(self, catalog: dict) -> dict:
-    return self.big_catalog() or catalog
+    return catalog

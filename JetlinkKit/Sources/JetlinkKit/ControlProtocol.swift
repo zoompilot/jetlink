@@ -318,8 +318,13 @@ public struct CatalogModel: Codable, Sendable, Equatable, Identifiable {
   public let index: Int
   public let sha256: String?
   public let bytes: Int64?
+  /// The model index's folder for it ("Master Models", "Other Models"); nil
+  /// from a server that predates the index.
+  public let folder: String?
 
-  public init(name: String, shortName: String, ref: String, buildTime: String, index: Int, sha256: String?, bytes: Int64?) {
+  public init(
+    name: String, shortName: String, ref: String, buildTime: String, index: Int, sha256: String?, bytes: Int64?, folder: String? = nil
+  ) {
     self.name = name
     self.shortName = shortName
     self.ref = ref
@@ -327,6 +332,7 @@ public struct CatalogModel: Codable, Sendable, Equatable, Identifiable {
     self.index = index
     self.sha256 = sha256
     self.bytes = bytes
+    self.folder = folder
   }
 }
 

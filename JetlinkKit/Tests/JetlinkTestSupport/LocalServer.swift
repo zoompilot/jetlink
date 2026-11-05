@@ -9,7 +9,8 @@
 
   /// Serves `total` bytes of a repeating pattern to every GET, over a real
   /// socket on loopback, so a download goes through URLSession's own HTTP
-  /// stack. Nothing is read from disk on the serving side.
+  /// stack. Nothing is read from disk on the serving side. `redirectURL`
+  /// answers with a redirect to `url`, as comma's bucket does.
   public final class LocalServer: Sendable {
     public let port: UInt16
     public let total: Int64
@@ -53,19 +54,21 @@
       _ = withUnsafeMutablePointer(to: &address) {
         $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
       }
-      port = UInt16(bigEndian: address.sin_port)
+      let port = UInt16(bigEndian: address.sin_port)
+      self.port = port
       listener = fd
 
       Thread.detachNewThread {
         while true {
           let client = accept(fd, nil, nil)
           if client < 0 { return }  // the listener was shut down
-          Thread.detachNewThread { LocalServer.serve(client, total: total, pattern: pattern) }
+          Thread.detachNewThread { LocalServer.serve(client, port: port, total: total, pattern: pattern) }
         }
       }
     }
 
     public var url: String { "http://127.0.0.1:\(port)/object" }
+    public var redirectURL: String { "http://127.0.0.1:\(port)/redirect" }
 
     public func stop() {
       // On Linux only the shutdown wakes an accept blocked on the socket.
@@ -73,7 +76,7 @@
       close(listener)
     }
 
-    private static func serve(_ client: Int32, total: Int64, pattern: Data) {
+    private static func serve(_ client: Int32, port: UInt16, total: Int64, pattern: Data) {
       defer { close(client) }
       #if canImport(Darwin)
         var yes: Int32 = 1
@@ -86,6 +89,11 @@
         let n = read(client, &buffer, buffer.count)
         if n <= 0 { return }
         request.append(buffer, count: n)
+      }
+      if request.starts(with: Data("GET /redirect ".utf8)) {
+        let redirect = "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:\(port)/object\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        _ = send(client, Data(redirect.utf8))
+        return
       }
       let header = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: \(total)\r\nConnection: close\r\n\r\n"
       guard send(client, Data(header.utf8)) else { return }

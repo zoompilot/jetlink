@@ -32,8 +32,8 @@ __all__ = ['BUCKET', 'LFS_ENDPOINTS', 'Pointer', 'lfs_download', 'lfs_hrefs', 'l
 
 log = logging.getLogger('jetlink.registry')
 
-# where comma's LFS client keeps objects since openpilot #39206: not an LFS
-# server, an object is read by its oid under it (lfs_resolve)
+# where comma's LFS client keeps objects since openpilot #39206. A HuggingFace
+# bucket is not an LFS server: an object is read by its oid under it (lfs_resolve)
 BUCKET = 'https://huggingface.co/buckets/commaai/openpilot-lfs'
 DRIVING_MODELS_REPO = 'commaai/openpilot_driving_models'
 LFS_ENDPOINTS = (
@@ -51,29 +51,30 @@ ProgressFn = Callable[[float], None]
 StopFn = Callable[[], bool]
 
 
-def _bucket_href(pointer: Pointer, timeout: float, opener) -> str | None:
-  """comma's bucket's address for the object, or None when it does not have
-  it or cannot be reached: its first byte is asked for, as cheap as a HEAD."""
-  url = f"{BUCKET}/resolve/sha256/{pointer.oid}"
+def _bucket_href(bucket: str, pointer: Pointer, timeout: float, opener) -> str | None:
+  """A bucket's address for the object, or None when it does not have it or
+  cannot be reached: its first byte is asked for, as cheap as a HEAD."""
+  url = f"{bucket}/resolve/sha256/{pointer.oid}"
   try:
     with opener(urllib.request.Request(url, headers={'Range': 'bytes=0-0'}), timeout=timeout) as response:
       response.read(1)
   except (OSError, ValueError) as e:
-    log.warning("%s has no %s (%s)", BUCKET, pointer.oid[:16], e)
+    log.warning("%s has no %s (%s)", bucket, pointer.oid[:16], e)
     return None
   return url
 
 
 def lfs_resolve(endpoint: str, pointer: Pointer, timeout: float = CONNECT_TIMEOUT, opener=None) -> str | None:
   """Ask one LFS server for a download href, or None if it does not have it.
-  comma's bucket (BUCKET) is asked for the object itself.
+  A HuggingFace bucket, comma's (BUCKET) or one a checkout's .lfsconfig
+  names, is asked for the object itself.
 
   A server that is down is not different from a server that lacks the object:
   either way the caller moves to the next one, so nothing raises here.
   """
   opener = opener or urllib.request.urlopen
-  if endpoint == BUCKET:
-    return _bucket_href(pointer, timeout, opener)
+  if '/buckets/' in endpoint:
+    return _bucket_href(endpoint, pointer, timeout, opener)
   body = json.dumps({
     'operation': 'download',
     'transfers': ['basic'],

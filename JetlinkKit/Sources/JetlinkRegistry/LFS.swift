@@ -26,380 +26,79 @@ public struct Pointer: Sendable, Equatable, Hashable {
     self.size = size
   }
 
-  /// `{"oid": ..., "size": ...}`, as pointers.json and the LFS batch API spell it.
+  /// `{"oid": ..., "size": ...}`, as the model index and the LFS batch API spell it.
   var json: JSON { ["oid": .string(oid), "size": .int(size)] }
 }
 
-/// Getting a large model's ONNX by its git-lfs oid.
+/// Getting a large model's ONNX by its oid, the one the model index names
+/// (`ModelIndex`).
 ///
-/// comma overwrites one file per model, so the commit is the only name a big
-/// model's ONNX has. GitHub's raw host serves the LFS pointer for any commit
-/// it holds, merged or not, and that pointer carries the oid and size the
-/// comma will ask a jetlink server for. The bytes themselves are on comma's
-/// LFS servers, which are asked in turn because which one has an object
-/// varies with the model's age.
-///
-/// Since openpilot #38930 a commit can ship a precompiled
-/// tinygrad pkl instead, with no ONNX in the tree at all; Cinque Terre V3 is
-/// one. Its subject names the export ("Use f78ed37d for the precompiled eGPU
-/// driving model") and the ONNX is in comma's HuggingFace model repo, in the
-/// folder that id starts. That repo speaks the LFS batch protocol too, so it
-/// is one more endpoint to ask.
-///
-/// Not every such commit names its export. A pull request can add the ONNX in
-/// one commit and swap it for the pkl in the next (ResAction, #39037), and a
-/// squash merge's subject only names the pull request. The pointer is still in a diff: the one the commit's own patch
-/// deletes, or the last one its pull request's patch carries.
+/// The bytes are on comma's LFS servers. Since openpilot #39206 comma's own
+/// LFS client stores objects in a HuggingFace bucket, read by oid; the older
+/// LFS servers, and comma's model repo for the exports behind a precompiled
+/// pkl, speak the LFS batch protocol, and which one has an object varies with
+/// the model's age, so each is asked in turn.
 ///
 /// This mirrors `jetlink/registry/lfs.py`: same URLs, same endpoint order,
 /// same verify rules.
 public enum LFS {
-  public static let bigONNX = "big_driving_supercombo.onnx"
-  public static let pointerURLTemplate = "https://raw.githubusercontent.com/commaai/openpilot/{ref}/openpilot/selfdrive/modeld/models/" + bigONNX
-  /// A commit's subject without the API, whose anonymous limit a car behind CGNAT shares.
-  public static let commitPatchURLTemplate = "https://github.com/commaai/openpilot/commit/{ref}.patch"
-  /// Every commit of a pull request, one patch after another, for a squash merge's subject.
-  public static let pullPatchURLTemplate = "https://github.com/commaai/openpilot/pull/{number}.patch"
-  /// How much of a patch is read for the pointers in its diffs; a model commit's is 3 KB.
-  public static let patchMax = 256 << 10
+  /// Where comma's LFS client keeps objects since openpilot #39206. A
+  /// HuggingFace bucket is not an LFS server: an object is read by its oid
+  /// under it (`bucketHref`).
+  public static let bucket = "https://huggingface.co/buckets/commaai/openpilot-lfs"
   public static let drivingModelsRepo = "commaai/openpilot_driving_models"
-  public static let drivingModelsTreeURL = "https://huggingface.co/api/models/\(drivingModelsRepo)/tree/main"
   public static let endpoints = [
+    bucket,
     "https://gitlab.com/commaai/openpilot-lfs.git/info/lfs",  // every object, older and PR-branch models included
-    "https://huggingface.co/commaai/openpilot-lfs.git/info/lfs",  // where comma is moving them; the current ones
+    "https://huggingface.co/commaai/openpilot-lfs.git/info/lfs",  // the current ones
     "https://huggingface.co/\(drivingModelsRepo).git/info/lfs",  // the exports behind a precompiled pkl
   ]
   public static let mediaType = "application/vnd.git-lfs+json"
-  public static let pointerTimeout: TimeInterval = 10
   public static let connectTimeout: TimeInterval = 30
-  /// A pointer is 134 bytes. Anything larger is the ONNX itself, served by a
-  /// host that resolved the LFS filter for us, and reading a gigabyte to find
-  /// that out is not on.
-  public static let pointerMax = 4096
   /// Room left on the volume beyond the model itself.
   public static let freeSlack: Int64 = 64 << 20
 
-  public static func pointerURL(ref: String) -> String {
-    pointerURLTemplate.replacingOccurrences(of: "{ref}", with: ref)
+  /// A bucket's address for an object, which is also its download href.
+  public static func bucketURL(oid: String, bucket: String = LFS.bucket) -> String {
+    "\(bucket)/resolve/sha256/\(oid)"
   }
 
-  public static func commitPatchURL(ref: String) -> String {
-    commitPatchURLTemplate.replacingOccurrences(of: "{ref}", with: ref)
-  }
-
-  public static func pullPatchURL(number: String) -> String {
-    pullPatchURLTemplate.replacingOccurrences(of: "{number}", with: number)
+  /// A HuggingFace bucket, comma's or another, rather than an LFS server.
+  static func isBucket(_ endpoint: String) -> Bool {
+    endpoint.contains("/buckets/")
   }
 
   static let log = Logger(subsystem: "io.zoompilot.jetlink", category: "registry")
 
-  // MARK: pointers
-
-  /// The oid and size in a git-lfs pointer's text, or nil if it is not one.
-  public static func parsePointer(_ text: String) -> Pointer? {
-    guard text.utf8.count <= pointerMax else { return nil }
-    var oid: String?
-    var size: Int64?
-    for line in pythonLines(text) {
-      let key: Substring
-      let value: Substring
-      if let space = line.firstIndex(of: " ") {
-        key = line[..<space]
-        value = line[line.index(after: space)...]
-      } else {
-        key = line[...]
-        value = ""
-      }
-      if key == "oid" {
-        let body = value.hasPrefix("sha256:") ? value.dropFirst("sha256:".count) : value
-        oid = String(body).trimmingCharacters(in: .whitespacesAndNewlines)
-      } else if key == "size" {
-        guard let parsed = JSON.parsePythonInt(String(value)) else { return nil }
-        size = parsed
-      }
-    }
-    guard let oid, CacheLayout.isSHA256(oid), let size, size > 0 else { return nil }
-    return Pointer(oid: oid, size: size)
-  }
-
-  /// The oid and size of the ONNX at a comma commit: in its tree, or for a
-  /// commit that ships a precompiled pkl instead, the ONNX it was built from.
-  /// Only a 404 falls back; an outage is an outage.
-  static func fetchPointer(ref: String, http: HTTP, timeout: TimeInterval = pointerTimeout) async throws(RegistryError) -> Pointer {
-    let body: Data
+  /// A bucket's address for the object, or nil when it does not have it or
+  /// cannot be reached: its first byte is asked for, as cheap as a HEAD. The
+  /// bucket answers with a redirect to wherever the bytes are, which
+  /// URLSession follows, here and in the download.
+  static func bucketHref(
+    _ bucket: String, pointer: Pointer, session: URLSession, timeout: TimeInterval = connectTimeout
+  ) async -> String? {
+    let url = bucketURL(oid: pointer.oid, bucket: bucket)
     do {
-      body = try await http.get(pointerURL(ref: ref), timeout: timeout, limit: pointerMax)
-    } catch  where error.kind == .notFound {
-      return try await fetchExportPointer(ref: ref, http: http, timeout: timeout)
+      _ = try await HTTP(session: session).get(url, timeout: timeout, limit: 1, headers: ["Range": "bytes=0-0"])
+    } catch {
+      log.warning("\(bucket, privacy: .public) has no \(pointer.oid.prefix(16), privacy: .public) (\(error.message, privacy: .public))")
+      return nil
     }
-    guard let pointer = parsePointer(String(decoding: body, as: UTF8.self)) else {
-      throw .registry("\(ref.prefix(10)) did not serve an lfs pointer")
-    }
-    return pointer
-  }
-
-  /// Every commit's subject in a patch, in order: one for a commit's, one per
-  /// commit for a pull request's.
-  static func patchSubjects(_ text: String) -> [String] {
-    let lines = pythonLines(text)
-    var subjects: [String] = []
-    for (i, line) in lines.enumerated() where line.hasPrefix("Subject:") {
-      var subject = [line.dropFirst("Subject:".count).trimmingCharacters(in: .whitespacesAndNewlines)]
-      // A long subject is folded onto indented lines; the headers end at a blank one.
-      for continuation in lines[(i + 1)...] {
-        guard let first = continuation.first, first.isWhitespace,
-          !continuation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { break }
-        subject.append(continuation.trimmingCharacters(in: .whitespacesAndNewlines))
-      }
-      subjects.append(stripPatchTag(subject.joined(separator: " ")))
-    }
-    return subjects
-  }
-
-  /// The big ONNX's pointer in a patch's diffs, the last one wins: the pointer a
-  /// diff gives the file, or for a diff that deletes it, the pointer it had. A
-  /// commit that swaps the ONNX for a pkl deletes the ONNX the pkl was built from.
-  public static func diffPointer(_ text: String) -> Pointer? {
-    var found: Pointer?
-    var section: [Substring]?
-    func close() {
-      guard let lines = section else { return }
-      let added = lines.filter { $0.hasPrefix("+") && !$0.hasPrefix("+++") }.map { $0.dropFirst() }
-      let removed = lines.filter { $0.hasPrefix("-") && !$0.hasPrefix("---") }.map { $0.dropFirst() }
-      found = parsePointer(added.joined(separator: "\n")) ?? parsePointer(removed.joined(separator: "\n")) ?? found
-    }
-    for line in pythonLines(text) {
-      // Each diff, and each commit of a pull request's patch, ends the one before.
-      if line.hasPrefix("diff --git ") || line.hasPrefix("From ") {
-        close()
-        section = isONNXDiff(line) ? [] : nil
-      } else {
-        section?.append(line)
-      }
-    }
-    close()
-    return found
-  }
-
-  /// `^diff --git a/\S*selfdrive/modeld/models/big_driving_supercombo\.onnx `:
-  /// the big ONNX's diff header, wherever the tree keeps selfdrive.
-  static func isONNXDiff(_ line: Substring) -> Bool {
-    guard line.hasPrefix("diff --git a/") else { return false }
-    let rest = line.dropFirst("diff --git a/".count)
-    let path = rest.prefix { !$0.isWhitespace }
-    return path.hasSuffix("selfdrive/modeld/models/" + bigONNX) && rest.dropFirst(path.count).first == " "
-  }
-
-  /// `re.search(r'\(#([0-9]+)\)$', subject)`: the pull request a squash merge's subject ends with.
-  static func pullNumber(in subject: String) -> String? {
-    guard subject.hasSuffix(")"), let open = subject.range(of: "(#", options: .backwards) else { return nil }
-    let digits = subject[open.upperBound..<subject.index(before: subject.endIndex)]
-    return !digits.isEmpty && digits.allSatisfy({ $0.isASCII && $0.isNumber }) ? String(digits) : nil
-  }
-
-  /// A comma commit's subject line, from the head of its patch.
-  static func commitSubject(ref: String, http: HTTP, timeout: TimeInterval = pointerTimeout) async throws(RegistryError) -> String {
-    let url = commitPatchURL(ref: ref)
-    let head = try await http.get(url, timeout: timeout, limit: pointerMax)
-    guard let subject = patchSubjects(String(decoding: head, as: UTF8.self)).first else {
-      throw .registry("\(url) has no subject line")
-    }
-    return subject
-  }
-
-  /// `re.sub(r'^\[PATCH[^\]]*\]\s*', '', subject)`.
-  static func stripPatchTag(_ subject: String) -> String {
-    guard subject.hasPrefix("[PATCH"), let close = subject.firstIndex(of: "]") else { return subject }
-    return String(subject[subject.index(after: close)...].drop { $0.isWhitespace })
-  }
-
-  /// The eight-character hex ids a subject names, the last mention first
-  /// (`_newest_first`): `\b[0-9a-f]{8}\b`, which is a whole word of exactly
-  /// eight lowercase hex digits.
-  static func exportIDsNewestFirst(in subject: String) -> [String] {
-    var ids: [String] = []
-    var word = ""
-    func close() {
-      if CacheLayout.isLowercaseHex(word, count: 8) { ids.append(word) }
-      word = ""
-    }
-    for character in subject {
-      if isWordCharacter(character) {
-        word.append(character)
-      } else {
-        close()
-      }
-    }
-    close()
-    var seen = Set<String>()
-    return ids.reversed().filter { seen.insert($0).inserted }
-  }
-
-  /// A character of a regex `\w` word.
-  static func isWordCharacter(_ character: Character) -> Bool {
-    character.isLetter || character.isNumber || character == "_"
-  }
-
-  /// A listing of comma's model repo, or of one folder of it, recursively.
-  static func tree(_ path: String, http: HTTP, timeout: TimeInterval) async throws(RegistryError) -> [JSONObject] {
-    var url = drivingModelsTreeURL
-    if !path.isEmpty {
-      url += "/\(pythonQuote(path))?recursive=true"
-    }
-    let listing = try await http.getJSON(url, timeout: timeout, shape: .array)
-    return (listing.array ?? []).compactMap { entry in
-      guard let object = entry.object, object["path"]?.string != nil else { return nil }
-      return object
-    }
-  }
-
-  /// `urllib.parse.quote(path)`: everything but letters, digits, `_.-~` and `/`.
-  static func pythonQuote(_ path: String) -> String {
-    var allowed = CharacterSet()
-    allowed.insert(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-~/")
-    return path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
-  }
-
-  /// The big ONNX a precompiled-pkl commit was built from. In turn: the export
-  /// its subject names, in comma's model repo; the pointer its own diff deletes;
-  /// and for a squash merge, the last pointer its pull request carried, or the
-  /// export one of that pull request's commits names.
-  ///
-  /// The newest export named wins: a pull request's commits are in order, and
-  /// one can name several exports before the one it ships (#39047). One that is
-  /// not in the model repo yet stops the search rather than falling back to an
-  /// older one, a different model.
-  static func fetchExportPointer(ref: String, http: HTTP, timeout: TimeInterval = pointerTimeout) async throws(RegistryError) -> Pointer {
-    let url = commitPatchURL(ref: ref)
-    let patch = String(decoding: try await http.get(url, timeout: timeout, limit: patchMax), as: UTF8.self)
-    guard let subject = patchSubjects(patch).first else {
-      throw .registry("\(url) has no subject line")
-    }
-    let short = ref.prefix(10)
-    let ids = exportIDsNewestFirst(in: subject)
-    let (found, missing) = try await exportPointer(ref: ref, ids: ids, subject: subject, http: http, timeout: timeout)
-    if let found { return found }
-    let first: String =
-      if let missing { "its subject \(notUploaded(missing))" } else if ids.isEmpty { "its subject names no export" } else {
-        "no folder in \(drivingModelsRepo) for \(ids.joined(separator: ", "))"
-      }
-    var tried = [first]
-    if let pointer = diffPointer(patch) {
-      log.info("\(short, privacy: .public) deletes \(bigONNX, privacy: .public) \(pointer.oid.prefix(16), privacy: .public)")
-      return pointer
-    }
-    tried.append("its diff has no \(bigONNX)")
-    if let number = pullNumber(in: subject) {
-      let pullPatch = String(decoding: try await http.get(pullPatchURL(number: number), timeout: timeout, limit: patchMax), as: UTF8.self)
-      if let pointer = diffPointer(pullPatch) {
-        let oid = pointer.oid.prefix(16)
-        log.info("\(short, privacy: .public) merged #\(number, privacy: .public), whose last \(bigONNX, privacy: .public) is \(oid, privacy: .public)")
-        return pointer
-      }
-      if missing == nil {  // an export the subject names and the repo lacks stops the search here too
-        let pullSubjects = patchSubjects(pullPatch).joined(separator: " ")
-        let pullIDs = exportIDsNewestFirst(in: pullSubjects).filter { !ids.contains($0) }
-        let (found, pullMissing) = try await exportPointer(ref: ref, ids: pullIDs, subject: pullSubjects, http: http, timeout: timeout)
-        if let found { return found }
-        tried.append(pullMissing.map { "pull request #\(number) \(notUploaded($0))" } ?? "nor does pull request #\(number)")
-      }
-    }
-    throw .registry("\(short) has no \(bigONNX): \(tried.joined(separator: "; ")) (\(JSON.pythonRepr(subject)))")
-  }
-
-  static func notUploaded(_ export: String) -> String {
-    "names export \(export), which is not in \(drivingModelsRepo) yet"
-  }
-
-  /// Does `subject` name `id` the way comma's model commits name an export:
-  /// the whole uuid, or its first eight and the checkpoint ('8d736683/12864')?
-  /// `\b{id}[-/]`. A bare eight could be any hex word.
-  static func namesExport(_ id: String, in subject: String) -> Bool {
-    var start = subject.startIndex
-    while let found = subject.range(of: id, range: start..<subject.endIndex) {
-      let before = found.lowerBound == subject.startIndex ? nil : subject[subject.index(before: found.lowerBound)]
-      let after = found.upperBound == subject.endIndex ? nil : subject[found.upperBound]
-      let boundary = before.map { !isWordCharacter($0) } ?? true
-      if boundary, after == "-" || after == "/" { return true }
-      start = subject.index(after: found.lowerBound)
-    }
-    return false
-  }
-
-  /// The ONNX in the first export folder one of `ids` starts, and nil; or nil
-  /// and the first id `subject` names as an export that has no folder, where
-  /// the search stops; or nil and nil when no id has a folder.
-  static func exportPointer(ref: String, ids: [String], subject: String, http: HTTP, timeout: TimeInterval) async throws(RegistryError) -> (Pointer?, String?) {
-    guard !ids.isEmpty else { return (nil, nil) }
-    let short = ref.prefix(10)
-    let folders = try await tree("", http: http, timeout: timeout)
-      .filter { $0["type"]?.string == "directory" }
-      .compactMap { $0["path"]?.string }
-    for export in ids {
-      let matches = folders.filter { $0.hasPrefix(export) }
-      if matches.isEmpty {
-        if namesExport(export, in: subject) { return (nil, export) }
-        continue
-      }
-      if matches.count > 1 {
-        throw .registry("\(short): \(export) starts \(matches.count) folders in \(drivingModelsRepo)")
-      }
-      var files = try await tree(matches[0], http: http, timeout: timeout).filter { entry in
-        guard entry["type"]?.string == "file", let path = entry["path"]?.string else { return false }
-        return lastComponent(path) == bigONNX
-      }
-      if files.count > 1 {
-        // A subject that names the checkpoint, as '1a421175-.../12864' does, picks one.
-        let named = files.filter { subject.contains(parentPath($0["path"]?.string ?? "")) }
-        if !named.isEmpty { files = named }
-      }
-      guard files.count == 1 else {
-        throw .registry("\(short): \(files.count) copies of \(bigONNX) under \(matches[0])")
-      }
-      let file = files[0]
-      let path = file["path"]?.string ?? ""
-      let lfs = file["lfs"]?.object
-      guard let oid = lfs?["oid"]?.string, CacheLayout.isSHA256(oid), let size = lfs?["size"]?.pythonIntValue, size > 0 else {
-        throw .registry("\(path) is not an lfs object")
-      }
-      log.info("\(short, privacy: .public) names export \(export, privacy: .public): \(path, privacy: .public)")
-      return (Pointer(oid: oid, size: size), nil)
-    }
-    return (nil, nil)
-  }
-
-  /// `path.rsplit('/', 1)[-1]`.
-  static func lastComponent(_ path: String) -> String {
-    guard let slash = path.lastIndex(of: "/") else { return path }
-    return String(path[path.index(after: slash)...])
-  }
-
-  /// `path.rsplit('/', 1)[0]`, which is the whole path when it has no slash.
-  static func parentPath(_ path: String) -> String {
-    guard let slash = path.lastIndex(of: "/") else { return path }
-    return String(path[..<slash])
-  }
-
-  /// `str.splitlines()`: every line break Python knows, the break dropped.
-  static func pythonLines(_ text: String) -> [Substring] {
-    let breaks: Set<Character> = ["\n", "\r", "\r\n", "\u{0B}", "\u{0C}", "\u{1C}", "\u{1D}", "\u{1E}", "\u{85}", "\u{2028}", "\u{2029}"]
-    var lines = text.split(omittingEmptySubsequences: false) { breaks.contains($0) }
-    // A trailing break ends the last line rather than starting an empty one.
-    if let last = lines.last, last.isEmpty, let final = text.last, breaks.contains(final) {
-      lines.removeLast()
-    }
-    if text.isEmpty { return [] }
-    return lines
+    return url
   }
 
   // MARK: the batch API
 
   /// Asks one LFS server for a download href, or nil if it does not have it.
+  /// A HuggingFace bucket, comma's (`bucket`) or another, is asked for the
+  /// object itself.
   ///
   /// A server that is down is not different from a server that lacks the
   /// object: either way the caller moves to the next one, so nothing throws.
   static func resolve(endpoint: String, pointer: Pointer, session: URLSession, timeout: TimeInterval = connectTimeout) async -> String? {
+    if isBucket(endpoint) {
+      return await bucketHref(endpoint, pointer: pointer, session: session, timeout: timeout)
+    }
     guard let url = URL(string: "\(endpoint)/objects/batch") else { return nil }
     let body: JSON = [
       "operation": "download",

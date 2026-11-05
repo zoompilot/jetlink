@@ -26,8 +26,6 @@ func sha256Hex(_ data: Data) -> String {
   SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
-func catalogURL(_ version: Int) -> String { Catalog.url(version: version) }
-
 func makeSpec(_ sha256: String) -> JSON {
   [
     "sha256": .string(sha256), "nbytes": 1234, "frame_skip": 4, "checkpoint": "b9facbcc",

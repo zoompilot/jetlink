@@ -178,16 +178,14 @@ struct InventoryTests {
     #expect(models.first?.name == nil && models.first?.ref == nil)
   }
 
-  @Test func aDownloadedModelIsNamedFromTheCatalog() async throws {
+  @Test func aDownloadedModelIsNamedFromTheIndex() async throws {
     let tmp = try TemporaryDirectory()
-    let net = MockNet(RegistryFixture.catalogRoutes([LFS.pointerURL(ref: RegistryFixture.ref): .body(RegistryFixture.data("pointer_f877d7a0.txt"))]))
-    let registry = Registry(layout: tmp.layout, session: net.session)
+    let registry = Registry(layout: tmp.layout, session: MockNet(RegistryFixture.indexRoutes()).session)
     _ = await registry.catalog()
-    _ = try await registry.resolve(ref: RegistryFixture.ref)
     try Data("x".utf8).write(to: registry.modelPath(sha256: RegistryFixture.oid))
     let model = registry.inventory(artifactTag: nil, artifactSuffix: ".ortcache", loaded: nil).models.first
     #expect(model?.sha256 == RegistryFixture.oid)
-    #expect(model?.name == "BMRLNAP Model v4 (August 30, 2026)")
+    #expect(model?.name == RegistryFixture.name)
     #expect(model?.ref == RegistryFixture.ref)
   }
 

@@ -37,8 +37,8 @@ import re
 import time
 from pathlib import Path
 
-from jetlink.registry.index import (DEFAULT_BIG_MODEL_NAME, DEFAULT_BIG_MODEL_REF, ModelIndex, RegistryError, is_ref, is_sha256,
-                                    parse_index)
+from jetlink.registry.index import (DEFAULT_BIG_MODEL_NAME, DEFAULT_BIG_MODEL_REF, ModelIndex, NetworkError, Pointer, RegistryError,
+                                    is_ref, is_sha256, parse_index)
 
 # the build date a catalog name ends in, " (September 17, 2026)"; any other parenthesis stays
 _TRAILING_DATE = re.compile(r' \([A-Za-z]+ \d{1,2}, \d{4}\)$')
@@ -54,9 +54,6 @@ INDEX_MISS_RETRY = 60.0
 # on from the .part the last left, so a stall costs the wait, not the bytes
 # (lfs.lfs_download)
 DOWNLOAD_RETRY_DELAYS = (5.0, 15.0, 30.0, 60.0, 120.0)
-# what the model manager's parser needs of a bundle and an accelerator has no
-# use for: the Jetson runs the ONNX, never a chestnut's build of it
-BUNDLE_CONSTANTS = {'is_big': True, 'is_20hz': True, 'generation': '0', 'environment': 'release', 'runner': 'tinygrad', 'models': []}
 # server_pick() before this process has heard a hello
 _UNHEARD = object()
 # heard() told nothing of the hello's own pick: an older caller
@@ -82,9 +79,8 @@ def _dated(pick) -> dict | None:
 class Models:
   def __init__(self, op):
     self.op = op
-    # (looked at, the file's (mtime, size), the index it held)
-    self._index_cache: tuple[float, tuple | None, ModelIndex | None] | None = None
-    self._rows_cache: tuple[ModelIndex | None, list[dict]] | None = None
+    # (looked at, the file's (mtime, size), the index it held and its rows)
+    self._index_cache: tuple[float, tuple | None, ModelIndex | None, list[dict]] | None = None
     self._refresh_after = 0.0
     self._slot_cache: tuple[float, dict | None, float | None] | None = None
     # SLOT_STATE as this process last read or wrote it
@@ -103,46 +99,54 @@ class Models:
     """The comma's copy of the model index, None before the first fetch.
     Looked at once per INDEX_TTL and parsed again only when the file
     changed. Never raises."""
+    return self._read_index()[0]
+
+  def model_index(self) -> list[dict]:
+    """Every model the index lists, {name, ref, oid, size}, in its order. No network."""
+    return self._read_index()[1]
+
+  def _read_index(self) -> tuple[ModelIndex | None, list[dict]]:
     now = time.monotonic()
     cache = self._index_cache
     if cache is not None and now - cache[0] < INDEX_TTL:
-      return cache[2]
+      return cache[2], cache[3]
     path = self.index_path()
     try:
       st = path.stat()
       seen = (st.st_mtime_ns, st.st_size)
     except OSError:
       seen = None
-    index = cache[2] if cache is not None and cache[1] == seen else None
-    if index is None and seen is not None:
-      try:
-        index = parse_index(json.loads(path.read_text()))
-      except (OSError, ValueError, RegistryError):
-        self.op.log.exception("jetlink: the comma's model index does not parse")
-    self._index_cache = (now, seen, index)
-    return index
+    if cache is not None and cache[1] == seen:
+      # the same file, parsed or not: a copy that does not parse is told of once
+      index = cache[2]
+    else:
+      index = None
+      if seen is not None:
+        try:
+          index = parse_index(json.loads(path.read_text()))
+        except (OSError, ValueError, RegistryError):
+          self.op.log.exception("jetlink: the comma's model index does not parse")
+    self._keep_index(now, seen, index)
+    return self._index_cache[2], self._index_cache[3]
+
+  def _keep_index(self, now: float, seen: tuple | None, index: ModelIndex | None) -> None:
+    rows = self._index_cache[3] if self._index_cache is not None and self._index_cache[2] is index else \
+      [{'name': m.name, 'ref': m.ref, 'oid': m.oid, 'size': m.size} for m in index.models] if index else []
+    self._index_cache = (now, seen, index, rows)
 
   def refresh_index(self) -> ModelIndex:
-    """The model index, fetched and kept as the comma's copy. Raises a
+    """The model index, fetched and kept as the comma's copy, which is left
+    alone when nothing changed so no reader parses it again. Raises a
     RegistryError for one that cannot be had or used, and keeps the copy."""
+    from jetlink.comma import gadget
     from jetlink.registry.index import fetch_index
     data, index = fetch_index()
     path = self.index_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix('.tmp')
-    tmp.write_text(json.dumps(data))
-    os.replace(tmp, path)
-    self._index_cache = None
+    if gadget.read_record(path) != data:
+      gadget.write_record(path, data)
+    st = path.stat()
+    self._keep_index(time.monotonic(), (st.st_mtime_ns, st.st_size), index)
     return index
-
-  def model_index(self) -> list[dict]:
-    """Every model the index lists, {name, ref, oid, size, folder}, in its
-    order. No network."""
-    index = self.index()
-    if self._rows_cache is None or self._rows_cache[0] is not index:
-      rows = [{'name': m.name, 'ref': m.ref, 'oid': m.oid, 'size': m.size, 'folder': m.folder} for m in index.models] if index else []
-      self._rows_cache = (index, rows)
-    return self._rows_cache[1]
 
   def _row(self, name: str, ref: str | None, sha256: str | None = None) -> dict:
     """A model as a row: its ONNX by its ref, from the index, else by its hash
@@ -157,15 +161,17 @@ class Models:
     """A pick's oid and size, from the index; one the comma's copy does not
     know fetches it again, at most once per INDEX_MISS_RETRY. Raises a
     RegistryError for a model the index does not know, or no index at all."""
-    for retry in (False, True):
-      row = self._row('', ref, sha256)
-      if row['oid'] and row['size']:
-        return row['oid'], int(row['size'])
-      if retry or time.monotonic() < self._refresh_after:
-        break
+    if (found := self._identity(ref, sha256)) is None and time.monotonic() >= self._refresh_after:
       self._refresh_after = time.monotonic() + INDEX_MISS_RETRY
       self.refresh_index()
-    raise RegistryError(f"the model index does not know {(ref or sha256 or 'the model')[:16]}")
+      found = self._identity(ref, sha256)
+    if found is None:
+      raise RegistryError(f"the model index does not know {(ref or sha256 or 'the model')[:16]}")
+    return found
+
+  def _identity(self, ref: str | None, sha256: str | None) -> tuple[str, int] | None:
+    row = self._row('', ref, sha256)
+    return (row['oid'], int(row['size'])) if row['oid'] and row['size'] else None
 
   def selected_slot(self) -> dict | None:
     """The big-model slot's pick as {name, ref, sha256}, from the raw param
@@ -218,11 +224,9 @@ class Models:
       return
     state = {'last': last, 'cleared_at': time.time() if last is None else None}
     self._slot_state = state
+    from jetlink.comma import gadget
     try:
-      path.parent.mkdir(parents=True, exist_ok=True)
-      tmp = path.with_suffix('.tmp')
-      tmp.write_text(json.dumps(state))
-      os.replace(tmp, path)
+      gadget.write_record(path, state)
     except OSError:
       self.op.log.exception("jetlink: could not keep the big-model slot's state")
 
@@ -235,14 +239,14 @@ class Models:
     return float(at) if isinstance(at, (int, float)) else None
 
   def default_model(self) -> dict | None:
-    """What runs with no pick: jetlink's default big model, else the first
-    the index lists. Not the chestnut's default, which is the model in the
-    tree. Before the comma has an index, the default by its ref, which a
-    provisioning run resolves by fetching one."""
-    if self.index() is None:
+    """What runs with no pick: the index's default, else the first it lists.
+    Not the chestnut's default, which is the model in the tree. Before the
+    comma has an index, jetlink's own by its ref, which a provisioning run
+    resolves by fetching one."""
+    if (index := self.index()) is None:
       return self._row(DEFAULT_BIG_MODEL_NAME, DEFAULT_BIG_MODEL_REF)
     models = self.model_index()
-    return next((m for m in models if m['ref'] == DEFAULT_BIG_MODEL_REF), models[0] if models else None)
+    return next((m for m in models if m['ref'] == index.default), models[0] if models else None)
 
   def default_model_name(self) -> str | None:
     """default_model()'s name without the catalog's trailing build date, the
@@ -253,8 +257,8 @@ class Models:
 
   def selected_model(self) -> dict | None:
     """The model picked last, here or on the server: the slot's pick, listed
-    in the catalog or not (a ref is enough to find its pointer), unless the
-    server's last hello named a newer one. With neither, default_model()."""
+    or not (the index knows every ref it ever saw), unless the server's last
+    hello named a newer one. With neither, default_model()."""
     if (theirs := self._newer_server_pick()) is not None:
       return self._server_row(theirs)
     if (own := self.selected_slot()) is not None:
@@ -295,7 +299,7 @@ class Models:
 
   def hello_pick(self) -> dict | None:
     """Our own pick, for the hello: {ref, sha256, nbytes, name, age_s, at},
-    the pointer where it is resolved already (no network here), `at` when it
+    its oid and size where the index knows them (no network here), `at` when it
     was made by this clock. None with nothing picked here, or no date for it:
     the server's pick, if any, stands."""
     row, at = self._own()
@@ -455,8 +459,6 @@ class Models:
     the run for the next one. Each attempt asks the LFS server again:
     the address it hands out expires. `retrying(error, delay)` hears of each
     wait; a run that is stopped stops waiting."""
-    from jetlink.registry.index import NetworkError
-    from jetlink.registry.lfs import Pointer
     model = self.selected_model()
     if model is None or not model['oid']:
       return None
@@ -480,22 +482,18 @@ class Models:
           time.sleep(min(1.0, end - time.monotonic()))
 
   def _fetch_once(self, pointer, dest: Path, progress, should_stop) -> Path:
-    from jetlink.registry.index import NetworkError
     from jetlink.registry.lfs import lfs_download, lfs_hrefs
     for endpoint, href in lfs_hrefs(self.lfs_endpoints(), pointer):
       self.op.log.warning("jetlink: fetching the large model (%d MB) from %s", pointer.size >> 20, endpoint)
       return lfs_download(href, pointer, dest, progress=progress, should_stop=should_stop)
     raise NetworkError(f"no LFS server has {pointer.oid[:16]}")
 
-  def _row_for(self, oid: str) -> dict | None:
-    """The listed model with this oid."""
-    return next((m for m in self.model_index() if m['oid'] == oid), None)
-
   def name_for(self, oid: str) -> str:
     """The index's name for the model with this oid, or the oid's first 16
     characters when it lists none."""
-    row = self._row_for(oid)
-    return row['name'] if row is not None else oid[:16]
+    index = self.index()
+    listed = index.by_oid.get(oid) if index is not None else None
+    return listed.name if listed is not None else oid[:16]
 
   def size_for(self, oid: str) -> int | None:
     """The byte count of the ONNX with this oid, as the index knows it."""
@@ -516,15 +514,17 @@ class Models:
   def big_catalog(self) -> dict:
     """The index's models as a catalog in sunnypilot's shape, for the model
     manager's big-model list when no chestnut is fitted: what the comma lists
-    is then what the Jetson runs, each in the index's folder and order. No
-    artifacts: a chestnut has nothing to download, and an accelerator runs
-    the ONNX. The index is fetched again; raises a RegistryError when it
-    cannot be, so the model manager keeps the list it has."""
+    is then what the Jetson runs, each with the index's fields, in its folder
+    and order. Only the selector is the fork's, and no artifacts: a chestnut
+    has nothing to download, and an accelerator runs the ONNX. The index is
+    fetched again; raises a RegistryError when it cannot be, so the model
+    manager keeps the list it has."""
     models = self.refresh_index().models
     selector = str(self.op.catalog_selector)
-    return {'bundles': [{**BUNDLE_CONSTANTS, 'ref': m.ref, 'display_name': m.name, 'short_name': m.short_name or _short_name(m),
-                         'index': len(models) - i, 'minimum_selector_version': selector, 'build_time': m.build_time,
-                         'overrides': {'folder': m.folder}} for i, m in enumerate(models)]}
+    return {'bundles': [{'ref': m.ref, 'display_name': m.name, 'short_name': m.short_name or m.ref[:7], 'index': len(models) - i,
+                         'is_big': True, 'is_20hz': m.is_20hz, 'generation': m.generation, 'environment': m.environment,
+                         'runner': m.runner, 'minimum_selector_version': selector, 'build_time': m.build_time,
+                         'overrides': {'folder': m.folder}, 'models': []} for i, m in enumerate(models)]}
 
   def listed_ref(self, ref: str) -> str | None:
     """The ref the index lists a model under: its own, or the newest one with
@@ -534,7 +534,3 @@ class Models:
     listed = index.listed(ref) if index is not None and is_ref(ref) else None
     return listed.ref if listed is not None else None
 
-
-def _short_name(model) -> str:
-  """A short name for a model the index has none for: a pull request's number."""
-  return f"#{model.pr}" if model.pr else model.ref[:7]

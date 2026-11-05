@@ -7,27 +7,29 @@ model before a drive, start with [model management](models.md).
 ## Model identifiers and storage
 
 - A **ref** is a 40-character commit hash from comma's openpilot repository. It
-  names a model in sunnypilot's big-model catalog, the list under
-  **Settings > Models > Big Model** on the comma.
+  names a big model, as listed under **Settings > Models > Big Model** on the
+  comma.
 - A **SHA-256** is the 64-character hash of the ONNX file. One ref resolves to
   exactly one SHA-256, and that never changes.
-- The catalog updates on its own, so new models appear without a Jetlink update.
-- Jetlink adds the models in [`catalog/extra_big_models.json`](../catalog/README.md),
-  such as previews sunnypilot does not list yet. A comma with a chestnut does not
-  show them.
-- From Cinque Terre V3 on, the ONNX comes from comma's model repo on Hugging
-  Face (`commaai/openpilot_driving_models`). When a commit or its pull request
-  names several exports, the newest one wins; if that one isn't on Hugging Face
-  yet, the lookup fails rather than use an older model. A commit that names no
-  model there resolves to the ONNX its own diff, or its pull request's, last had.
-- Jetlink's list can pin a commit to an ONNX, overriding the lookup; see
-  [`catalog/README.md`](../catalog/README.md#pinned-models).
+- Both come from the **model index**,
+  [zoompilot/jetlink-model-index](https://github.com/zoompilot/jetlink-model-index),
+  which works out every big model's ONNX once an hour and publishes
+  `index/v1.json`: the models to list, in order and by folder, and the ONNX
+  and size of every ref it has seen, so an old pick still resolves. New models
+  appear without a Jetlink update. The server keeps the last index that parsed
+  and works offline with it; one it cannot use (another schema, or nothing
+  listed) is refused and the previous one kept.
+- A ref the kept index does not know, or a SHA-256 it cannot size, fetches the
+  index again once before the command gives up.
+- The ONNX itself comes from comma's LFS servers, asked in turn: comma's
+  Hugging Face bucket by SHA-256, then the GitLab and Hugging Face LFS
+  servers, then comma's model repo (`commaai/openpilot_driving_models`).
 
 | Path | What is in it |
 | --- | --- |
 | `<cache>/models/` | The downloaded ONNX files, about 766 MB each |
 | `<cache>/engines/` | The prepared engines and their sidecar files, one per backend and device |
-| `<cache>/registry/` | The cached catalog, the resolved pointers, and records of models you imported |
+| `<cache>/registry/` | `index.json`, the last model index that parsed, and `local-models.json`, records of models you imported |
 
 Default cache folders: [model management](models.md#downloads-prepared-engines-and-disk-space).
 `--cache DIR` overrides it on every command.
@@ -48,15 +50,14 @@ jetlink models prepare   REF_OR_SHA256 [--backend auto|trt|ort] [--device D]
   each takes `--cache DIR`. `jetlink models prepare` passes a PC's
   `--tensorrt-libs` itself; `jetlink-server models prepare` on a PC needs it
   ([the server command](installation-reference.md#the-server-command)).
-- `REF_OR_SHA256` is a ref, or the SHA-256 of a model whose ref was resolved
-  on this machine before.
+- `REF_OR_SHA256` is a ref, or the SHA-256 of a model the model index knows.
 - Output a script reads goes to standard output; progress and warnings go to
   standard error.
 
 | Command | Does |
 | --- | --- |
-| `list` | The catalog, newest first, with each model's size and state (`downloaded`, `prepared`). Uses the cached catalog if under an hour old; `--refresh` fetches a new one. The table shortens refs; `--json` prints the full catalog: the [control protocol](control-protocol.md)'s `catalog` event fields. |
-| `resolve` | Prints a ref's SHA-256 and size in bytes. Cached, so later lookups need no network. |
+| `list` | The models the index lists, in its order, with each model's size and state (`downloaded`, `prepared`). Uses the kept index if under an hour old; `--refresh` fetches it again. The table shortens refs; `--json` prints the [control protocol](control-protocol.md)'s `catalog` event fields, each model's `folder` included. |
+| `resolve` | Prints the SHA-256 and size in bytes the index gives a ref, listed or not. A lookup in the kept index, so it needs no network. |
 | `fetch` | Downloads the ONNX to a `.part` file, checks size and hash, renames it into place, and prints its path. An interrupted download starts over. |
 | `import` | Hashes and copies an ONNX file you already have into `<cache>/models/`, records its name, and prints the SHA-256 and path. |
 | `inventory` | Downloaded models, prepared engines with backend and device, and disk use. `*` marks the engine a server started here would load. `--json` prints the `inventory` event fields. |
