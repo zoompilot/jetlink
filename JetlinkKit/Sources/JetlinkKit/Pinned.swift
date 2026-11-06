@@ -7,7 +7,7 @@
 /// tested against these, and the Python tests that this file is current.
 public enum Pinned {
   /// jetlink.__version__
-  public static let productVersion: String = "0.8.13"
+  public static let productVersion: String = "0.9.0"
   /// jetlink.protocol.MAGIC
   public static let magic: UInt32 = 0x4B4E_4C4A
   /// jetlink.protocol.VERSION

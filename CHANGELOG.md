@@ -2,12 +2,12 @@
 Jetlink v0.9.0
 ==============
 **Models**
-* The big-model list is jetlink-model-index's: every big model comma has published, each ONNX listed once in sunnypilot's folders, and open comma pull requests in their own folder. It is checked every hour, so a new model shows up without a release, and a model sunnypilot rebuilt keeps its pick. The comma and the Jetson each keep the last list they fetched, so either one can pick offline. **Update the Jetson and the comma.**
-* The default big model is the index's too, so it can change without a release.
-* The Jetson and the comma download from comma's new HuggingFace storage first.
+* Jetlink now has its own model index, checked every hour for new comma models.
+* comma keeps changing how it ships models, so some new models needed a Jetlink update. They no longer do.
+* Update the Jetlink app and the comma, in any order.
 
 **Forks**
-* API 4; API 3 adapters keep working until the next minor release. New: `lists_big_models()`, `big_catalog()` (the index as a catalog in sunnypilot's shape, or None offline) and `listed_ref(ref)`, which replace `should_extend_catalog()` and `extend_catalog()`. `Keys.pointers` (the `JetlinkModelPointers` param) is no longer read and can go from params_keys.h. Removed: `catalog/extra_big_models.json` and the comma's own lookups of a commit's ONNX; the comma keeps the index as `index.json` in its model directory.
+* API 4, with API 3 still accepted for one more minor release. See [porting](https://github.com/zoompilot/jetlink/blob/main/docs/porting.md#the-adapter-module) for the new model-list hooks.
 
 Jetlink v0.8.13
 ===============
