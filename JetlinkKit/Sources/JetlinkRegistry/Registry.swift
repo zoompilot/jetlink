@@ -136,6 +136,7 @@ public final class Registry: Sendable {
     var fetchedAt = Date().timeIntervalSince1970
     do {
       try body.write(to: layout.indexURL, options: .atomic)
+      layout.formerRegistryFiles.forEach(Files.removeItem)
       if let status = Files.status(layout.indexURL) {
         fetchedAt = status.modified
         kept.withLock { $0 = ([status.modified, Double(status.size)], index) }

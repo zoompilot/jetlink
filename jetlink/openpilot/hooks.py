@@ -160,9 +160,9 @@ class _Hooks:
   def lists_big_models(self) -> bool:
     return self._call('lists_big_models', False)
 
-  def big_catalog(self) -> dict | None:
+  def big_catalog(self, selector: int) -> dict | None:
     """None with the link off or on any failure: the model manager keeps its list."""
-    return self._call('big_catalog', None)
+    return self._call('big_catalog', None, selector)
 
   def listed_ref(self, ref: str) -> str | None:
     return self._call('listed_ref', None, ref)

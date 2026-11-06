@@ -26,7 +26,6 @@ from tests.openpilot import fakes
 READERS = {
   'keys': None,
   'log': None,
-  'catalog_selector': None,
   'params_dir': '() -> Path',
   'get': '(key: str) -> Any',
   'chestnut_present': '() -> bool',
@@ -126,7 +125,6 @@ class TestConformance(unittest.TestCase):
     class Reader:
       keys = fakes.KEYS
       log = fakes.RecordingLog()
-      catalog_selector = 0
 
       def params_dir(self): ...
       def get(self, key): ...
@@ -154,8 +152,8 @@ class TestConformance(unittest.TestCase):
       'model_warp(small, cam_w, cam_h, geometry): expected model_warp(small, cam_w, cam_h, model_w, model_h)'])
 
   def test_a_missing_member_is_named(self):
-    del self.op.catalog_selector
-    self.assertEqual(jo.conformance(self.op, jo.Openpilot), ['catalog_selector: missing'])
+    del self.op.log
+    self.assertEqual(jo.conformance(self.op, jo.Openpilot), ['log: missing'])
 
   def test_other_parameters_are_named(self):
     self.op.put = lambda key, value: None   # no block

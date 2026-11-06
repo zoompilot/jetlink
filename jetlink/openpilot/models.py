@@ -511,19 +511,19 @@ class Models:
 
   # -- the model manager's catalog --------------------------------------------
 
-  def big_catalog(self) -> dict:
+  def big_catalog(self, selector: int) -> dict:
     """The index's models as a catalog in sunnypilot's shape, for the model
     manager's big-model list when no chestnut is fitted: what the comma lists
     is then what the Jetson runs, each with the index's fields, in its folder
-    and order. Only the selector is the fork's, and no artifacts: a chestnut
+    and order. Only `selector` is the fork's (its model manager's
+    REQUIRED_JSON_VERSION, which it parses), and no artifacts: a chestnut
     has nothing to download, and an accelerator runs the ONNX. The index is
     fetched again; raises a RegistryError when it cannot be, so the model
     manager keeps the list it has."""
     models = self.refresh_index().models
-    selector = str(self.op.catalog_selector)
     return {'bundles': [{'ref': m.ref, 'display_name': m.name, 'short_name': m.short_name or m.ref[:7], 'index': len(models) - i,
                          'is_big': True, 'is_20hz': m.is_20hz, 'generation': m.generation, 'environment': m.environment,
-                         'runner': m.runner, 'minimum_selector_version': selector, 'build_time': m.build_time,
+                         'runner': m.runner, 'minimum_selector_version': str(selector), 'build_time': m.build_time,
                          'overrides': {'folder': m.folder}, 'models': []} for i, m in enumerate(models)]}
 
   def listed_ref(self, ref: str) -> str | None:

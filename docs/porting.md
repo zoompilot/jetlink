@@ -151,10 +151,10 @@ class _NoJetlink:
 ```
 
 A fork with sunnypilot's model manager also sets `KEYS.big_model` and
-`KEYS.catalog` (the model library and the user's choice) and
-`CATALOG_SELECTOR`. Where it fetches the big-model library it asks
-`lists_big_models()`, and when that is true (no chestnut fitted) takes
-`big_catalog()`, the model index as a catalog in sunnypilot's shape, in place
+`KEYS.catalog` (the model library and the user's choice). Where it fetches the
+big-model library it asks `lists_big_models()`, and when that is true (no
+chestnut fitted) takes `big_catalog(selector)`, with `selector` its
+`REQUIRED_JSON_VERSION`: the model index as a catalog in sunnypilot's shape, in place
 of sunnypilot's own; `None` is a fetch that failed, and it keeps the list it
 has. A pick a new list no longer names carries over to `listed_ref(ref)`, the
 ref the list names the same ONNX under. Without them Jetlink runs the model

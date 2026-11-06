@@ -107,6 +107,15 @@ struct IndexPayloadTests {
     #expect(abs(Date().timeIntervalSince1970 - fetchedAt) < 60, "the file's mtime is when it was fetched")
   }
 
+  @Test func theFilesOfAServerBeforeTheIndexGoOnceOneIsKept() async throws {
+    let tmp = try TemporaryDirectory()
+    try FileManager.default.createDirectory(at: tmp.layout.registry, withIntermediateDirectories: true)
+    for url in tmp.layout.formerRegistryFiles { try Data("{}".utf8).write(to: url) }
+    try Data("[]".utf8).write(to: tmp.layout.localModelsURL)
+    _ = await Registry(layout: tmp.layout, session: MockNet(RegistryFixture.indexRoutes()).session).catalog()
+    #expect(tmp.names("registry") == ["index.json", "local-models.json"], "imports stay")
+  }
+
   @Test func aFailedRefreshKeepsThePreviousIndex() async throws {
     let tmp = try TemporaryDirectory()
     _ = await Registry(layout: tmp.layout, session: MockNet(RegistryFixture.indexRoutes()).session).catalog()

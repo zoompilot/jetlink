@@ -65,12 +65,11 @@ FACE = ModelFace(parser=FakeParser, frame_size=frame_size, desire_len=8,
 class FakeOpenpilot:
   """Every side of the interface, over a temporary directory."""
 
-  def __init__(self, root: Path | None = None, *, camera=TICI, chestnut: bool = False, catalog_selector: int = 19,
+  def __init__(self, root: Path | None = None, *, camera=TICI, chestnut: bool = False,
                keys: Keys = KEYS):
     self.root = Path(root if root is not None else tempfile.mkdtemp())
     self.keys = keys
     self.log = RecordingLog()
-    self.catalog_selector = catalog_selector
     self.basedir = self.root / 'openpilot'
     self.basedir.mkdir(parents=True, exist_ok=True)
     # the params store, laid out as openpilot's under <root>/params

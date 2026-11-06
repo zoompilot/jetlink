@@ -98,7 +98,6 @@ class StatusSide(Protocol):
   """Every reader: manager, the UI, hardwared, the model manager."""
   keys: Keys
   log: Any                  # logging.Logger-like (cloudlog): debug, info, warning, error, exception
-  catalog_selector: int     # the model manager's REQUIRED_JSON_VERSION; 0 without a model manager
 
   def params_dir(self) -> Path:
     """The params store's directory, by params.cc's rule, worked out on every

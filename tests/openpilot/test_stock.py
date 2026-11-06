@@ -198,13 +198,11 @@ class TestShape(StockTest):
     assert (keys.link, keys.offroad, keys.progress, keys.spec, keys.charge_phone) == \
       ('JetlinkLink', 'IsOffroad', 'JetlinkProgress', 'JetlinkSpec', 'JetlinkChargePhone')
     assert keys.big_model is None and keys.catalog is None and keys.pointers is None
-    assert self.op.catalog_selector == 0
 
   def test_a_subclass_overrides_the_data(self):
     class Fork(Stock):
       KEYS = fakes.KEYS
-      CATALOG_SELECTOR = 19
-    assert Fork().keys is fakes.KEYS and Fork().catalog_selector == 19
+    assert Fork().keys is fakes.KEYS
 
   def test_the_chestnut_ids_are_the_running_and_rom_ones(self):
     assert Stock.CHESTNUT_IDS == fakes.CHESTNUT_IDS
@@ -500,7 +498,7 @@ def _upstream(name: str):
 def test_the_upstream_checker_reads_stocks_literals():
   # what check_paths holds the tree to is what Stock holds
   values = _upstream('check_paths').stock_values()
-  for name in ('CHESTNUT_IDS', 'IN_CONTROL_SERVICES', 'WARP_DIR', 'WARP_NAME', 'CATALOG_SELECTOR'):
+  for name in ('CHESTNUT_IDS', 'IN_CONTROL_SERVICES', 'WARP_DIR', 'WARP_NAME'):
     assert values[name] == getattr(Stock, name), name
   assert values['KEYS']['offroad'] == Stock.KEYS.offroad
   assert values['_ENGAGED'] == stock._ENGAGED

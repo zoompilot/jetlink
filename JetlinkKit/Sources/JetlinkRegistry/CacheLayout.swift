@@ -28,6 +28,9 @@ public struct CacheLayout: Sendable, Equatable {
   /// The last model index that parsed, as it was served.
   public var indexURL: URL { registry.appending(path: "index.json") }
   public var localModelsURL: URL { registry.appending(path: "local-models.json") }
+  /// What a server before the model index kept in `registry/`, which nothing
+  /// reads now: removed once the first index is kept.
+  public var formerRegistryFiles: [URL] { ["catalog.json", "pointers.json"].map { registry.appending(path: $0) } }
 
   /// Beside the caches rather than in them: it describes the server, not an
   /// artifact.

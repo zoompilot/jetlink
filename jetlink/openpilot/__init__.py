@@ -308,13 +308,14 @@ class Jetlink:
     setting: the model manager drops a pick its catalog does not list."""
     return not self._parts.chestnut_fitted()
 
-  def big_catalog(self) -> dict | None:
-    """The model index as the model manager's big-model catalog, fetched
-    again (Models.big_catalog). None when it cannot be had, offline say, and
-    the model manager keeps the list it has."""
+  def big_catalog(self, selector: int) -> dict | None:
+    """The model index as the model manager's big-model catalog, every bundle
+    at `selector` (its REQUIRED_JSON_VERSION), fetched again
+    (Models.big_catalog). None when it cannot be had, offline say, and the
+    model manager keeps the list it has."""
     from jetlink.registry.index import RegistryError
     try:
-      return self._parts.models.big_catalog()
+      return self._parts.models.big_catalog(selector)
     except RegistryError as e:
       self._log.warning("jetlink: could not fetch the model index: %s", e)
       return None

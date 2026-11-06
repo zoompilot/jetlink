@@ -723,7 +723,7 @@ class TestBigCatalog(ModelsTest):
     listed = entry(REF_B, 'Beta (October 29, 2026)', '2' * 64, 20, folder='2026 Deep RL Models', short_name='B',
                    build_time='2026-10-29T00:00:00Z', is_20hz=True, generation='13', environment='development', runner='tinygrad')
     with self.fetched(listed, ALPHA, self.PR):
-      out = self.jl.big_catalog()
+      out = self.jl.big_catalog(19)
     self.assertEqual([(b['ref'], b['index'], b['overrides']['folder']) for b in out['bundles']],
                      [(REF_B, 3, '2026 Deep RL Models'), (REF_A, 2, 'Master Models'), (REF_C, 1, 'comma Pull Requests')])
     first = out['bundles'][0]
@@ -740,19 +740,18 @@ class TestBigCatalog(ModelsTest):
     self.assertEqual({k: out['bundles'][1][k] for k in ('generation', 'environment', 'runner')}, RUNTIME)
 
   def test_the_selector_is_the_adapters(self):
-    self.op.catalog_selector = 21
     with self.fetched(ALPHA):
-      self.assertEqual(self.jl.big_catalog()['bundles'][0]['minimum_selector_version'], '21')
+      self.assertEqual(self.jl.big_catalog(21)['bundles'][0]['minimum_selector_version'], '21')
 
   def test_the_index_it_lists_is_the_one_the_comma_keeps(self):
     with self.fetched(ALPHA, BETA):
-      self.jl.big_catalog()
+      self.jl.big_catalog(19)
     self.assertEqual([m['ref'] for m in self.models.model_index()], [REF_A, REF_B])
 
   def test_a_failed_fetch_is_none_and_keeps_the_copy(self):
     self.index(ALPHA)
     with mock.patch('jetlink.registry.index.fetch_index', side_effect=NetworkError('offline')):
-      self.assertIsNone(self.jl.big_catalog())
+      self.assertIsNone(self.jl.big_catalog(19))
     self.assertEqual([m['ref'] for m in self.models.model_index()], [REF_A])
     self.assertTrue(self.op.log.has('could not fetch the model index: offline', 'warning'))
     self.assertEqual(self.op.log.lines('exception'), [])

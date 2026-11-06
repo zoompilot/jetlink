@@ -44,7 +44,7 @@ JETLINK = {
   'shutdown_pending': '()',
   'shutdown_step': "(should_shutdown, reason='')",
   'lists_big_models': '()',
-  'big_catalog': '()',
+  'big_catalog': '(selector)',
   'listed_ref': '(ref)',
   'should_extend_catalog': '()',
   'extend_catalog': '(catalog)',
