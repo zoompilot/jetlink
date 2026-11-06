@@ -205,6 +205,22 @@ class FramesInFlight(SocketPairTest):
     self.assertEqual(self.client.waiting_for(), 0.0)
     self.assertIsNone(self.client.last_output)
 
+  def test_a_hello_says_what_the_comma_knows_of_its_cameras(self):
+    said = []
+
+    def serve():
+      for _ in range(2):
+        msg = self.peer.recv(timeout=2.0)
+        said.append(json.loads(bytes(msg.payload))['client'])
+        self.peer.send_json(P.Msg.HELLO_RESP, msg.seq, {'device': 'test'})
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    self.client.hello(timeout=2.0, camera={'wide_from_device_euler': [0.0, 0.02, -0.016]})
+    self.client.hello(timeout=2.0)
+    t.join(2.0)
+    self.assertEqual(said[0]['camera'], {'wide_from_device_euler': [0.0, 0.02, -0.016]})
+    self.assertNotIn('camera', said[1], 'a comma that knows nothing says nothing')
+
 
 if __name__ == '__main__':
   unittest.main()
