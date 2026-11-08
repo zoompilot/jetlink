@@ -54,7 +54,10 @@
     var webAuth: String?
     @Flag(help: "Power this machine off when the comma asks (Linux). Without it the comma is told ok and the machine stays up.")
     var poweroff = false
-    @Option(help: "A Jetson's clocks: on holds them at the power mode's top while a comma is connected or an engine builds, off leaves them to NVIDIA's scaling. Without it they stay as they are.")
+    @Option(
+      help:
+        "A Jetson's clocks: on holds them at the power mode's top while a comma is connected or an engine builds, off leaves them to NVIDIA's scaling. Without it they stay as they are."
+    )
     var clocks: String?
     @Option(help: "The nvpmodel power mode whose limits --clocks keeps to (MAXN_SUPER).")
     var powerMode: String?

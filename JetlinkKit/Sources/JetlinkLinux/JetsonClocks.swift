@@ -37,7 +37,8 @@
       let limits = JetsonPower.limits(Sysfs.read(root.path("/etc/nvpmodel.conf")) ?? "", mode: modeName) ?? JetsonPower.ModeLimits()
       var found = [
         JetsonClocks.node(root, "GPU", gpu, steps: "available_frequencies", min: "min_freq", max: "max_freq", cap: limits.gpu),
-        JetsonClocks.node(root, "memory", root.path("/sys/class/devfreq/bwmgr"), steps: "available_frequencies", min: "min_freq", max: "max_freq", cap: limits.memory),
+        JetsonClocks.node(
+          root, "memory", root.path("/sys/class/devfreq/bwmgr"), steps: "available_frequencies", min: "min_freq", max: "max_freq", cap: limits.memory),
       ]
       for policy in root.list("/sys/devices/system/cpu/cpufreq") where policy.hasPrefix("policy") {
         found.append(
@@ -61,8 +62,14 @@
       release()
       host.subscribe { [self] event in
         switch event {
-        case .link(let link): queue.async { self.connected = link.state == .connected; self.update() }
-        case .engine(let engine): queue.async { self.building = engine.state == .building; self.update() }
+        case .link(let link):
+          queue.async {
+            self.connected = link.state == .connected; self.update()
+          }
+        case .engine(let engine):
+          queue.async {
+            self.building = engine.state == .building; self.update()
+          }
         default: break
         }
       }
