@@ -2,6 +2,7 @@
   import Foundation
   import Glibc
   import JetlinkKit
+  import JetlinkServer
   import JetlinkStatusPage
 
   /// The status page's hardware panel on a Jetson or a Linux PC, read the way
@@ -24,6 +25,8 @@
       let fanPWM: String?
       let cpus: [Int]
       let modes: [Int: String]
+      /// whose lowest and highest clocks meet while `JetsonClocks` holds them
+      let gpuDevfreq: String?
     }
 
     /// `cache` is the models folder, whose disk the panel shows; `gpu` the
@@ -55,7 +58,8 @@
       let made = Found(
         zones: zones, ina3221: hwmon(named: "ina3221", root), fanRPM: hwmon(named: "pwm_tach", root).map { "\($0)/rpm" },
         fanPWM: hwmon(named: "pwmfan", root).map { "\($0)/pwm1" }, cpus: PageHardware.cpuList(Sysfs.read(root.path("/sys/devices/system/cpu/possible"))),
-        modes: PageHardware.powerModes(Sysfs.read(root.path("/etc/nvpmodel.conf"))))
+        modes: JetsonPower.modes(Sysfs.read(root.path("/etc/nvpmodel.conf"))),
+        gpuDevfreq: gpuDevfreq(root))
       found = made
       return made
     }
@@ -98,22 +102,6 @@
       if soc.contains("tegra234") { return "Orin" }
       if soc.contains("tegra264") { return "Thor" }
       return "Tegra"
-    }
-
-    /// nvpmodel's mode names, from `< POWER_MODEL ID=2 NAME=MAXN_SUPER >`.
-    static func powerModes(_ conf: String?) -> [Int: String] {
-      var modes: [Int: String] = [:]
-      for line in (conf ?? "").split(separator: "\n") {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard trimmed.hasPrefix("<"), trimmed.contains("POWER_MODEL") else { continue }
-        var fields: [String: String] = [:]
-        for field in trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "<> ")).split(separator: " ") {
-          let pair = field.split(separator: "=", maxSplits: 1)
-          if pair.count == 2 { fields[String(pair[0])] = String(pair[1]) }
-        }
-        if let id = fields["ID"].flatMap({ Int($0) }) { modes[id] = fields["NAME"] ?? String(id) }
-      }
-      return modes
     }
 
     /// "0-3,5" as [0, 1, 2, 3, 5].
@@ -166,11 +154,11 @@
         sample["fan"] = fan
       }
       sample["disk"] = disk()
-      if let status = Sysfs.read(root.path("/var/lib/nvpmodel/status")) {
-        // "pmode:0002 fmode:quiet", rewritten by nvpmodel on every change
-        if let mode = status.split(separator: " ").first(where: { $0.hasPrefix("pmode:") }).flatMap({ Int($0.dropFirst(6)) }) {
-          sample["mode"] = found.modes[mode] ?? "mode \(mode)"
-        }
+      if let mode = JetsonPower.modeID(status: Sysfs.read(root.path("/var/lib/nvpmodel/status"))) {
+        sample["mode"] = found.modes[mode] ?? "mode \(mode)"
+      }
+      if let gpu = found.gpuDevfreq, let low = Sysfs.readInt("\(gpu)/min_freq"), let high = Sysfs.readInt("\(gpu)/max_freq") {
+        sample["clocks_held"] = low == high
       }
       sample["uptime"] = Sysfs.read(root.path("/proc/uptime"))?.split(separator: " ").first.flatMap { Double($0) }
       let load = Sysfs.read(root.path("/proc/loadavg"))?.split(separator: " ").prefix(3).compactMap { Double($0) }

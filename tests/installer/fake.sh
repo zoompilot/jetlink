@@ -324,7 +324,9 @@ case "$name" in
     case "${1:-}" in
       -q) echo "NV Power Mode: $(cat "$state/pm" 2>/dev/null || echo 15W)"; echo 0 ;;
       -m) read -r _ || true
-          if [ "${FAKE_PM_REBOOT:-0}" = 1 ]; then echo "reboot required"; else echo MAXN_SUPER >"$state/pm"; fi ;;
+          # the mode with that ID in nvpmodel.conf, unless it needs a restart
+          if [ "${FAKE_PM_REBOOT:-0}" = 1 ]; then echo "reboot required"
+          else sed -n "s/.*POWER_MODEL ID=$2 NAME=\([^ >]*\).*/\1/p" /etc/nvpmodel.conf >"$state/pm"; fi ;;
     esac ;;
 
   efibootmgr)

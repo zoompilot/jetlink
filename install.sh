@@ -21,7 +21,8 @@
 #   --set KEY=VALUE  change one answer and apply it, asking nothing and keeping
 #                    the installed server; repeatable. On a Jetson:
 #                    power=always|switched, comma_poweroff=yes|no,
-#                    desktop=on|off. On a PC: autostart=yes|no
+#                    desktop=on|off, swap=on|off, power_mode=fastest|NAME,
+#                    clocks=on|off. On a PC: autostart=yes|no
 #
 # Everything runs from main(), called on the last line, so a download cut off
 # part way through runs nothing, and nothing reading stdin can eat the script.
@@ -53,9 +54,8 @@ SHARE=share/jetlink
 # released, but a bench has it): a move from Docker saves these, and a failed
 # one puts them back
 DOCKER_ERA_UNITS="$UNIT.service $UNIT.service.d jetlink-poweroff.path jetlink-poweroff.service jetlink-web.service jetlink-web.service.d"
-# jetson_clocks at boot, once nvpmodel has set the power mode. Up to 0.7.4 a
-# drop-in ran it before each server start, which held the server back until
-# nvpmodel ran; an install that has the drop-in loses it
+# jetson_clocks at boot, as v0.9.0 and older ran it (a unit) and 0.7.4 and
+# older (a drop-in): the server sets the clocks itself now, so both go
 CLOCKS_UNIT=jetlink-clocks.service
 CLOCKS_DROPIN="$UNIT_DIR/$UNIT.service.d/20-jetson-clocks.conf"
 # on a Jetson the server waits for the GPU's driver instead
@@ -70,7 +70,13 @@ MIN_CC=75
 # the server is built on Ubuntu 22.04 (JetPack 6's), and runs on no older glibc
 GLIBC_MIN=2.35
 MIN_DISK_GB=15
-SWAP_GB=8
+# Building the largest model's engine: what it holds besides TensorRT's
+# workspace, what the system and a desktop keep, and the margin on top
+# (installation-reference.md, Swap, has the measurements)
+BUILD_MB=5800 SYSTEM_MB=2048 SWAP_MARGIN_MB=512
+# free space an installed Jetlink keeps beside its swap: one more 1.7 GB model,
+# its engine and the patched copy a build makes
+KEEP_FREE_GB=6
 # JetPack 7.2 runs the newest TensorRT the Jetson repository has, and nothing
 # older than this.
 JP7_MIN_TRT=10.16.2.10
@@ -102,6 +108,7 @@ DT_MODEL="${JETLINK_TEST_DT_MODEL:-/proc/device-tree/model}"
 MEM_SLEEP="${JETLINK_TEST_MEM_SLEEP:-/sys/power/mem_sleep}"
 SECURE_BOOT="${JETLINK_TEST_SECURE_BOOT:-/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c}"
 SWAPS="${JETLINK_TEST_SWAPS:-/proc/swaps}"
+MEMINFO="${JETLINK_TEST_MEMINFO:-/proc/meminfo}"
 PROC_VERSION="${JETLINK_TEST_PROC_VERSION:-/proc/version}"
 SYSTEMD_RUN="${JETLINK_TEST_SYSTEMD_RUN:-/run/systemd/system}"
 AWAKE_LOCK="${JETLINK_TEST_AWAKE_LOCK:-/run/jetlink-awake.lock}"
@@ -525,6 +532,9 @@ DEEP_SLEEP=0
 # 1 when the Jetson starts its desktop (stock JetPack's graphical.target)
 HAS_DESKTOP=0
 PM_BEST_ID='' PM_BEST_NAME='' PM_CURRENT=''
+# every power mode as ID:NAME and their names alone, slowest first;
+# PM_WANT_* the one to run in
+PM_MODES='' PM_NAMES='' PM_WANT_ID='' PM_WANT_NAME=''
 
 detect() {
   [ "$(uname -s)" = Linux ] || die "This installer is for Linux: a Jetson, or a PC running Linux." \
@@ -622,7 +632,7 @@ detect_jetson() {
 
 detect_power_modes() {
   command -v nvpmodel >/dev/null 2>&1 || return 0
-  local conf=/etc/nvpmodel.conf best_rank=-1 id name rank watts
+  local conf=/etc/nvpmodel.conf id name rank watts ranked=''
   [ -r "$conf" ] || return 0
   while read -r id name; do
     case "$name" in
@@ -634,10 +644,14 @@ detect_power_modes() {
         rank="${watts:-0}" ;;
       *) rank=0 ;;
     esac
-    if [ "$rank" -gt "$best_rank" ]; then
-      best_rank=$rank PM_BEST_ID=$id PM_BEST_NAME=$name
-    fi
+    ranked+="$rank $id:$name"$'\n'
   done < <(sed -n 's/.*POWER_MODEL ID=\([0-9]*\) NAME=\([^ >]*\).*/\1 \2/p' "$conf")
+  PM_MODES="$(printf '%s' "$ranked" | sort -s -n -k 1,1 | cut -d ' ' -f 2 | paste -sd ' ' -)"
+  [ -n "$PM_MODES" ] || return 0
+  # the last is the fastest
+  local best="${PM_MODES##* }"
+  PM_BEST_ID="${best%%:*}" PM_BEST_NAME="${best#*:}"
+  PM_NAMES="$(echo "$PM_MODES" | sed -E 's/(^| )[0-9]+:/\1/g')"
   PM_CURRENT="$(power_mode_now)"
   return 0
 }
@@ -686,7 +700,16 @@ detect_pc() {
 # Answers, saved in install.conf (the questions) and server.env (what the
 # server runs with), so an update asks nothing
 
-POWER='' SLEEP_AFTER=0 POWEROFF_WITH_COMMA=0 ADD_SWAP=0 AUTOSTART=1 STATUS_PORT=5600
+POWER='' SLEEP_AFTER=0 POWEROFF_WITH_COMMA=0 AUTOSTART=1 STATUS_PORT=5600
+# swap for building the largest models: SWAP is the answer; ADD_SWAP_GB the
+# file this run adds and REMOVE_SWAP whether it removes Jetlink's; SWAP_FILE_GB
+# the file there is, SWAP_SHORT_GB what did not fit on the disk, SWAP_NEED_GB
+# all the swap the build needs here
+SWAP=on ADD_SWAP_GB=0 REMOVE_SWAP=0 SWAP_FILE_GB=0 SWAP_SHORT_GB=0 SWAP_NEED_GB=0
+# a Jetson's power mode, `fastest` or one of its mode names, and whether the
+# server holds the clocks at that mode's top while it serves (on), or leaves
+# them to NVIDIA's scaling (off)
+POWER_MODE=fastest CLOCKS=on CLOCKS_SAVED=on
 # 1 when the Jetson starts without its desktop; the default target changes
 # only when the answer does, so a desktop turned back on by hand stays on
 DESKTOP_OFF=0 DESKTOP_OFF_SAVED=0
@@ -727,6 +750,14 @@ load_previous() {
   CACHE_DIR="${JETLINK_CACHE_DIR:-}"
   STATUS_PORT="${JETLINK_STATUS_PORT:-$STATUS_PORT}"
   SWAP_FILE="${JETLINK_SWAP_FILE:-}"
+  SWAP="${JETLINK_SWAP:-on}"
+  # installers before the size was recorded made 8 GB
+  SWAP_FILE_GB="${JETLINK_SWAP_GB:-8}"
+  [ -n "$SWAP_FILE" ] || SWAP_FILE_GB=0
+  POWER_MODE="${JETLINK_POWER_MODE:-fastest}"
+  CLOCKS=on
+  [ "${JETLINK_CLOCKS:-on}" != off ] || CLOCKS=off
+  CLOCKS_SAVED=$CLOCKS
   MASKED_UNITS="${JETLINK_MASKED_UNITS:-}"
   JOURNALD_CAPPED="${JETLINK_JOURNALD_CAPPED:-0}"
   UEFI_TIMEOUT_PREV="${JETLINK_UEFI_TIMEOUT_PREV:-}"
@@ -772,7 +803,7 @@ ask_questions() {
   if [ "$JETSON" = 1 ]; then
     # always on is the recommended wiring, for a Jetson that can deep-sleep
     local prev="$POWER" def=1 choice always
-    if [ "$prev" = switched ] || { [ -z "$prev" ] && [ "$DEEP_SLEEP" = 0 ]; }; then def=2; fi
+    if [ "$prev" = switched ] || { [ -z "$prev" ] && [ "$(default_answer power)" = switched ]; }; then def=2; fi
     always="Always on ${D}(recommended)${N}: sleeps while parked, wakes when the car starts"
     [ "$DEEP_SLEEP" = 1 ] || always="Always on: stays awake while parked ${D}(this Jetson cannot sleep)${N}"
     ask_choice choice "$def" "Does the Jetson's power stay on when the car is off?" \
@@ -780,7 +811,8 @@ ask_questions() {
       "Switched: loses power with the car, boots at every start"
     if [ "$choice" = 1 ]; then
       set_always_on
-      local off offdef=y
+      local off offdef=n
+      [ "$(default_answer comma_poweroff)" = no ] || offdef=y
       [ "$prev" = always ] && [ "$POWEROFF_WITH_COMMA" = 0 ] && offdef=n
       ask_yn off "$offdef" "Let the comma turn the Jetson off to protect the car battery?" \
         "When the comma shuts down (low battery, or parked 30 hours), the Jetson turns" \
@@ -792,7 +824,8 @@ ask_questions() {
 
     # only for a Jetson that starts its desktop, or one Jetlink turned it off on
     if [ "$HAS_DESKTOP" = 1 ] || [ "$DESKTOP_OFF" = 1 ]; then
-      local desk deskdef=y
+      local desk deskdef=n
+      [ "$(default_answer desktop)" = on ] || deskdef=y
       [ "$HAD_INSTALL" = 1 ] && [ "$DESKTOP_OFF" = 0 ] && deskdef=n
       ask_yn desk "$deskdef" "Turn off the desktop? ${D}(recommended unless you use it)${N}" \
         "Jetlink doesn't need it: more memory for the models, and a faster start." \
@@ -802,7 +835,8 @@ ask_questions() {
 
     AUTOSTART=1
   else
-    local auto autodef=y
+    local auto autodef=n
+    [ "$(default_answer autostart)" = no ] || autodef=y
     [ "$AUTOSTART" = 0 ] && autodef=n
     ask_yn auto "$autodef" "Start Jetlink when this computer starts?" \
       "Otherwise, start it with: jetlink start"
@@ -838,8 +872,8 @@ choose_web_password() {
 # --set: the install it changes, and the answers it gives, checked before
 # anything is shown. It keeps the server and the source that are here, so it
 # needs no network, and the web page can run it in the car.
-SET_KEYS="On a Jetson: power=always|switched, comma_poweroff=yes|no, desktop=on|off. On a PC: autostart=yes|no."
-SET_POWER='' SET_POWEROFF='' SET_DESKTOP='' SET_AUTOSTART=''
+SET_KEYS="On a Jetson: power=always|switched, comma_poweroff=yes|no, desktop=on|off, swap=on|off, power_mode=fastest|<a mode it has>, clocks=on|off. On a PC: autostart=yes|no."
+SET_POWER='' SET_POWEROFF='' SET_DESKTOP='' SET_SWAP='' SET_POWER_MODE='' SET_CLOCKS='' SET_AUTOSTART=''
 check_set() {
   [ ${#OPT_SET[@]} -gt 0 ] || return 0
   [ "$DOCKER_ERA" = 0 ] || die "This install runs the server in Docker, and --set changes only a native one." \
@@ -853,7 +887,7 @@ check_set() {
     [[ $kv == ?*=* ]] || die "--set takes KEY=VALUE, not '$kv'." "$SET_KEYS"
     key="${kv%%=*}" value="${kv#*=}"
     case "$key" in
-      power|comma_poweroff|desktop)
+      power|comma_poweroff|desktop|swap|power_mode|clocks)
         [ "$JETSON" = 1 ] || die "--set $key is for a Jetson, and this computer is a PC." "$SET_KEYS" ;;
       autostart)
         [ "$JETSON" = 0 ] || die "--set autostart is for a PC: a Jetson always starts Jetlink." "$SET_KEYS" ;;
@@ -863,9 +897,17 @@ check_set() {
       power=always|power=switched) SET_POWER=$value ;;
       comma_poweroff=yes|comma_poweroff=no) SET_POWEROFF=$value ;;
       desktop=on|desktop=off) SET_DESKTOP=$value ;;
+      swap=on|swap=off) SET_SWAP=$value ;;
+      clocks=on|clocks=off) SET_CLOCKS=$value ;;
+      power_mode=*)
+        [ "$value" = fastest ] || [[ " $PM_NAMES " == *" $value "* ]] \
+          || die "--set power_mode takes fastest or one of this Jetson's modes (${PM_NAMES// /, }), not '$value'."
+        # the fastest by name is the fastest
+        [ "$value" != "$PM_BEST_NAME" ] || value=fastest
+        SET_POWER_MODE=$value ;;
       autostart=yes|autostart=no) SET_AUTOSTART=$value ;;
       power=*) die "--set power takes always or switched, not '$value'." ;;
-      desktop=*) die "--set desktop takes on or off, not '$value'." ;;
+      desktop=*|swap=*|clocks=*) die "--set $key takes on or off, not '$value'." ;;
       *) die "--set $key takes yes or no, not '$value'." ;;
     esac
   done
@@ -897,11 +939,34 @@ apply_set() {
         note "This Jetson starts no desktop, so there is none to turn off."
       fi ;;
   esac
+  [ -z "$SET_SWAP" ] || SWAP=$SET_SWAP
+  [ -z "$SET_POWER_MODE" ] || POWER_MODE=$SET_POWER_MODE
+  [ -z "$SET_CLOCKS" ] || CLOCKS=$SET_CLOCKS
   case "$SET_AUTOSTART" in
     yes) AUTOSTART=1 ;;
     no) AUTOSTART=0 ;;
   esac
   return 0
+}
+
+# The default answers here, as `--set` words: the questions offer them, and
+# the web page marks them and resets to them.
+default_answers() {
+  if [ "$JETSON" = 0 ]; then
+    echo "autostart=yes"
+  elif [ "$DEEP_SLEEP" = 1 ]; then
+    echo "power=always comma_poweroff=yes desktop=off swap=on power_mode=fastest clocks=on"
+  else
+    echo "power=switched comma_poweroff=yes desktop=off swap=on power_mode=fastest clocks=on"
+  fi
+}
+
+# One of them: default_answer power
+default_answer() {
+  local word
+  for word in $(default_answers); do
+    [ "${word%%=*}" != "$1" ] || echo "${word#*=}"
+  done
 }
 
 set_always_on() {
@@ -913,35 +978,86 @@ set_always_on() {
   fi
 }
 
-# Not questions: the large models need both, so every Jetson install gets
-# them, updates included. A move from Docker keeps the Jetson as it was set up.
+# The power mode and the swap the answers name, on every Jetson install and
+# update. A move from Docker keeps the Jetson as it was set up.
 jetson_musts() {
   [ "$JETSON" = 1 ] || return 0
+  want_power_mode
   if [ -n "$PM_BEST_NAME" ]; then
     if [ "$PM_BEST_NAME" != MAXN_SUPER ] && [[ "$MODEL" == *"Orin Nano"* ]]; then
       note "This JetPack install does not offer the Orin Nano's Super modes; JetPack 7.2.1's"
       note "installer sets them up. Jetlink still works, a little slower, in $PM_BEST_NAME."
     fi
   fi
-  ADD_SWAP=0
-  if [ -n "$SWAP_FILE" ]; then
-    ADD_SWAP=1
-  elif [ "$DOCKER_ERA" = 0 ] && swap_short; then
-    if [ "$DISK_GB" -ge $((MIN_DISK_GB + SWAP_GB + 5)) ]; then
-      ADD_SWAP=1
-    else
-      note "Not enough disk space for ${SWAP_GB} GB of swap, so the 1.7 GB models may fail to prepare."
-    fi
-  fi
+  plan_swap
   return 0
 }
 
-# less than the swap the 1.7 GB models need; JetPack's zram is compressed
-# memory, not swap, and does not count
-swap_short() {
-  local kb
-  kb=$(awk 'NR > 1 && $1 !~ /zram/ {s += $3} END {printf "%d", s}' "$SWAPS" 2>/dev/null || echo 0)
-  [ "${kb:-0}" -lt $(((SWAP_GB - 1) * 1048576)) ]
+# The mode the answer names, or the fastest; one this Jetson no longer has
+# (a JetPack update renamed it) goes back to the fastest.
+want_power_mode() {
+  PM_WANT_ID=$PM_BEST_ID PM_WANT_NAME=$PM_BEST_NAME
+  [ "$POWER_MODE" != fastest ] || return 0
+  local m
+  for m in $PM_MODES; do
+    if [ "${m#*:}" = "$POWER_MODE" ]; then
+      PM_WANT_ID=${m%%:*} PM_WANT_NAME=$POWER_MODE
+      return 0
+    fi
+  done
+  [ -z "$PM_MODES" ] || note "This Jetson has no power mode $POWER_MODE now, so Jetlink uses the fastest, $PM_BEST_NAME."
+  POWER_MODE=fastest
+}
+
+# Jetlink's swap file tops up the swap this Jetson has to what building the
+# largest model needs here, and no more; turned off, the file goes. A file an
+# older installer made (8 GB) stays as it is.
+plan_swap() {
+  local need gb keep
+  ADD_SWAP_GB=0 REMOVE_SWAP=0 SWAP_SHORT_GB=0
+  need=$(swap_need_mb)
+  SWAP_NEED_GB=$(((need + 1023) / 1024))
+  if [ "$SWAP" = off ]; then
+    [ -z "$SWAP_FILE" ] || REMOVE_SWAP=1
+    return 0
+  fi
+  { [ -z "$SWAP_FILE" ] && [ "$DOCKER_ERA" = 0 ]; } || return 0
+  gb=$(((need - $(other_swap_mb) + 1023) / 1024))
+  [ "$gb" -gt 0 ] || return 0
+  # a new install needs its own room too; an installed one, room for a model
+  keep=$MIN_DISK_GB
+  [ "$HAD_INSTALL" = 0 ] || keep=$KEEP_FREE_GB
+  if [ $((DISK_GB - gb)) -ge "$keep" ]; then
+    ADD_SWAP_GB=$gb
+    return 0
+  fi
+  SWAP_SHORT_GB=$gb
+  local free_more=$((keep + gb - DISK_GB))
+  # asked for from the web page: say why nothing changed
+  [ "$SET_SWAP" != on ] || die "Not enough free disk space for $gb GB of swap: $DISK_GB GB is free, and Jetlink keeps $keep GB free besides." \
+    "Free $free_more GB and try again."
+  note "Not enough disk space for $gb GB of swap, so the 1.7 GB models may fail to build."
+  note "Free $free_more GB, then add it with: jetlink setup --set swap=on"
+}
+
+# The swap building the largest model needs here, in MB: what the build holds
+# beyond the memory the system and a desktop leave, with the margin.
+swap_need_mb() {
+  local mem free ws need
+  mem=$(awk '$1 == "MemTotal:" {printf "%d", $2 / 1024}' "$MEMINFO")
+  free=$((mem - SYSTEM_MB))
+  ws=$((free * 2 / 5))
+  [ "$ws" -ge 256 ] || ws=256
+  [ "$ws" -le 4096 ] || ws=4096
+  need=$((BUILD_MB + ws - free + SWAP_MARGIN_MB))
+  [ "$need" -gt 0 ] || need=0
+  echo "$need"
+}
+
+# The swap this computer has besides Jetlink's file, in MB. JetPack's zram is
+# compressed memory, not swap, and does not count.
+other_swap_mb() {
+  awk -v own="$SWAP_FILE" 'NR > 1 && $1 !~ /zram/ && $1 != own {s += $3} END {printf "%d", s / 1024}' "$SWAPS" 2>/dev/null || echo 0
 }
 
 # ---------------------------------------------------------------------------
@@ -1167,11 +1283,25 @@ show_plan() {
     if [ "$POWEROFF_WITH_COMMA" = 1 ]; then
       say "  • Let the comma turn the Jetson off to protect the car battery"
     fi
-    if [ "$DOCKER_ERA" = 0 ] && [ -n "$PM_BEST_ID" ] && [ "$PM_CURRENT" != "$PM_BEST_NAME" ]; then
-      say "  • Switch to the fastest power mode, $PM_BEST_NAME ${D}(may need a restart)${N}"
+    if [ "$DOCKER_ERA" = 0 ] && [ -n "$PM_WANT_ID" ] && [ "$PM_CURRENT" != "$PM_WANT_NAME" ]; then
+      if [ "$POWER_MODE" = fastest ]; then
+        say "  • Switch to the fastest power mode, $PM_WANT_NAME"
+      else
+        say "  • Switch to power mode $PM_WANT_NAME"
+      fi
     fi
-    if [ "$ADD_SWAP" = 1 ] && [ -z "$SWAP_FILE" ]; then
-      say "  • Add ${SWAP_GB} GB of swap for preparing the largest models"
+    if [ "$CLOCKS" != "$CLOCKS_SAVED" ]; then
+      if [ "$CLOCKS" = on ]; then
+        say "  • Hold the clocks at the power mode's top speed while serving"
+      else
+        say "  • Leave the clocks to NVIDIA's scaling"
+      fi
+    fi
+    if [ "$ADD_SWAP_GB" -gt 0 ]; then
+      say "  • Add ${ADD_SWAP_GB} GB of swap, so the 1.7 GB models can be built"
+    fi
+    if [ "$REMOVE_SWAP" = 1 ]; then
+      say "  • Remove Jetlink's swap file ${D}(the 1.7 GB models may then fail to build)${N}"
     fi
     if [ "$DESKTOP_OFF" != "$DESKTOP_OFF_SAVED" ]; then
       if [ "$DESKTOP_OFF" = 1 ]; then
@@ -1887,12 +2017,17 @@ keep_previous() {
 
 configure_jetson() {
   [ "$JETSON" = 1 ] || return 0
-  if [ "$DOCKER_ERA" = 0 ] && [ -n "$PM_BEST_ID" ] && [ "$PM_CURRENT" != "$PM_BEST_NAME" ]; then
+  if [ "$DOCKER_ERA" = 0 ] && [ -n "$PM_WANT_ID" ] && [ "$PM_CURRENT" != "$PM_WANT_NAME" ]; then
     set_power_mode
   fi
-  if [ "$ADD_SWAP" = 1 ] && [ -z "$SWAP_FILE" ]; then
+  if [ "$ADD_SWAP_GB" -gt 0 ]; then
     SWAP_FILE="$(dirname "$CACHE_DIR")/jetlink-swapfile"
-    step "Adding ${SWAP_GB} GB of swap" add_swap "$SWAP_FILE"
+    step "Adding ${ADD_SWAP_GB} GB of swap" add_swap "$SWAP_FILE"
+    SWAP_FILE_GB=$ADD_SWAP_GB
+  fi
+  if [ "$REMOVE_SWAP" = 1 ]; then
+    step "Removing Jetlink's swap file" remove_swap
+    SWAP_FILE='' SWAP_FILE_GB=0
   fi
   local u masked=''
   for u in $WAIT_ONLINE_UNITS; do
@@ -1922,7 +2057,7 @@ configure_jetson() {
 # 7.2.1, a reboot to the model loaded took 4 s less with a 1 s firmware menu,
 # 4 s less with quiet (the serial console runs at 115200 baud), and 4 s less
 # with the server waiting for the GPU's driver (GPU_DROPIN) instead of for
-# nvpmodel (CLOCKS_UNIT).
+# nvpmodel.
 
 # the firmware's boot menu wait in seconds after `efibootmgr ARGS`, which
 # lists the variables once it has changed any; `none` when none is set, or
@@ -2049,29 +2184,46 @@ restore_desktop() {
 }
 
 set_power_mode() {
-  printf '\n==> nvpmodel -m %s\n' "$PM_BEST_ID" >>"$LOG"
+  printf '\n==> nvpmodel -m %s\n' "$PM_WANT_ID" >>"$LOG"
   # nvpmodel asks whether to reboot when the new mode needs one; say no here
   # and tell the user at the end
-  printf 'no\n' | as_root nvpmodel -m "$PM_BEST_ID" >>"$LOG" 2>&1 || true
+  printf 'no\n' | as_root nvpmodel -m "$PM_WANT_ID" >>"$LOG" 2>&1 || true
   local now
   now="$(power_mode_now)"
-  if [ "$now" = "$PM_BEST_NAME" ]; then
-    good "Power mode set to $PM_BEST_NAME"
-    PM_CURRENT="$now"
-  else
-    REBOOT_FOR="finish switching the power mode"
-    note "Power mode $PM_BEST_NAME takes effect after a restart."
-  fi
+  # nvpmodel switches live only when nothing used the GPU before it ran at
+  # boot, and otherwise wants a restart; the server holds the clocks to the
+  # mode's limits either way (--power-mode)
+  local held=''
+  [ "$now" = "$PM_WANT_NAME" ] || held=" ${D}(Jetlink holds its clock limits)${N}"
+  good "Power mode set to $PM_WANT_NAME$held"
 }
 
 add_swap() {
   local file=$1
   as_root mkdir -p "$(dirname "$file")"
-  as_root fallocate -l "${SWAP_GB}G" "$file"
+  as_root fallocate -l "${ADD_SWAP_GB}G" "$file"
   as_root chmod 600 "$file"
   as_root mkswap "$file"
   as_root swapon "$file"
   grep -q "^$file " /etc/fstab || printf '%s none swap sw 0 0\n' "$file" | as_root tee -a /etc/fstab >/dev/null
+}
+
+# A swap file the memory cannot take back yet is still deleted: it is gone
+# from fstab, and its space comes back at the next restart.
+remove_swap() {
+  if [ -f "$SWAP_FILE" ]; then
+    as_root swapoff "$SWAP_FILE" >>"$LOG" 2>&1 || true
+    as_root rm -f "$SWAP_FILE"
+  fi
+  as_root sed -i "\#^$SWAP_FILE #d" /etc/fstab
+}
+
+# The jetson_clocks unit and drop-in older installs have (CLOCKS_UNIT).
+remove_clocks_units() {
+  as_root rm -f "$CLOCKS_DROPIN"
+  [ -e "$UNIT_DIR/$CLOCKS_UNIT" ] || return 0
+  as_root systemctl disable "$CLOCKS_UNIT" >>"$LOG" 2>&1 || true
+  as_root rm -f "$UNIT_DIR/$CLOCKS_UNIT"
 }
 
 install_files() {
@@ -2081,9 +2233,8 @@ install_files() {
   install_unit "$NEW_DIR"
   printf '# Jetlink: the cache has to be mounted before the server starts\n[Unit]\nRequiresMountsFor=%s\n' "$CACHE_DIR" \
     | root_write "$UNIT_DIR/$UNIT.service.d/10-cache.conf"
-  as_root rm -f "$CLOCKS_DROPIN"
+  remove_clocks_units
   if [ "$JETSON" = 1 ]; then
-    clocks_unit | root_write "$UNIT_DIR/$CLOCKS_UNIT"
     gpu_dropin | root_write "$GPU_DROPIN"
   fi
   if [ "$DOCKER_ERA" = 1 ]; then set_aside_docker_dropins; fi
@@ -2105,28 +2256,6 @@ install_files() {
   fi
   write_env
   write_conf
-}
-
-# jetson_clocks pins the clocks and turns DVFS off, so the GPU sits at the
-# power mode's ceiling instead of ramping between frames. A reboot undoes it,
-# so it runs at every boot, after nvpmodel, whose mode sets the ceiling and
-# would undo it too. The server does not wait for it: stock nvpmodel waits for
-# the desktop's login screen, which waits for NetworkManager.
-clocks_unit() {
-  cat <<'EOF'
-# Written by the Jetlink installer: the GPU at full clock for the Jetlink server
-[Unit]
-Description=Jetlink: Jetson clocks at the power mode's ceiling
-After=nvpmodel.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/bin/jetson_clocks
-
-[Install]
-WantedBy=multi-user.target
-EOF
 }
 
 # udev loads the GPU's driver during boot, after the server could start, and
@@ -2177,6 +2306,9 @@ write_env() {
   # the unit passes the server --poweroff only on a Jetson whose user said yes
   local poweroff=''
   if [ "$JETSON" = 1 ] && [ "$POWEROFF_WITH_COMMA" = 1 ]; then poweroff=--poweroff; fi
+  # and how to set a Jetson's clocks, inside the limits of the mode it runs in
+  local clocks=''
+  if [ "$JETSON" = 1 ] && [ -n "$PM_WANT_NAME" ]; then clocks="--clocks $CLOCKS --power-mode $PM_WANT_NAME"; fi
   {
     echo "# Written by the Jetlink installer; run it again (jetlink setup) to change these."
     printf 'JETLINK_CACHE_DIR=%q\n' "$CACHE_DIR"
@@ -2184,6 +2316,7 @@ write_env() {
     printf 'JETLINK_STATUS_PORT=%q\n' "$STATUS_PORT"
     # flags the unit passes as they are, or nothing when empty
     printf 'JETLINK_POWEROFF="%s"\n' "$poweroff"
+    printf 'JETLINK_CLOCK_FLAGS="%s"\n' "$clocks"
     printf 'JETLINK_TENSORRT="%s"\n' "${TRT_ARGS[*]}"
     printf 'JETLINK_JETSON=%q\n' "$JETSON"
     printf 'JETLINK_FLAVOR=%q\n' "$FLAVOR"
@@ -2204,7 +2337,15 @@ write_conf() {
     printf 'JETLINK_POWEROFF_WITH_COMMA=%q\n' "$POWEROFF_WITH_COMMA"
     printf 'JETLINK_DESKTOP_OFF=%q\n' "$DESKTOP_OFF"
     printf 'JETLINK_AUTOSTART=%q\n' "$AUTOSTART"
+    printf 'JETLINK_POWER_MODE=%q\n' "$POWER_MODE"
+    printf 'JETLINK_POWER_MODES=%q\n' "$PM_NAMES"
+    printf 'JETLINK_CLOCKS=%q\n' "$CLOCKS"
+    printf 'JETLINK_SWAP=%q\n' "$SWAP"
     printf 'JETLINK_SWAP_FILE=%q\n' "$SWAP_FILE"
+    printf 'JETLINK_SWAP_GB=%q\n' "$SWAP_FILE_GB"
+    printf 'JETLINK_SWAP_NEED_GB=%q\n' "$SWAP_NEED_GB"
+    printf 'JETLINK_SWAP_SHORT_GB=%q\n' "$SWAP_SHORT_GB"
+    printf 'JETLINK_DEFAULTS=%q\n' "$(default_answers)"
     printf 'JETLINK_MASKED_UNITS=%q\n' "$MASKED_UNITS"
     printf 'JETLINK_JOURNALD_CAPPED=%q\n' "$JOURNALD_CAPPED"
     printf 'JETLINK_UEFI_TIMEOUT_PREV=%q\n' "$UEFI_TIMEOUT_PREV"
@@ -2218,11 +2359,6 @@ start_server() {
     as_root systemctl enable "$UNIT" >>"$LOG" 2>&1
   else
     as_root systemctl disable "$UNIT" >>"$LOG" 2>&1 || true
-  fi
-  if [ "$JETSON" = 1 ]; then
-    as_root systemctl enable "$CLOCKS_UNIT" >>"$LOG" 2>&1 || true
-    # now too, at the ceiling of a power mode this run may have set
-    as_root systemctl restart "$CLOCKS_UNIT" >>"$LOG" 2>&1 || true
   fi
   local since
   since="$(date '+%Y-%m-%d %H:%M:%S')"
@@ -2351,7 +2487,7 @@ finish() {
   fi
   say ""
   say "  ${B}Next, on your comma:${N}"
-  say "    1. Settings > Software > Target Branch: choose ${B}develop${N} (zoompilot),"
+  say "    1. Settings > Software > Target Branch: choose ${B}main${N} (zoompilot),"
   say "       and let it update and restart."
   say "    2. Settings > Models: set ${B}Jetlink${N} to ${B}USB${N}."
   if [ "$JETSON" = 1 ]; then
@@ -2412,8 +2548,8 @@ uninstall() {
   as_root systemctl disable --now "$UNIT" >>"$LOG" 2>&1 || true
   remove_docker_era_files
   if command -v docker >/dev/null 2>&1; then as_root docker rm -f jetlink >>"$LOG" 2>&1 || true; fi
-  as_root systemctl disable "$CLOCKS_UNIT" >>"$LOG" 2>&1 || true
-  as_root rm -rf "$UNIT_DIR/$UNIT.service" "$UNIT_DIR/$UNIT.service.d" "$UNIT_DIR/$CLOCKS_UNIT"
+  remove_clocks_units
+  as_root rm -rf "$UNIT_DIR/$UNIT.service" "$UNIT_DIR/$UNIT.service.d"
   as_root systemctl daemon-reload
   as_root rm -f "$BIN" "$WAKE_RULE"
   as_root udevadm control --reload-rules >>"$LOG" 2>&1 || true
@@ -2430,9 +2566,7 @@ uninstall() {
     as_root systemctl restart systemd-journald >>"$LOG" 2>&1 || true
   fi
   if [ -n "$SWAP_FILE" ] && [ -f "$SWAP_FILE" ]; then
-    as_root swapoff "$SWAP_FILE" >>"$LOG" 2>&1 || true
-    as_root sed -i "\#^$SWAP_FILE #d" /etc/fstab
-    as_root rm -f "$SWAP_FILE"
+    remove_swap
     good "Swap file removed"
   fi
   if [ -n "$(docker_images)" ]; then

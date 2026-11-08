@@ -3,8 +3,8 @@
 ## Measured performance
 
 Bench Jetson: Orin Nano Super 8 GB devkit, JetPack 7.2.1, TensorRT 10.16.2.10
-(FP16), MAXN SUPER with `jetson_clocks` pinning the clocks (the installer runs
-it at every boot). comma four over USB 3 from the Jetson's USB-A port,
+(FP16), MAXN SUPER with the clocks held at its top (`jetson_clocks` up to
+v0.9; the server holds them while serving since). comma four over USB 3 from the Jetson's USB-A port,
 with its CPU as when driving. Measured 2026-09-28 and 29.
 
 | Model | GPU time | Frame on the comma, p50 / p99: v0.6.0 | v0.7.0 |
@@ -52,3 +52,22 @@ The servers side by side, on the same Jetson and the same engine files
   to 3 s. After a power-on, the engine loaded last was ready in 27 s.
 
 Mac numbers: [Mac performance](mac-performance.md).
+
+<a id="power-modes"></a>
+
+## Power modes
+
+Orin Nano Super, JetPack 7.2.1, 2026-11-07, the server's time per frame with
+the clocks at full speed, 60 s each:
+
+| Model | MAXN SUPER | Input power |
+| --- | ---: | ---: |
+| Lebowski, 1.7 GB | 30.2 ms | 19.9 W |
+| Light Speed 2, 733 MB | 16.9 ms | 14.0 W |
+
+* The input stayed under 20.5 W, below the board's over-current limit of
+  4.96 A at 5 V. Lower clocks for the smaller models saved about 2 W but no
+  coil whine, so every model runs at full speed.
+* With nvpmodel's own MAXN SUPER profile applied at boot, which also turns
+  off part of the GPU, Lebowski took 35.3 ms. On a Jetlink install the server
+  uses the GPU before nvpmodel runs, so that profile never applies.

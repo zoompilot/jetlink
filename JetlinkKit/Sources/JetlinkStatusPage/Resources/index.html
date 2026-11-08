@@ -228,6 +228,17 @@ pre { margin: 10px 0 0; max-height: 60vh; overflow: auto; font: 11.5px/1.5 var(-
 .setting:first-of-type { border-top: 0; padding-top: 0; }
 .setting .line { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
 .setting .desc { color: var(--dim); font-size: 13px; margin-top: 6px; }
+/* the installer's recommended answer: a soft tag by a switch, a second line in its segment */
+.dflt { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 99px; background: var(--raise); color: var(--faint);
+  font-size: 11px; font-weight: 600; vertical-align: 1px; white-space: nowrap; }
+.dflt:empty { display: none; }
+.segmented button small { display: block; color: var(--faint); font-size: 11px; font-weight: 500; line-height: 1.2; }
+.segmented button[aria-pressed="true"] small { color: var(--dim); }
+.perfnow { padding-top: 12px; border-top: 1px solid var(--line); font-size: 13px; color: var(--dim); }
+.perfnow .nowk { color: var(--faint); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; font-size: 11px; margin-right: 6px; }
+.perfnow b { color: var(--text); font-weight: 600; }
+.resetrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.resetrow p { margin: 0; color: var(--dim); font-size: 14px; }
 .switch { position: relative; width: 51px; height: 31px; flex: none; }
 .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
 .switch i { position: absolute; inset: 0; border-radius: 99px; background: var(--raise); border: 1px solid var(--line); transition: background .2s; pointer-events: none; }
@@ -401,7 +412,7 @@ dialog[open] { position: fixed; inset: auto 0 0 0; }
           <div class="desc" id="power-desc"></div>
         </div>
         <div class="setting" id="set-poweroff">
-          <div class="line"><b>The comma can turn it off</b>
+          <div class="line"><b>The comma can turn it off<span class="dflt" id="d-poweroff"></span></b>
             <label class="switch"><input type="checkbox" id="sw-poweroff" aria-label="The comma can turn the Jetson off"><i></i></label></div>
           <div class="desc">When the comma shuts down to protect the car battery (low battery, or parked 30 hours), the Jetson turns off too and stays off until its power is reconnected.</div>
         </div>
@@ -409,18 +420,44 @@ dialog[open] { position: fixed; inset: auto 0 0 0; }
       <section class="card" id="set-desktop" hidden>
         <h2>Desktop</h2>
         <div class="setting">
-          <div class="line"><b>Start the desktop</b>
+          <div class="line"><b>Start the desktop<span class="dflt" id="d-desktop"></span></b>
             <label class="switch"><input type="checkbox" id="sw-desktop" aria-label="Start the desktop"><i></i></label></div>
           <div class="desc">Jetlink does not need it. Off leaves more memory for the models and starts faster, from the next restart.</div>
         </div>
       </section>
+      <section class="card" id="set-swap" hidden>
+        <h2>Swap</h2>
+        <div class="setting">
+          <div class="line"><b>Swap for the 1.7 GB models<span class="dflt" id="d-swap"></span></b>
+            <label class="switch"><input type="checkbox" id="sw-swap" aria-label="Swap for the 1.7 GB models"><i></i></label></div>
+          <div class="desc" id="swap-desc"></div>
+        </div>
+      </section>
+      <section class="card" id="set-perf" hidden>
+        <h2>Performance</h2>
+        <div class="setting">
+          <div class="line"><b>Power mode</b></div>
+          <div class="segmented" id="seg-pmode" role="group" aria-label="Power mode"></div>
+          <div class="desc" id="pmode-desc"></div>
+        </div>
+        <div class="setting">
+          <div class="line"><b>Full speed while connected<span class="dflt" id="d-clocks"></span></b>
+            <label class="switch"><input type="checkbox" id="sw-clocks" aria-label="Full speed while connected"><i></i></label></div>
+          <div class="desc" id="clocks-desc"></div>
+        </div>
+        <div class="perfnow" id="perf-now" hidden><span class="nowk">Now</span> <span id="perf-now-v"></span></div>
+      </section>
       <section class="card" id="set-autostart" hidden>
         <h2>Start-up</h2>
         <div class="setting">
-          <div class="line"><b>Start Jetlink with this computer</b>
+          <div class="line"><b>Start Jetlink with this computer<span class="dflt" id="d-autostart"></span></b>
             <label class="switch"><input type="checkbox" id="sw-autostart" aria-label="Start Jetlink with this computer"><i></i></label></div>
           <div class="desc">Off: start it yourself with <code>jetlink start</code>.</div>
         </div>
+      </section>
+      <section class="card wide" id="set-reset" hidden>
+        <div class="resetrow"><p>Some settings differ from the defaults.</p>
+          <button type="button" class="btn small" id="reset-defaults">Reset to defaults</button></div>
       </section>
       <section class="card" id="set-web">
         <h2>Web page</h2>
@@ -1013,6 +1050,16 @@ function changes() {
   return Object.keys(S.system.settings).filter(k => k in S.draft && S.draft[k] !== S.system.settings[k]);
 }
 
+// The on/off answers: their switch (sw-<id>) and default tag (d-<id>), their
+// words as the installer takes them, and what the apply sheet says for each.
+const SWITCHES = {
+  comma_poweroff: { id: 'poweroff', on: 'yes', off: 'no', said: ['The comma can turn it off', 'The comma does not turn it off'] },
+  desktop: { id: 'desktop', on: 'on', off: 'off', said: ['Start the desktop', 'No desktop'] },
+  swap: { id: 'swap', on: 'on', off: 'off', said: ['Swap for the 1.7 GB models', 'No swap for the 1.7 GB models'] },
+  clocks: { id: 'clocks', on: 'on', off: 'off', said: ['Full speed while connected', 'NVIDIA sets the clocks'] },
+  autostart: { id: 'autostart', on: 'yes', off: 'no', said: ['Start with the computer', 'Start it yourself'] },
+};
+
 function drawSettings() {
   const sys = S.system, off = $('settings-off');
   const ready = controls() && !!sys && sys.installed;
@@ -1024,30 +1071,85 @@ function drawSettings() {
   const applies = new Set(ready ? Object.keys(sys.settings) : []);
   $('set-power').hidden = !applies.has('power');
   $('set-desktop').hidden = !applies.has('desktop');
+  $('set-swap').hidden = !applies.has('swap');
+  $('set-perf').hidden = !applies.has('power_mode');
   $('set-autostart').hidden = !applies.has('autostart');
   $('set-signin').hidden = !controls();
   const port = (sys && sys.page_port) || location.port || 80;
   $('web-addr').textContent = `http://${S.host && S.host.hostname ? S.host.hostname + '.local' : location.hostname}${String(port) === '80' ? '' : ':' + port}`;
   $('web-port').textContent = port;
-  if (!ready) { $('applybar').hidden = true; document.body.classList.remove('applying'); return; }
+  if (!ready) { $('applybar').hidden = true; $('set-reset').hidden = true; document.body.classList.remove('applying'); return; }
+  const dflt = sys.defaults || {};
   const lock = driving() || !!busyTask();
+  for (const [key, sw] of Object.entries(SWITCHES)) {
+    $('d-' + sw.id).textContent = key in dflt ? 'Default: ' + (dflt[key] === sw.on ? 'on' : 'off') : '';
+    $('sw-' + sw.id).checked = draftValue(key) === sw.on;
+    $('sw-' + sw.id).disabled = lock;
+  }
   if (applies.has('power')) {
     const power = draftValue('power');
     for (const b of $('seg-power').children) { b.setAttribute('aria-pressed', String(b.dataset.v === power)); b.disabled = lock; }
+    segDefault($('seg-power'), dflt.power);
     $('power-desc').textContent = power === 'always'
       ? (sys.deep_sleep ? 'The Jetson sleeps while parked and wakes when the car starts.' : 'The Jetson stays awake while parked, at about 7 W: it cannot sleep.')
       : 'The Jetson loses power with the car and boots at every start.';
     $('set-poweroff').hidden = power !== 'always';
-    $('sw-poweroff').checked = draftValue('comma_poweroff') === 'yes';
-    $('sw-poweroff').disabled = lock;
   }
-  if (applies.has('desktop')) { $('sw-desktop').checked = draftValue('desktop') === 'on'; $('sw-desktop').disabled = lock; }
-  if (applies.has('autostart')) { $('sw-autostart').checked = draftValue('autostart') === 'yes'; $('sw-autostart').disabled = lock; }
+  if (applies.has('power_mode')) drawPerformance(sys, lock);
+  if (applies.has('swap')) $('swap-desc').textContent = swapDesc(sys.swap_facts || {}, draftValue('swap') === 'on', sys.settings.swap === 'on');
+  $('set-reset').hidden = !Object.keys(dflt).some(k => draftValue(k) !== dflt[k]);
+  $('reset-defaults').disabled = lock;
   const n = changes().length;
   $('applybar').hidden = !n || S.tab !== 'settings';
   document.body.classList.toggle('applying', !$('applybar').hidden);
   $('apply-s').textContent = driving() ? PARKED_ONLY : busyTask() ? 'Wait for the run going now.' : 'The server restarts to apply ' + (n === 1 ? 'this change.' : 'these changes.');
   $('apply-go').disabled = lock;
+}
+
+// "Default" under the segment the installer recommends.
+function segDefault(seg, value) {
+  for (const b of seg.children) {
+    let small = b.querySelector('small');
+    if (b.dataset.v === value) {
+      if (!small) { small = document.createElement('small'); small.textContent = 'Default'; b.append(small); }
+    } else if (small) small.remove();
+  }
+}
+
+// The Jetson's modes as the server offers them, slowest first, each its
+// answer and its name: the fastest's answer is `fastest`.
+const modeName = m => m.replace(/_/g, ' ');
+function drawPerformance(sys, lock) {
+  const modes = sys.power_modes || [], seg = $('seg-pmode'), shown = modes.map(m => m.value).join(' ');
+  if (seg.dataset.modes !== shown) {
+    seg.dataset.modes = shown;
+    seg.innerHTML = modes.map(m => `<button type="button" data-v="${esc(m.value)}" aria-pressed="false">${esc(modeName(m.name))}</button>`).join('');
+  }
+  const picked = draftValue('power_mode');
+  for (const b of seg.children) { b.setAttribute('aria-pressed', String(b.dataset.v === picked)); b.disabled = lock; }
+  segDefault(seg, sys.defaults && sys.defaults.power_mode);
+  $('pmode-desc').textContent = picked === 'fastest' ? 'The fastest mode.' : 'Uses less power. Models run slower.';
+  $('clocks-desc').textContent = draftValue('clocks') === 'on' ? 'Saves power when parked.' : 'NVIDIA sets the clocks. Frames can run slower.';
+  // what the clocks are now, from the hardware panel's sample
+  const now = perfNow(sys);
+  $('perf-now').hidden = !now;
+  if (now) $('perf-now-v').innerHTML = now;
+}
+
+// "Full speed · comma connected", from whether the GPU's clock is held now
+function perfNow(sys) {
+  const held = S.hw && S.hw.clocks_held;
+  if (held === undefined) return '';
+  if (!held) return '<b>Power saving</b> · ' + (sys.settings.clocks === 'off' ? 'NVIDIA sets the clocks' : 'parked');
+  return '<b>Full speed</b> · ' + (S.engine && S.engine.state === 'building' ? 'building a model' : 'comma connected');
+}
+
+// What the swap answer does here, from what the installer recorded.
+function swapDesc(sw, on, was) {
+  if (on && !was) return 'Adds what this Jetson is missing.';
+  if (!on) return was ? 'The 1.7 GB models may fail to build.' : `The 1.7 GB models need ${sw.need_gb ? sw.need_gb + ' GB of ' : ''}swap to build.`;
+  if (sw.short_gb) return `Not enough free disk space for ${sw.short_gb} GB of swap.`;
+  return sw.file_gb ? `Uses a ${sw.file_gb} GB swap file.` : 'This Jetson has enough swap.';
 }
 
 function setDraft(key, value) {
@@ -1063,15 +1165,15 @@ function applySettings() {
   // every answer that applies, so the run leaves what the page shows
   const body = {};
   for (const k of Object.keys(S.system.settings)) body[k] = draftValue(k);
-  const what = keys.map(k => ({
-    power: draftValue('power') === 'always' ? 'Always on' : 'Switched power',
-    comma_poweroff: draftValue('comma_poweroff') === 'yes' ? 'The comma can turn it off' : 'The comma does not turn it off',
-    desktop: draftValue('desktop') === 'on' ? 'Start the desktop' : 'No desktop',
-    autostart: draftValue('autostart') === 'yes' ? 'Start with the computer' : 'Start it yourself',
-  })[k]);
+  const what = keys.map(k => {
+    const v = draftValue(k), sw = SWITCHES[k];
+    if (sw) return sw.said[v === sw.on ? 0 : 1];
+    if (k === 'power') return v === 'always' ? 'Always on' : 'Switched power';
+    return v === 'fastest' ? 'The fastest power mode' : 'Power mode ' + modeName(v);
+  });
   sheet({
     title: 'Apply the changes?',
-    body: `<p>${what.map(esc).join('. ')}.</p><p>The installer applies them and restarts the server, which takes about half a minute. Until it is back, the comma drives on its small model.</p>`,
+    body: `<p>${what.map(esc).join('. ')}.</p><p>The installer applies them and restarts the server, which takes about half a minute; the Jetson does not restart. Until the server is back, the comma drives on its small model.</p>`,
     actions: [{ text: 'Apply changes', tone: 'primary', run: async () => {
       const r = await api('POST', 'api/settings', body);
       S.draft = {};
@@ -1351,6 +1453,7 @@ async function tapped(t) {
     return;
   }
   if (t.dataset.v && t.closest('#seg-power')) return setDraft('power', t.dataset.v);
+  if (t.dataset.v && t.closest('#seg-pmode')) return setDraft('power_mode', t.dataset.v);
   switch (t.id) {
     case 'lib-load':
       S.libLoading = true; mark('library');
@@ -1394,9 +1497,10 @@ document.addEventListener('click', e => {
   const t = e.target.closest('button');
   if (t && !t.closest('#tabs') && !t.closest('#sheet')) tapped(t);
 });
-$('sw-poweroff').addEventListener('change', e => setDraft('comma_poweroff', e.target.checked ? 'yes' : 'no'));
-$('sw-desktop').addEventListener('change', e => setDraft('desktop', e.target.checked ? 'on' : 'off'));
-$('sw-autostart').addEventListener('change', e => setDraft('autostart', e.target.checked ? 'yes' : 'no'));
+for (const [key, sw] of Object.entries(SWITCHES)) $('sw-' + sw.id).addEventListener('change', e => setDraft(key, e.target.checked ? sw.on : sw.off));
+$('reset-defaults').addEventListener('click', () => {
+  for (const [k, v] of Object.entries((S.system && S.system.defaults) || {})) setDraft(k, v);
+});
 $('hw-more').addEventListener('toggle', () => mark('hw'));
 
 // -- the event stream ------------------------------------------------------------
@@ -1420,9 +1524,10 @@ function handle(m) {
     case 'benchmark': S.bench = m; mark('bench'); break;
     case 'stats': addStats(m); S.stats = m; S.statsAt = Date.now(); mark('budget', 'status'); break;
     case 'hw': {
-      const first = !S.hw;
+      const first = !S.hw, held = S.hw && S.hw.clocks_held;
       S.hw = m;
       mark('hw', 'budget');
+      if (m.clocks_held !== held) mark('settings');
       if (first) mark('models');  // the disk's size for its bar
       break;
     }

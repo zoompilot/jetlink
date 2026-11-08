@@ -65,7 +65,8 @@
     static let longestAwake = 12 * 3600
     /// What install.sh's `--set` takes for each answer.
     static let choices: [String: Set<String>] = [
-      "power": ["always", "switched"], "comma_poweroff": ["yes", "no"], "desktop": ["on", "off"], "autostart": ["yes", "no"],
+      "power": ["always", "switched"], "comma_poweroff": ["yes", "no"], "desktop": ["on", "off"], "swap": ["on", "off"],
+      "clocks": ["on", "off"], "autostart": ["yes", "no"],
     ]
     static let colour = try! NSRegularExpression(pattern: "\u{1B}\\[[0-9;]*[A-Za-z]")
 
@@ -107,7 +108,38 @@
       // the desktop question only for one that starts it, or that Jetlink turned off
       let off = conf["JETLINK_DESKTOP_OFF"] == "1"
       if off || bootsToDesktop() { settings["desktop"] = off ? "off" : "on" }
+      // the swap for one whose largest-model build needs it, or that has Jetlink's file
+      if (Int(conf["JETLINK_SWAP_NEED_GB"] ?? "") ?? 0) > 0 || !(conf["JETLINK_SWAP_FILE"] ?? "").isEmpty {
+        settings["swap"] = conf["JETLINK_SWAP"] == "off" ? "off" : "on"
+      }
+      // an installer that lists the power modes also takes these two
+      if !powerModes(answers).isEmpty {
+        settings["power_mode"] = conf["JETLINK_POWER_MODE"] ?? "fastest"
+        settings["clocks"] = conf["JETLINK_CLOCKS"] == "off" ? "off" : "on"
+      }
       return settings
+    }
+
+    /// The Jetson's power modes, slowest first, as the installer found them:
+    /// the last is the fastest.
+    func powerModes(_ answers: Answers) -> [String] {
+      (answers.conf["JETLINK_POWER_MODES"] ?? "").split(separator: " ").map(String.init)
+    }
+
+    /// The installer's recommended answers (`power=always swap=on`), as it
+    /// recorded them.
+    func defaults(_ answers: Answers) -> [String: String] {
+      let pairs = (answers.conf["JETLINK_DEFAULTS"] ?? "").split(separator: " ").map { $0.split(separator: "=", maxSplits: 1).map(String.init) }
+      return Dictionary(pairs.filter { $0.count == 2 }.map { ($0[0], $0[1]) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// What the swap answer stands on, as the installer recorded it: what
+    /// building the largest model needs, Jetlink's file, and what did not fit
+    /// on the disk.
+    func swapFacts(_ answers: Answers) -> [String: Int] {
+      ["need_gb": "JETLINK_SWAP_NEED_GB", "file_gb": "JETLINK_SWAP_GB", "short_gb": "JETLINK_SWAP_SHORT_GB"].mapValues {
+        Int(answers.conf[$0] ?? "") ?? 0
+      }
     }
 
     /// `systemctl get-default`, without running it: the link systemd follows.
@@ -123,6 +155,8 @@
     public func info() -> [String: Any] {
       guard let answers = answers() else { return ["installed": false] }
       let modes = Sysfs.read(root.path("/sys/power/mem_sleep")) ?? ""
+      let current = settings(answers)
+      let modeNames = powerModes(answers)
       return [
         "installed": true,
         "jetson": answers.jetson,
@@ -131,7 +165,11 @@
         "ref": answers.conf["JETLINK_REF"] ?? "",
         "commit": answers.conf["JETLINK_COMMIT"] ?? "",
         "server_version": answers.env["JETLINK_SERVER_VERSION"] ?? "",
-        "settings": settings(answers),
+        "settings": current,
+        "swap_facts": swapFacts(answers),
+        // as the page offers them: the fastest's answer is `fastest`
+        "power_modes": modeNames.map { ["value": $0 == modeNames.last ? "fastest" : $0, "name": $0] },
+        "defaults": defaults(answers).filter { current[$0.key] != nil },
         "deep_sleep": modes.split(separator: " ").contains { $0 == "deep" || $0 == "[deep]" },
         "sleep_after": answers.sleepAfter,
         "page_port": Int(answers.env["JETLINK_STATUS_PORT"] ?? "") ?? 0,
@@ -152,7 +190,8 @@
       var sets: [String] = []
       for (key, value) in settings.sorted(by: { $0.key < $1.key }) {
         guard here[key] != nil else { throw .refused("\(key) is not a setting on this computer.") }
-        guard PageHost.choices[key]?.contains(value) == true else { throw .refused("\(key) cannot be \(value).") }
+        let allowed = key == "power_mode" ? Set(["fastest"] + powerModes(answers)) : PageHost.choices[key]
+        guard allowed?.contains(value) == true else { throw .refused("\(key) cannot be \(value).") }
         sets.append("\(key)=\(value)")
       }
       guard !sets.isEmpty else { throw .refused("Nothing to change.") }

@@ -30,14 +30,15 @@ Environment=JETLINK_SLEEP_AFTER=0 JETLINK_STATUS_PORT=0
 EnvironmentFile=/etc/jetlink/server.env
 # TensorRT or nothing: a server that cannot load it exits, so the failure shows
 # in the journal and in `jetlink status` instead of the car being served from
-# the CPU. Two settings are flags or nothing: JETLINK_POWEROFF is --poweroff
-# on a Jetson whose user lets the comma power it off, and JETLINK_TENSORRT is
+# the CPU. Three settings are flags or nothing: JETLINK_POWEROFF is --poweroff
+# on a Jetson whose user lets the comma power it off, JETLINK_CLOCK_FLAGS is
+# --clocks on|off --power-mode NAME on a Jetson, and JETLINK_TENSORRT is
 # --tensorrt-libs DIR on a PC, whose TensorRT is its own copy (a Jetson's is
 # JetPack's, on the loader path). The web page on the status port asks for
 # the password in --web-auth's file, which `jetlink password` changes; without
 # the file the page shows the status only. `jetlink run` runs this line through
 # bash, so it has no systemd prefixes or specifiers.
-ExecStart=/opt/jetlink/current/bin/jetlink-server --usb --backend trt --cache ${JETLINK_CACHE_DIR} --sleep-after ${JETLINK_SLEEP_AFTER} --status-port ${JETLINK_STATUS_PORT} --web-auth /etc/jetlink/web-auth.json $JETLINK_POWEROFF $JETLINK_TENSORRT
+ExecStart=/opt/jetlink/current/bin/jetlink-server --usb --backend trt --cache ${JETLINK_CACHE_DIR} --sleep-after ${JETLINK_SLEEP_AFTER} --status-port ${JETLINK_STATUS_PORT} --web-auth /etc/jetlink/web-auth.json $JETLINK_POWEROFF $JETLINK_CLOCK_FLAGS $JETLINK_TENSORRT
 Restart=always
 RestartSec=2
 

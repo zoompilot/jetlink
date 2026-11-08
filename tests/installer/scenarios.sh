@@ -24,11 +24,13 @@ EXTLINUX=$JETLINK_TEST_EXTLINUX
 # the lock a native server makes to be held awake; none until a scenario says
 export JETLINK_TEST_AWAKE_LOCK=/tmp/jetlink-awake.lock
 LOCK=$JETLINK_TEST_AWAKE_LOCK
-# the same questions on every machine: plenty of disk, and no swap yet
-export JETLINK_TEST_FREE_GB=100 JETLINK_TEST_SWAPS=/tmp/swaps
+# the same questions on every machine: plenty of disk, an 8 GB Orin Nano's
+# memory, and no swap yet
+export JETLINK_TEST_FREE_GB=100 JETLINK_TEST_SWAPS=/tmp/swaps JETLINK_TEST_MEMINFO=/tmp/meminfo
 # nothing waited on here is real, so there is nothing to wait for
 export JETLINK_TEST_POLL_S=0 JETLINK_TEST_SETTLE_S=0
 printf 'Filename\tType\tSize\tUsed\tPriority\n/dev/zram0 partition 1000000 0 5\n' >/tmp/swaps
+printf 'MemTotal:        7727244 kB\n' >/tmp/meminfo
 PATH="$FAKE_BIN:$PATH"
 OUT=/tmp/out.txt
 UNITS=/etc/systemd/system
@@ -415,15 +417,13 @@ expect_in /etc/jetlink/install.conf "JETLINK_REF=latest"
 expect_in /etc/jetlink/install.conf "JETLINK_VERSION=v0.10.0"
 check "the unit is not the server's own" cmp -s "$UNITS/jetlink-server.service" /opt/jetlink/0.10.0/share/jetlink/systemd/jetlink-server.service
 expect_in "$UNITS/jetlink-server.service.d/10-cache.conf" "RequiresMountsFor=/mnt/data/jetlink"
-# jetson_clocks at boot after the power mode is set, which would undo it, and
-# now; the server waits for neither
-expect_in "$UNITS/jetlink-clocks.service" "ExecStart=/usr/bin/jetson_clocks"
-expect_in "$UNITS/jetlink-clocks.service" "After=nvpmodel.service"
-expect_in "$UNITS/jetlink-clocks.service" "WantedBy=multi-user.target"
+# the server sets the clocks itself, told how in server.env, inside the
+# limits of the mode it names; no jetson_clocks, and no wait for nvpmodel
+expect_no_file "$UNITS/jetlink-clocks.service"
+expect_in /etc/jetlink/server.env 'JETLINK_CLOCK_FLAGS="--clocks on --power-mode MAXN_SUPER"'
 expect_no_file "$UNITS/jetlink-server.service.d/20-jetson-clocks.conf"
 refute "the server waits for nvpmodel" grep -rqs nvpmodel "$UNITS/jetlink-server.service" "$UNITS/jetlink-server.service.d"
-expect_ran "systemctl enable jetlink-clocks.service"
-expect_before "systemctl restart jetlink-clocks.service" "systemctl restart jetlink-server"
+expect_not_ran "jetlink-clocks.service"
 # it waits for the GPU's driver instead: as systemd runs the wait, it ends at
 # once with the driver's control node there
 GPU_DROPIN="$UNITS/jetlink-server.service.d/20-jetson-gpu.conf"
@@ -469,17 +469,22 @@ jetlink models list >/dev/null 2>&1
 expect_ran "jetlink-server models list --cache /mnt/data/jetlink"
 jetlink models --help >/dev/null 2>&1
 expect_ran "jetlink-server models --help"
-# the installed unit's command line, with server.env's settings
+# the installed unit's command line, with server.env's settings; the server
+# sets the clocks itself
+: >"$FAKE_LOG"
 jetlink run --log-level debug >/dev/null 2>&1
-expect_ran "jetlink-server --usb --backend trt --cache /mnt/data/jetlink --sleep-after 120 --status-port 5600 --web-auth /etc/jetlink/web-auth.json --poweroff --log-level debug"
+expect_ran "jetlink-server --usb --backend trt --cache /mnt/data/jetlink --sleep-after 120 --status-port 5600 --web-auth /etc/jetlink/web-auth.json --poweroff --clocks on --power-mode MAXN_SUPER --log-level debug"
+expect_not_ran "jetson_clocks"
 systemctl start jetlink-server
 
 scenario "update keeps the answers and asks nothing"
 # a native server that sleeps, with the awake lock it makes at start
 : >"$LOCK" && chmod 644 "$LOCK"
-# and the clocks drop-in 0.7.4 and older wrote, which held the server back
+# and the clocks drop-in 0.7.4 and older wrote, which held the server back,
+# and the jetson_clocks unit 0.9.0 and older installed
 printf '[Unit]\nAfter=nvpmodel.service\n[Service]\nExecStartPre=-/usr/bin/jetson_clocks\n' \
   >"$UNITS/jetlink-server.service.d/20-jetson-clocks.conf"
+printf '[Service]\nExecStart=/usr/bin/jetson_clocks\n' >"$UNITS/jetlink-clocks.service"
 # and a desktop turned back on by hand, which an update leaves on
 echo graphical.target >"$FAKE_STATE/default-target"
 cli update
@@ -488,8 +493,10 @@ expect_not_ran "systemctl set-default"
 expect_in "$FAKE_STATE/default-target" graphical.target
 expect_no_out "Restart this computer once"
 expect_no_file "$UNITS/jetlink-server.service.d/20-jetson-clocks.conf"
-expect_file "$UNITS/jetlink-clocks.service"
+expect_no_file "$UNITS/jetlink-clocks.service"
+expect_ran "systemctl disable jetlink-clocks.service"
 expect_no_out "jetlink-clocks.service is not the installer's"
+expect_in /etc/jetlink/server.env 'JETLINK_CLOCK_FLAGS="--clocks on --power-mode MAXN_SUPER"'
 # boot is as the install left it, and what it was before stays known
 expect_not_ran "efibootmgr -t"
 expect_quiet_added
@@ -789,13 +796,59 @@ expect_ran "systemctl set-default graphical.target"
 expect_out "Restart this computer once to bring the desktop back: sudo reboot"
 expect_in /etc/jetlink/install.conf "JETLINK_DESKTOP_OFF=0"
 
+scenario "jetlink setup --set picks the power mode and the clocks, live, and an update keeps them"
+reset_box; jetson 39 2.1
+run_installer curl '' --yes
+expect_in /etc/jetlink/install.conf "JETLINK_POWER_MODE=fastest"
+expect_in /etc/jetlink/install.conf 'JETLINK_POWER_MODES=7W\ 15W\ 25W\ MAXN_SUPER'
+expect_in /etc/jetlink/install.conf 'JETLINK_DEFAULTS=power=always\ comma_poweroff=yes\ desktop=off\ swap=on\ power_mode=fastest\ clocks=on'
+expect_in /etc/jetlink/install.conf "JETLINK_CLOCKS=on"
+: >"$FAKE_LOG"
+cli setup --set power_mode=25W --set clocks=off </dev/null
+expect_rc 0
+expect_out "Switch to power mode 25W"
+expect_out "Leave the clocks to NVIDIA's scaling"
+expect_ran "nvpmodel -m 1"
+expect_no_out "Restart this computer once"
+expect_in /etc/jetlink/install.conf "JETLINK_POWER_MODE=25W"
+expect_in /etc/jetlink/install.conf "JETLINK_CLOCKS=off"
+# the server restarts with them: the clocks follow at once
+expect_in /etc/jetlink/server.env 'JETLINK_CLOCK_FLAGS="--clocks off --power-mode 25W"'
+expect_ran "systemctl restart jetlink-server"
+# an update keeps both
+: >"$FAKE_LOG"
+run_installer curl '' --update
+expect_rc 0
+expect_not_ran "nvpmodel -m"
+expect_in /etc/jetlink/install.conf "JETLINK_POWER_MODE=25W"
+expect_in /etc/jetlink/server.env 'JETLINK_CLOCK_FLAGS="--clocks off --power-mode 25W"'
+# back to the defaults
+: >"$FAKE_LOG"
+cli setup --set power_mode=fastest --set clocks=on </dev/null
+expect_rc 0
+expect_out "Hold the clocks at the power mode's top speed while serving"
+expect_ran "nvpmodel -m 2"
+expect_in /etc/jetlink/install.conf "JETLINK_POWER_MODE=fastest"
+expect_in /etc/jetlink/server.env 'JETLINK_CLOCK_FLAGS="--clocks on --power-mode MAXN_SUPER"'
+# the fastest by its name is the fastest
+cli setup --set power_mode=MAXN_SUPER </dev/null
+expect_rc 0
+expect_in /etc/jetlink/install.conf "JETLINK_POWER_MODE=fastest"
+# a mode this Jetson does not have, and a clocks answer that is not one
+cli setup --set power_mode=60W </dev/null
+expect_rc 1
+expect_out "--set power_mode takes fastest or one of this Jetson's modes (7W, 15W, 25W, MAXN_SUPER), not '60W'."
+cli setup --set clocks=auto </dev/null
+expect_rc 1
+expect_out "--set clocks takes on or off, not 'auto'."
+
 scenario "--set with an unknown key, a bad value or the other computer's key fails and changes nothing"
 cp /etc/jetlink/install.conf /tmp/install.conf.before
 : >"$FAKE_LOG"
 cli setup --set colour=blue </dev/null
 expect_rc 1
 expect_out "--set does not know 'colour'."
-expect_out "On a Jetson: power=always|switched, comma_poweroff=yes|no, desktop=on|off. On a PC: autostart=yes|no."
+expect_out "On a Jetson: power=always|switched, comma_poweroff=yes|no, desktop=on|off, swap=on|off, power_mode=fastest|<a mode it has>, clocks=on|off. On a PC: autostart=yes|no."
 cli setup --set power=sometimes </dev/null
 expect_rc 1
 expect_out "--set power takes always or switched, not 'sometimes'."
@@ -1000,7 +1053,7 @@ expect_in /etc/jetlink/server.env "JETLINK_FLAVOR=linux-aarch64"
 expect_ran "nvpmodel -m 2"
 expect_in /etc/fstab "/mnt/data/jetlink-swapfile none swap sw 0 0"
 expect_no_file /etc/udev/rules.d/99-jetlink-usb-wakeup.rules
-expect_in "$UNITS/jetlink-clocks.service" "After=nvpmodel.service"
+expect_no_file "$UNITS/jetlink-clocks.service"
 expect_no_file "$UNITS/jetlink-server.service.d/20-jetson-clocks.conf"
 expect_file "$UNITS/jetlink-server.service.d/20-jetson-gpu.conf"
 expect_in /etc/jetlink/server.env 'JETLINK_POWEROFF=""'
@@ -1039,12 +1092,14 @@ run_installer curl '' --update
 expect_rc 0
 expect_file /mnt/data/jetlink/poweroff-dry-run
 
-scenario "a power mode that needs a restart says so"
+scenario "a power mode nvpmodel will not switch live needs no restart: Jetlink holds its limits"
 reset_box; jetson 39 2.1
 FAKE_PM_REBOOT=1 run_installer curl '' --yes
 expect_rc 0
-# one restart for both, the power mode and the desktop --yes turns off
-expect_out "Restart this computer once to finish switching the power mode and turn the desktop off: sudo reboot"
+expect_out "Power mode set to MAXN_SUPER (Jetlink holds its clock limits)"
+expect_in /etc/jetlink/server.env 'JETLINK_CLOCK_FLAGS="--clocks on --power-mode MAXN_SUPER"'
+# the restart is the desktop's alone
+expect_out "Restart this computer once to turn the desktop off: sudo reboot"
 
 scenario "uninstall on a Jetson puts its boot back as it was, and takes the web page's password"
 reset_box; jetson 39 2.1
@@ -1062,7 +1117,6 @@ expect_out "Kernel messages are on the console at boot again"
 expect_in "$FAKE_STATE/uefi-timeout" 5
 expect_extlinux_as_was
 expect_no_file "$EXTLINUX.jetlink-bak"
-expect_ran "systemctl disable jetlink-clocks.service"
 expect_no_file "$UNITS/jetlink-clocks.service"
 expect_no_file /etc/jetlink/web-auth.json
 
@@ -1481,13 +1535,89 @@ expect_rc 0
 expect_in /etc/jetlink/install.conf "JETLINK_POWER=switched"
 expect_in /etc/jetlink/server.env "JETLINK_SLEEP_AFTER=0"
 
+scenario "an 8 GB Jetson gets the 3 GB of swap the largest model's build needs, even on a 64 GB card"
+reset_box; jetson 39 2.1
+# the free space a 64 GB SD card had left
+JETLINK_TEST_FREE_GB=23 run_installer curl '' --yes
+expect_rc 0
+expect_out "Add 3 GB of swap, so the 1.7 GB models can be built"
+expect_ran "fallocate -l 3G /mnt/data/jetlink-swapfile"
+expect_in /etc/fstab "/mnt/data/jetlink-swapfile none swap sw 0 0"
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP=on"
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP_GB=3"
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP_NEED_GB=3"
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP_SHORT_GB=0"
+
 scenario "no swap on a disk too small for it, said plainly"
 reset_box; jetson 39 2.1
-JETLINK_TEST_FREE_GB=20 run_installer curl '' --yes
+JETLINK_TEST_FREE_GB=17 run_installer curl '' --yes
 expect_rc 0
-expect_out "Not enough disk space for 8 GB of swap"
+expect_out "Not enough disk space for 3 GB of swap, so the 1.7 GB models may fail to build."
+expect_out "Free 1 GB, then add it with: jetlink setup --set swap=on"
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP_SHORT_GB=3"
 refute "no swap should be added" grep -q swapfile /etc/fstab
+expect_not_ran "fallocate"
 expect_ran "nvpmodel -m 2"
+
+scenario "swap the Jetson has counts, and only the rest is added"
+reset_box; jetson 39 2.1
+printf 'Filename\tType\tSize\tUsed\tPriority\n/swapfile file 2097148 0 -2\n' >/tmp/swaps-2g
+JETLINK_TEST_SWAPS=/tmp/swaps-2g run_installer curl '' --yes
+expect_rc 0
+expect_out "Add 1 GB of swap, so the 1.7 GB models can be built"
+expect_ran "fallocate -l 1G /mnt/data/jetlink-swapfile"
+# enough of its own: nothing added
+reset_box; jetson 39 2.1
+printf 'Filename\tType\tSize\tUsed\tPriority\n/swapfile file 4194300 0 -2\n' >/tmp/swaps-4g
+JETLINK_TEST_SWAPS=/tmp/swaps-4g run_installer curl '' --yes
+expect_rc 0
+expect_no_out "of swap, so the 1.7 GB models"
+expect_not_ran "fallocate"
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP=on"
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP_GB=0"
+
+scenario "a 16 GB Jetson builds the largest model without swap"
+reset_box; jetson 39 2.1
+printf 'MemTotal:       15655000 kB\n' >/tmp/meminfo-16g
+JETLINK_TEST_MEMINFO=/tmp/meminfo-16g run_installer curl '' --yes
+expect_rc 0
+expect_not_ran "fallocate"
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP_NEED_GB=0"
+
+scenario "jetlink setup --set swap turns Jetlink's swap off and on"
+reset_box; jetson 39 2.1
+run_installer curl '' --yes
+expect_in /etc/fstab "/mnt/data/jetlink-swapfile none swap sw 0 0"
+: >"$FAKE_LOG"
+cli setup --set swap=off </dev/null
+expect_rc 0
+expect_out "Remove Jetlink's swap file"
+expect_not_in /etc/fstab "jetlink-swapfile"
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP=off"
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP_FILE="
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP_GB=0"
+# an update keeps it off
+: >"$FAKE_LOG"
+run_installer curl '' --update
+expect_rc 0
+expect_not_ran "fallocate"
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP=off"
+: >"$FAKE_LOG"
+cli setup --set swap=on </dev/null
+expect_rc 0
+expect_ran "fallocate -l 3G /mnt/data/jetlink-swapfile"
+expect_in /etc/fstab "/mnt/data/jetlink-swapfile none swap sw 0 0"
+expect_in /etc/jetlink/install.conf "JETLINK_SWAP=on"
+# asked for with too little room: refused, saying why, and nothing changes
+cli setup --set swap=off </dev/null
+cp /etc/jetlink/install.conf /tmp/install.conf.before
+: >"$FAKE_LOG"
+JETLINK_TEST_FREE_GB=8 cli setup --set swap=on </dev/null
+expect_rc 1
+expect_out "Not enough free disk space for 3 GB of swap: 8 GB is free, and Jetlink keeps 6 GB free besides."
+expect_out "Free 1 GB and try again."
+expect_not_ran "fallocate"
+check "the answers changed" cmp -s /tmp/install.conf.before /etc/jetlink/install.conf
 
 scenario "no terminal and no --yes"
 reset_box; jetson 39 2.1
@@ -1701,7 +1831,7 @@ expect_no_file "$UNITS/jetlink-server.service.d/50-pull.conf"
 expect_file "$UNITS/jetlink-server.service.d/60-nice.conf"
 expect_in "$UNITS/jetlink-server.service.d/10-cache.conf" "RequiresMountsFor=/mnt/data/jetlink"
 expect_no_file "$UNITS/jetlink-server.service.d/20-jetson-clocks.conf"
-expect_file "$UNITS/jetlink-clocks.service"
+expect_no_file "$UNITS/jetlink-clocks.service"
 expect_in "$UNITS/jetlink-server.service" "/opt/jetlink/current/bin/jetlink-server"
 expect_no_file /usr/local/lib/jetlink
 expect_no_file "$UNITS/jetlink-poweroff.path"

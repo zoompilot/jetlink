@@ -30,7 +30,7 @@
       let commands: FakeCommands
       let host: PageHost
 
-      init(jetson: Bool = true, desktopOff: Bool = false, graphical: Bool = true, commands: FakeCommands = FakeCommands()) {
+      init(jetson: Bool = true, desktopOff: Bool = false, graphical: Bool = true, conf: String = "", commands: FakeCommands = FakeCommands()) {
         tree.write(
           "/etc/jetlink/install.conf",
           """
@@ -42,6 +42,7 @@
           JETLINK_POWEROFF_WITH_COMMA=1
           JETLINK_DESKTOP_OFF=\(desktopOff ? 1 : 0)
           JETLINK_AUTOSTART=1
+          \(conf)
 
           """)
         tree.write(
@@ -110,6 +111,63 @@
       #expect(computer.host.info()["settings"] as? [String: String] == ["autostart": "yes"])
       let empty = Tree()
       #expect(PageHost(root: empty.root, runner: FakeCommands()).info()["installed"] as? Bool == false)
+    }
+
+    @Test("The swap answer where the largest model's build needs swap, with what the installer recorded")
+    func swap() throws {
+      let made = Installed(
+        conf: #"""
+          JETLINK_SWAP=on
+          JETLINK_SWAP_FILE=/mnt/data/jetlink-swapfile
+          JETLINK_SWAP_GB=1
+          JETLINK_SWAP_NEED_GB=3
+          JETLINK_SWAP_SHORT_GB=0
+          """#)
+      let info = made.host.info()
+      #expect((info["settings"] as? [String: String])?["swap"] == "on")
+      #expect(info["swap_facts"] as? [String: Int] == ["need_gb": 3, "file_gb": 1, "short_gb": 0])
+      // turned off: the answer stays, and the page offers it back
+      let off = Installed(conf: "JETLINK_SWAP=off\nJETLINK_SWAP_FILE=\nJETLINK_SWAP_NEED_GB=3")
+      #expect((off.host.info()["settings"] as? [String: String])?["swap"] == "off")
+      try off.host.apply(["swap": "on"])
+      #expect(off.commands.ran.all.last?.suffix(2) == ["--set", "swap=on"])
+      // a 16 GB Jetson needs none, and is not asked
+      let big = Installed(conf: "JETLINK_SWAP=on\nJETLINK_SWAP_FILE=\nJETLINK_SWAP_NEED_GB=0")
+      #expect((big.host.info()["settings"] as? [String: String])?["swap"] == nil)
+      #expect(throws: PageSystemError.self) { try big.host.apply(["swap": "off"]) }
+      #expect(throws: PageSystemError.self) { try made.host.apply(["swap": "maybe"]) }
+    }
+
+    @Test("The power mode and the clocks, and the installer's recommended answers")
+    func performance() throws {
+      let installed = Installed(
+        conf: #"""
+          JETLINK_POWER_MODE=25W
+          JETLINK_POWER_MODES=15W\ 25W\ MAXN_SUPER
+          JETLINK_CLOCKS=off
+          JETLINK_DEFAULTS=power=always\ comma_poweroff=yes\ desktop=off\ swap=on\ power_mode=fastest\ clocks=on
+          """#)
+      let info = installed.host.info()
+      let settings = try #require(info["settings"] as? [String: String])
+      #expect(settings["power_mode"] == "25W" && settings["clocks"] == "off")
+      // as the page offers them: the fastest's answer is fastest
+      #expect(
+        info["power_modes"] as? [[String: String]] == [
+          ["value": "15W", "name": "15W"], ["value": "25W", "name": "25W"], ["value": "fastest", "name": "MAXN_SUPER"],
+        ])
+      // only those that apply here: no swap answer on this one
+      #expect(
+        info["defaults"] as? [String: String] == [
+          "power": "always", "comma_poweroff": "yes", "desktop": "off", "power_mode": "fastest", "clocks": "on",
+        ])
+      try installed.host.apply(["power_mode": "fastest", "clocks": "on"])
+      #expect(installed.commands.ran.all.last?.suffix(4) == ["--set", "clocks=on", "--set", "power_mode=fastest"])
+      #expect(throws: PageSystemError.self) { try installed.host.apply(["power_mode": "60W"]) }
+      #expect(throws: PageSystemError.self) { try installed.host.apply(["clocks": "auto"]) }
+      // an installer that does not list the modes takes neither; kept in a
+      // let, as its files go with it
+      let plain = Installed()
+      #expect(plain.host.info()["settings"] as? [String: String] == ["power": "always", "comma_poweroff": "yes", "desktop": "on"])
     }
 
     @Test("Settings become one installer run, as its own unit, its output beside it")

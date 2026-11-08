@@ -41,10 +41,10 @@ the [server command](#the-server-command) and custom integrations.
   `jetlink setup` asks whether to.
 - Keeps models and prepared engines in `/mnt/data/jetlink` on a Jetson,
   `/var/lib/jetlink` on a PC.
-- Jetson only: sets the fastest power mode (MAXN SUPER on an Orin Nano; may
-  need one restart) and runs `jetson_clocks` at every boot
-  (`jetlink-clocks.service`); adds 8 GB of swap for preparing the 1.7 GB
-  models; stops boot waiting for a network (none in the car; about two
+- Jetson only: sets the fastest [power mode](#power-mode-and-clocks) (MAXN
+  SUPER on an Orin Nano) and tells the server to hold the clocks up while it
+  serves; adds the [swap](#swap) building the 1.7 GB
+  models needs; stops boot waiting for a network (none in the car; about two
   minutes); caps the system log at 200 MB; and [boots faster](#faster-boot).
   If you answer yes to turning off the desktop (asked when the Jetson starts
   one), it starts `multi-user.target` instead of `graphical.target` from the
@@ -104,10 +104,11 @@ any systemd distribution with glibc 2.35 or newer:
 4. `share/jetlink/systemd/jetlink-server.service` from the tarball in
    `/etc/systemd/system`, then
    `sudo systemctl daemon-reload && sudo systemctl enable --now jetlink-server`.
-5. Jetson: a oneshot unit, enabled, that runs `/usr/bin/jetson_clocks` with
-   `After=nvpmodel.service` and `WantedBy=multi-user.target`. Do not order the
-   server after nvpmodel: that waits for the desktop's login screen. Have the
-   server wait for `/dev/nvhost-ctrl-gpu` instead, in an `ExecStartPre`
+5. Jetson: `JETLINK_CLOCK_FLAGS="--clocks on --power-mode MAXN_SUPER"` (the
+   mode's name in `/etc/nvpmodel.conf`) in `server.env`, so the server sets
+   the clocks ([power mode and clocks](#power-mode-and-clocks)). Do not order
+   the server after nvpmodel: that waits for the desktop's login screen. Have
+   the server wait for `/dev/nvhost-ctrl-gpu` instead, in an `ExecStartPre`
    (the installer's is in `jetlink-server.service.d/20-jetson-gpu.conf`).
 6. Always-on supply only (lets the comma wake the Jetson):
    `share/jetlink/udev/99-jetlink-usb-wakeup.rules` in `/etc/udev/rules.d`.
@@ -144,8 +145,7 @@ as root, and starts it again 2 seconds after it exits. Its settings come from
   (`sudo systemctl edit jetlink-server`, then `Environment=JETLINK_USB_LPM=1`
   under `[Service]`).
 - Its own drop-ins wait for the cache's mount and, on a Jetson, for the GPU's
-  driver. `jetlink-clocks.service` runs `jetson_clocks` at boot once nvpmodel
-  has set the power mode; the server does not wait for it.
+  driver.
 
 `jetlink run` runs the service's command line, with those settings, in the
 terminal instead (it stops the service first; Ctrl-C stops it). Extra flags go
@@ -166,6 +166,9 @@ server. Give `--set` once for each answer; `install.sh --set` is the same.
 | `power` | `always` or `switched` | a Jetson |
 | `comma_poweroff` | `yes` or `no`; only with `always` | a Jetson |
 | `desktop` | `on` or `off`, from the next restart | a Jetson with a desktop |
+| `swap` | `on` or `off`: Jetlink's [swap](#swap) file | a Jetson |
+| `power_mode` | `fastest` or one of the Jetson's modes (`15W`, `25W`, `MAXN_SUPER` on an Orin Nano) | a Jetson |
+| `clocks` | `on` or `off` ([power mode and clocks](#power-mode-and-clocks)) | a Jetson |
 | `autostart` | `yes` or `no` | a PC |
 
 - An answer the install already has changes nothing.
@@ -173,6 +176,45 @@ server. Give `--set` once for each answer; `install.sh --set` is the same.
   before anything changes.
 - It needs an install to change, and does not go with `--update`,
   `--uninstall`, `--ref` or `--binary`.
+
+<a id="swap"></a>
+
+### Swap
+
+Building the engine of a 1.7 GB model such as Lebowski takes more memory than
+an 8 GB Jetson has. The build holds about 5.8 GB, plus TensorRT's workspace
+(40% of the memory free when it starts), while the system and a desktop keep
+about 2 GB. Measured on an 8 GB Orin Nano: with 1 GB of swap the build was
+killed for lack of memory, and with 2 GB it finished with 100 MB of swap to
+spare.
+
+So the installer makes sure a Jetson has the swap it needs plus half a
+gigabyte: 3 GB on an 8 GB Jetson, none on a 16 GB one. Swap the Jetson already
+has counts (JetPack's zram does not: it is compressed memory), and Jetlink's
+file, `/mnt/data/jetlink-swapfile`, adds only what is missing. A new install
+needs 15 GB of free disk space besides the swap, and an installed one 6 GB.
+With less, the installer says how much to free and adds nothing. Free it, then
+run `sudo jetlink setup --set swap=on`, or turn swap on in the web page's
+settings. `swap=off` removes Jetlink's file, and updates leave it off. A swap
+file from an older installer (8 GB) stays as it is; turning swap off and on
+again replaces it with one of the size needed.
+
+<a id="power-mode-and-clocks"></a>
+
+### Power mode and clocks
+
+Jetlink runs a Jetson in its fastest power mode (MAXN SUPER on an Orin Nano)
+for every model. With **full speed while connected** on, the default, the
+server holds the GPU, memory and processor at the mode's top speed while a
+comma is connected or a model builds, and leaves them to NVIDIA's scaling
+when parked. Off, NVIDIA's scaling sets them all the time.
+
+Change either in the web page's Settings, with `jetlink power mode NAME` and
+`jetlink power clocks on|off`, or with `--set`. The server restarts, about
+half a minute; the Jetson does not. `jetlink power` shows what is set now.
+The server keeps to the mode's limits in `/etc/nvpmodel.conf` itself, so a
+new mode applies even where nvpmodel will not switch until a restart.
+The power modes and full speed, measured: [Jetson performance](jetson-performance.md#power-modes).
 
 <a id="the-web-page"></a>
 
@@ -402,9 +444,8 @@ makes three changes that took a reboot to the model loaded from 38.5 s to
 - **The server starts once the GPU's driver is up**, not after nvpmodel,
   which waits for the desktop's login screen. A drop-in
   (`20-jetson-gpu.conf`) waits up to 30 s for the GPU's control node, since
-  CUDA fails for good in a process that starts before it.
-  `jetlink-clocks.service` pins the clocks once nvpmodel has set the power
-  mode.
+  CUDA fails for good in a process that starts before it. The server sets
+  the clocks itself ([power mode and clocks](#power-mode-and-clocks)).
 
 `jetlink uninstall` puts the firmware's wait and `extlinux.conf` back as they
 were, unless you changed them since.

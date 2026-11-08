@@ -54,6 +54,10 @@
     var webAuth: String?
     @Flag(help: "Power this machine off when the comma asks (Linux). Without it the comma is told ok and the machine stays up.")
     var poweroff = false
+    @Option(help: "A Jetson's clocks: on holds them at the power mode's top while a comma is connected or an engine builds, off leaves them to NVIDIA's scaling. Without it they stay as they are.")
+    var clocks: String?
+    @Option(help: "The nvpmodel power mode whose limits --clocks keeps to (MAXN_SUPER).")
+    var powerMode: String?
     @Flag(name: .customLong("no-preload"), help: "Do not load the engine loaded last before a comma asks.")
     var noPreload = false
     @Flag(name: .customLong("no-keepalive"), help: "Do not keep the GPU clocked up between frames (a Mac's onnxruntime).")
@@ -71,6 +75,9 @@
       // A TCP listener never sees the comma go, so nothing would say when to sleep.
       guard sleepAfter == 0 || usb else { throw ValidationError("--sleep-after needs --usb") }
       guard (0...65535).contains(statusPort) else { throw ValidationError("--status-port \(statusPort) is not a port") }
+      guard clocks == nil || (["on", "off"].contains(clocks) && powerMode != nil) else {
+        throw ValidationError("--clocks takes on or off, with --power-mode")
+      }
     }
 
     func run() throws {
@@ -90,6 +97,7 @@
         gadget = SysfsGadget()
         let telemetry = LinuxHost.telemetry(gpu: (backend as? TrtBackend)?.trt.device ?? 0)
         hooks = LinuxHost.hooks(sleepAfter: sleepAfter, poweroff: poweroff, telemetry: telemetry)
+        let jetsonClocks = powerMode.flatMap { JetsonClocks(modeName: $0) }
       #endif
       hooks.fatal = exitOnFatal
 
@@ -101,6 +109,10 @@
           configuration: Server.Configuration(
             host: host, port: port, cacheRoot: root, preload: !noPreload, dial: dial.flatMap { DialTarget($0) }, listen: listen || !usb, usb: usb),
           backend: backend, gadget: gadget, hooks: hooks)
+        #if os(Linux)
+          // the clocks follow the comma and the builds, or go back to NVIDIA's scaling
+          if clocks == "on" { jetsonClocks?.follow(server.host) } else if clocks == "off" { jetsonClocks?.release() }
+        #endif
         // Made before the server starts, so it hears the first link event:
         // a comma on the bus at boot connects at once. With the page off too:
         // it downloads a model the comma asks for and has not got either.

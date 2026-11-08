@@ -31,6 +31,13 @@
     root.list("/sys/class/hwmon").lazy.map { root.path("/sys/class/hwmon/\($0)") }.first { Sysfs.read("\($0)/name") == name }
   }
 
+  /// A Jetson's GPU devfreq node (`/sys/class/devfreq/17000000.gpu` on an
+  /// Orin): its clock now (`cur_freq`) and the lowest and highest it may run
+  /// at (`min_freq`, `max_freq`).
+  public func gpuDevfreq(_ root: HostRoot = .system) -> String? {
+    root.list("/sys/class/devfreq").first { $0.hasSuffix(".gpu") }.map { root.path("/sys/class/devfreq/\($0)") }
+  }
+
   /// A Jetson's health from Tegra sysfs, in the keys the comma logs as
   /// `jetlinkTelemetry` (Python's `telemetry.Telemetry`). Paths are found
   /// once; a sample is then a handful of small reads, each of which may fail
@@ -59,7 +66,7 @@
       supplyMA = ina3221.map { "\($0)/curr1_input" }
       fanRPM = hwmon(named: "pwm_tach", root).map { "\($0)/rpm" }
       gpuLoad = root.path("/sys/devices/platform/bus@0/17000000.gpu/load")
-      gpuFrequency = root.path("/sys/class/devfreq/17000000.gpu/cur_freq")
+      gpuFrequency = (gpuDevfreq(root) ?? root.path("/sys/class/devfreq/17000000.gpu")) + "/cur_freq"
     }
 
     public func read() -> [String: Any] {

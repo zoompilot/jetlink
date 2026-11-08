@@ -1,5 +1,6 @@
 #if os(Linux)
   import Foundation
+  import JetlinkServer
   import Testing
 
   @testable import JetlinkLinux
@@ -145,7 +146,7 @@
       #expect(PageHardware.jetpack("garbage") == nil)
       #expect(PageHardware.cpuList("0-3,5") == [0, 1, 2, 3, 5])
       #expect(PageHardware.cpuList("") == [])
-      #expect(PageHardware.powerModes("# < POWER_MODEL ID=id_num NAME=mode_name >\n< POWER_MODEL ID=0 NAME=15W >\n") == [0: "15W"])
+      #expect(JetsonPower.modes("# < POWER_MODEL ID=id_num NAME=mode_name >\n< POWER_MODEL ID=0 NAME=15W >\n") == [0: "15W"])
       #expect(PageHardware.tegraGPU("nvidia,p3768-0000+p3767-0005-super\0nvidia,tegra234\0") == "Orin")
     }
   }

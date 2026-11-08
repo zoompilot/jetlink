@@ -38,6 +38,7 @@ ${B}jetlink${N}: manage the Jetlink server on this computer
   ${B}jetlink setup${N}       answer the setup questions again
   ${B}jetlink password${N}    set the web page's password (${B}--generate${N} makes one)
   ${B}jetlink models${N} ...  list, download or prepare models (${B}jetlink models --help${N})
+  ${B}jetlink power${N} ...   a Jetson's power mode and clocks (${B}jetlink power --help${N})
   ${B}jetlink caffeinate${N}  keep it awake until Ctrl-C (or ${B}-t${N} SECONDS, or while COMMAND runs)
   ${B}jetlink uninstall${N}   remove Jetlink from this computer
 
@@ -307,6 +308,54 @@ stay_native() {
   fi
 }
 
+power_usage() {
+  local modes="${JETLINK_POWER_MODES:-}"
+  modes="${modes// /, }"
+  [ -n "$modes" ] || modes="the modes this Jetson has"
+  cat <<EOF
+${B}jetlink power${N}: a Jetson's power mode and clocks
+
+  ${B}jetlink power${N}                 the mode, the clocks, and what the server has set now
+  ${B}jetlink power mode${N} NAME       switch power mode: ${B}fastest${N} (the default) or one of
+                                $modes
+  ${B}jetlink power clocks${N} on|off   on (the default): the power mode's top speed while a comma
+                                is connected or an engine builds, NVIDIA's scaling otherwise;
+                                off: NVIDIA's scaling always
+
+Each change restarts the server, about half a minute; the Jetson does not restart.
+EOF
+}
+
+cmd_power() {
+  load
+  if [ "${JETLINK_JETSON:-0}" != 1 ]; then
+    echo "Power modes and clocks are a Jetson's; this computer is a PC."
+    exit 1
+  fi
+  case "${1:-}" in
+    "")
+      local mode="${JETLINK_POWER_MODE:-fastest}" gpu now=''
+      # the modes are slowest first
+      [ "$mode" = fastest ] && mode="fastest (${JETLINK_POWER_MODES##* })"
+      echo "  ${B}Power mode${N}  $mode"
+      echo "  ${B}Clocks${N}      ${JETLINK_CLOCKS:-on}"
+      # held is the GPU's lowest clock raised to its highest, as the web page reads it (PageHardware)
+      for gpu in /sys/class/devfreq/*.gpu; do
+        [ -r "$gpu/min_freq" ] || continue
+        if [ "$(cat "$gpu/min_freq")" = "$(cat "$gpu/max_freq")" ]; then now="full speed"; else now="power saving"; fi
+      done
+      [ -z "$now" ] || echo "  ${B}Now${N}         $now" ;;
+    mode|clocks)
+      [ $# -eq 2 ] || { power_usage; exit 2; }
+      as_root power "$@"
+      local key=$1
+      [ "$key" = mode ] && key=power_mode
+      run_installer --reconfigure --set "$key=$2" ;;
+    help|-h|--help) power_usage ;;
+    *) power_usage; exit 2 ;;
+  esac
+}
+
 # update, setup and uninstall are the installer's: it is the one place that
 # knows what it changed on this computer. An update runs the installer of the
 # version it moves to; one with --binary keeps the source it has, as the
@@ -363,15 +412,12 @@ main() {
         echo "Stopping the background server while this one runs..."
         systemctl stop "$UNIT"
       fi
-      # on a Jetson, what jetlink-clocks.service does at boot
-      if [ "${JETLINK_JETSON:-0}" = 1 ] && command -v jetson_clocks >/dev/null 2>&1; then
-        jetson_clocks || true
-      fi
       # as systemd expands it: an unset variable is empty
       set +u
       eval "exec $(sed -n 's/^ExecStart=//p' "$UNIT_FILE") \"\$@\""
       ;;
     models|model) as_root models "$@"; cmd_models "$@" ;;
+    power) cmd_power "$@" ;;
     caffeinate) cmd_caffeinate "$@" ;;
     update|upgrade)
       # the newest release's tag alone, as an update would find it: the web
