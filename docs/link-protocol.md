@@ -29,6 +29,12 @@ bench tools). There is one version: update the comma and Jetlink together.
   `fetches` says whether the server downloads a model itself when asked: a
   default route and no download failed for want of the internet in the last
   10 minutes.
+- **Cameras.** Once the comma is calibrated, its hello also carries what
+  calibrationd saved of its cameras (`camera`: `wide_from_device_euler`, the
+  wide road camera's roll, pitch and yaw from the device, and `height`, the
+  camera's height above the road), read once a link, for whatever on the
+  server needs to place what the cameras saw. A server that predates it
+  ignores the key.
 - **Session.** The comma says hello, asks for its model's engine (with
   `fetch` when it has not got the model either: the server then downloads it,
   state `downloading`, stage `download`, and builds it; a server that cannot

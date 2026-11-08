@@ -224,17 +224,20 @@ class JetlinkClient:
 
   # -- handshake ------------------------------------------------------------
 
-  def hello(self, timeout: float = 5.0, pick: dict | None = None) -> dict:
+  def hello(self, timeout: float = 5.0, pick: dict | None = None, camera: dict | None = None) -> dict:
     """Introduce this client. The server starts its session over on a hello,
     so this is also how a new owner of the gadget takes over one the server
     never saw end; see Session.greet in JetlinkServer. `pick` is the comma's
     own big-model pick with its age and its date by the comma's clock, {ref,
     sha256, nbytes, name, age_s, at}; the answer's `pick` is the newer of it
-    and the server's (PickStore)."""
+    and the server's (PickStore). `camera` is what the comma's calibration
+    says of its cameras, {wide_from_device_euler: [roll, pitch, yaw], height}."""
     seq = self._next_seq()
     client = {'nonce': self.nonce, 'name': self.name}
     if pick is not None:
       client['pick'] = pick
+    if camera:
+      client['camera'] = camera
     try:
       link = self.t.link_info()
     except Exception:
