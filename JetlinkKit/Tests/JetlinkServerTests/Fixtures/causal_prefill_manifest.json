@@ -1,0 +1,136 @@
+{
+  "format": 1,
+  "strategy": "causal-prefill-v1",
+  "source_model_sha256": "404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4",
+  "prepared_model_sha256": "4ef3b6f248bf8d3ae0e1f76cfd0d5fcc4f079b6d910f735bd4cc22172b0d0166",
+  "parts": [
+    {
+      "name": "vision",
+      "file": "vision.onnx",
+      "unit": "htp",
+      "nodes": 500,
+      "weight_bytes": 705804828,
+      "inputs": [
+        "new_img",
+        "state_img_q"
+      ],
+      "outputs": [
+        "view_39",
+        "linear_76",
+        "linear_77",
+        "linear_78",
+        "linear_79",
+        "linear_80",
+        "mul_36",
+        "linear_82",
+        "linear_81",
+        "view_60",
+        "next_state_img_q"
+      ],
+      "sha256": "49a4c1c1778884f87f26360d4256e6238f059a8f840c136c614ebabd548d59bc"
+    },
+    {
+      "name": "history",
+      "file": "history.onnx",
+      "unit": "gpu",
+      "nodes": 327,
+      "weight_bytes": 40836830,
+      "inputs": [
+        "desire",
+        "traffic_convention",
+        "action_t",
+        "state_desire_q",
+        "state_feat_q"
+      ],
+      "outputs": [
+        "prefill_0_key",
+        "prefill_0_value",
+        "prefill_1_key",
+        "prefill_1_value",
+        "prefill_2_key",
+        "prefill_2_value",
+        "prefill_3_key",
+        "prefill_3_value",
+        "prefill_4_key",
+        "prefill_4_value",
+        "prefill_5_key",
+        "prefill_5_value",
+        "prefill_6_key",
+        "prefill_6_value",
+        "prefill_7_key",
+        "prefill_7_value"
+      ],
+      "sha256": "1370a34bbdb94027f1a99e833f09c639a904f7b716ede3de51cfe04aef73f359"
+    },
+    {
+      "name": "decode",
+      "file": "decode.onnx",
+      "unit": "htp",
+      "nodes": 422,
+      "weight_bytes": 57434348,
+      "inputs": [
+        "view_39",
+        "desire",
+        "traffic_convention",
+        "action_t",
+        "state_desire_q",
+        "prefill_0_key",
+        "prefill_0_value",
+        "prefill_1_key",
+        "prefill_1_value",
+        "prefill_2_key",
+        "prefill_2_value",
+        "prefill_3_key",
+        "prefill_3_value",
+        "prefill_4_key",
+        "prefill_4_value",
+        "prefill_5_key",
+        "prefill_5_value",
+        "prefill_6_key",
+        "prefill_6_value",
+        "prefill_7_key",
+        "prefill_7_value"
+      ],
+      "outputs": [
+        "mul_41",
+        "mul_42",
+        "linear_120",
+        "linear_126",
+        "mul_48"
+      ],
+      "sha256": "ce475ff23e7740281ae1a894c8eb332c0c2486e5701e38c0f55d7b21e0e56e52"
+    },
+    {
+      "name": "join",
+      "file": "join.onnx",
+      "unit": "cpu",
+      "nodes": 9,
+      "weight_bytes": 68,
+      "inputs": [
+        "linear_76",
+        "linear_77",
+        "linear_78",
+        "linear_79",
+        "linear_80",
+        "mul_36",
+        "linear_82",
+        "linear_81",
+        "view_60",
+        "mul_41",
+        "mul_42",
+        "linear_120",
+        "linear_126",
+        "mul_48",
+        "state_feat_q",
+        "desire",
+        "state_desire_q"
+      ],
+      "outputs": [
+        "outputs",
+        "next_state_feat_q",
+        "next_state_desire_q"
+      ],
+      "sha256": "a4e72d70d8580283d1ba21af3b458fc4eca3dcf4e0ab3f01eda41a761a78873f"
+    }
+  ]
+}
