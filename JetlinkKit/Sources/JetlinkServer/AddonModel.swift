@@ -1,0 +1,128 @@
+// The add-on server: a fork's own models beside the driving model, each on its
+// own interface of the comma's gadget. docs/addons.md. From Peter Nguyen's
+// V-ASM and sign-vision servers (trung791997/openpilot).
+import Foundation
+import JetlinkRegistry
+
+/// One add-on model, built and loaded on the server's backend: a single
+/// [1, C, H, W] image input and any outputs, answered as f32 in name order.
+final class AddonModel: @unchecked Sendable {
+  let file: String
+  let sha256: String
+  let tag: UInt32
+  let engine: any Engine
+  let input: TensorSpec
+  /// [C, H, W], as a request names it.
+  let shape: [Int]
+  let outputs: [TensorSpec]
+  let outputCount: Int
+  /// A pass's recent time, for fitting it between driving frames.
+  private(set) var costNs: UInt64 = 5_000_000
+
+  init(file: String, sha256: String, engine: any Engine) throws {
+    guard let tag = AddonWire.tag(sha256: sha256) else { throw HostError.failed("\(file): no sha256") }
+    guard engine.inputs.count == 1, let input = engine.inputs.values.first, input.shape.count == 4, input.shape[0] == 1,
+      [.float, .float16, .uint8].contains(input.type)
+    else {
+      throw HostError.failed("\(file): an add-on model takes one [1, C, H, W] float or uint8 input, not \(Array(engine.inputs.values))")
+    }
+    let outputs = engine.outputs.values.sorted { $0.name < $1.name }
+    guard !outputs.isEmpty, outputs.allSatisfy({ [.float, .float16].contains($0.type) }) else {
+      throw HostError.failed("\(file): an add-on model's outputs are float, not \(outputs.map(\.type.name))")
+    }
+    self.file = file
+    self.sha256 = sha256
+    self.tag = tag
+    self.engine = engine
+    self.input = input
+    shape = Array(input.shape.dropFirst())
+    self.outputs = outputs
+    outputCount = outputs.reduce(0) { $0 + $1.count }
+  }
+
+  /// Stages `image` (the request's body, its pad byte not counted), runs,
+  /// and returns every output. The caller holds the GPU.
+  func run(_ request: AddonWire.Request, image: UnsafeRawBufferPointer) throws -> [Float] {
+    guard let target = engine.hostInput(input.name) else { throw HostError.failed("\(file): no host input") }
+    let count = input.count
+    switch (request.encoding, input.type) {
+    case (.u8, .uint8):
+      target.copyMemory(from: image.baseAddress!, byteCount: count)
+    case (.u8, .float):
+      let out = target.assumingMemoryBound(to: Float.self)
+      for i in 0..<count { out[i] = Float(image[i]) / 255 }
+    case (.u8, .float16):
+      let out = target.assumingMemoryBound(to: Float16.self)
+      for i in 0..<count { out[i] = Float16(Float(image[i]) / 255) }
+    case (.f32, .float):
+      target.copyMemory(from: image.baseAddress!, byteCount: count * 4)
+    case (.f32, .float16):
+      let out = target.assumingMemoryBound(to: Float16.self)
+      for i in 0..<count { out[i] = Float16(image.loadUnaligned(fromByteOffset: i * 4, as: Float.self)) }
+    default:
+      throw HostError.failed("\(file) takes \(input.type.name), not \(request.encoding)")
+    }
+    let started = DispatchTime.now().uptimeNanoseconds
+    try engine.run()
+    var floats: [Float] = []
+    floats.reserveCapacity(outputCount)
+    for spec in outputs {
+      guard let source = engine.output(spec.name) else { throw HostError.failed("\(file): no output \(spec.name)") }
+      if spec.type == .float {
+        floats.append(contentsOf: UnsafeBufferPointer(start: source.assumingMemoryBound(to: Float.self), count: spec.count))
+      } else {
+        floats.append(contentsOf: UnsafeBufferPointer(start: source.assumingMemoryBound(to: Float16.self), count: spec.count).map(Float.init))
+      }
+    }
+    let took = DispatchTime.now().uptimeNanoseconds - started
+    costNs = (costNs * 7 + took) / 8
+    return floats
+  }
+
+  /// Builds `file`'s artifact for `backend` under `root`/addons unless it is
+  /// there, loads it, and warms it. With `host`, after the driving model's own
+  /// build or load and never beside one, and warms under its lock.
+  static func prepare(_ file: URL, backend: any EngineBackend, root: URL, log: ServerLog, host: EngineHost? = nil) throws -> AddonModel {
+    if let host {
+      while host.drivingBusy { Thread.sleep(forTimeInterval: 1) }
+      host.buildSlot.lock()
+    }
+    defer { host?.buildSlot.unlock() }
+    let sha256 = try Files.sha256(of: file)
+    let dir = root.appending(path: "addons", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let artifact = dir.appending(path: "\(sha256.prefix(16)).\(backend.tag())\(backend.suffix)")
+    let report: ProgressFn = { stage, _, message in
+      if !message.isEmpty { log.debug("\(file.lastPathComponent): \(stage) \(message)") }
+    }
+    if !FileManager.default.fileExists(atPath: artifact.path) {
+      log.info("building \(file.lastPathComponent) for \(backend.name)")
+      try backend.build(model: file, artifact: artifact, report: report, metaExtra: ["addon": file.lastPathComponent])
+    }
+    let engine: any Engine
+    do {
+      engine = try backend.load(artifact: artifact, report: report)
+    } catch let invalid as ArtifactInvalid {
+      log.warning("rebuilding \(artifact.lastPathComponent): \(invalid.description)")
+      try? FileManager.default.removeItem(at: artifact)
+      try backend.build(model: file, artifact: artifact, report: report, metaExtra: ["addon": file.lastPathComponent])
+      engine = try backend.load(artifact: artifact, report: report)
+    }
+    do {
+      let model = try AddonModel(file: file.lastPathComponent, sha256: sha256, engine: engine)
+      let warmed = try underLock(host) { try engine.warm() }
+      log.info("\(warmed); \(file.lastPathComponent) takes \(model.shape), gives \(model.outputs.map { "\($0.name)\($0.shape)" })")
+      return model
+    } catch {
+      engine.close()
+      throw error
+    }
+  }
+
+  private static func underLock<T>(_ host: EngineHost?, _ body: () throws -> T) rethrows -> T {
+    guard let host else { return try body() }
+    host.lock.lock()
+    defer { host.lock.unlock() }
+    return try body()
+  }
+}

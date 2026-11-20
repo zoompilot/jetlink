@@ -155,6 +155,14 @@ public final class OrtBackend: EngineBackend {
 
   public var runtimeVersion: String { OrtRuntime.version }
 
+  /// The same backend on a one-session profile, for a model that is not a
+  /// driving model and cannot be split (an add-on's).
+  public func wholeModel() -> OrtBackend {
+    guard profile.sessions.count > 1 else { return self }
+    let whole: OrtProfile = profile.usesCoreML ? .coreml : .gpu
+    return OrtBackend(profile: whole, preparer: preparer, keepAlive: keepAlive, keepCPUWarm: keepCPUWarm, chip: chip)
+  }
+
   public func deviceTag() -> String {
     sanitize("\(profile.rawValue)-\(chip)")
   }

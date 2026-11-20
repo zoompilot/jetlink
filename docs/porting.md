@@ -187,6 +187,19 @@ def _adapter_class():
   return Adapter
 ```
 
+To follow a setting instead, override `gadget_functions(cls, params)`, which
+the owner calls once as it starts; `params` reads the params store as files
+(`jetlink.openpilot.settings.FileParams`):
+
+```python
+  class Adapter(Stock):
+    @classmethod
+    def gadget_functions(cls, params):
+      return (VASM,) if params.get_bool('MyForkVasmOnJetson') else ()
+```
+
+A change takes effect when the owner next starts, a reboot most simply.
+
 This needs a Jetlink release that has `jetlink.comma.functions`; on an older
 one the import fails and every hook answers as the link off.
 
@@ -199,6 +212,10 @@ only `ep1` (host to comma) and `ep2` (comma to host), and only once a host
 has configured the gadget (`jetlink.comma.gadget.host_attached()`): opening an
 endpoint before that costs the gadget until the comma reboots. On the host,
 claim the interface by its class triple; Jetlink's server claims only its own.
+
+For a model the Jetson serves, use [add-ons](addons.md): `jetlink.addons` on
+the comma and `jetlink-server --addons` on the host, rather than a server of
+your own.
 
 USB only: a gadget built for an iPhone has none. One that cannot be described
 is logged and left out until the owner restarts, and Jetlink comes up without

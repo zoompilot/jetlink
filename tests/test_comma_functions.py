@@ -68,6 +68,33 @@ def test_a_fork_declares_them_on_its_adapter():
     assert Stock.owner_config().functions == ()
 
 
+def test_a_fork_picks_them_from_its_settings(tmp_path):
+  (tmp_path / 'd').mkdir()
+  (tmp_path / 'd' / 'ForkVasm').write_text('1')
+
+  class Adapter(Stock):
+    @classmethod
+    def gadget_functions(cls, params):
+      return (VASM,) if params.get_bool('ForkVasm') else ()
+  with mock.patch.dict('os.environ', {'PARAMS_ROOT': str(tmp_path)}), \
+       mock.patch.dict('sys.modules', {'openpilot': mock.Mock(), 'openpilot.common': mock.Mock(),
+                                       'openpilot.common.basedir': mock.Mock(BASEDIR='/data/openpilot')}):
+    os.environ.pop('OPENPILOT_PREFIX', None)
+    assert Adapter.owner_config().functions == (VASM,)
+    (tmp_path / 'd' / 'ForkVasm').write_text('0')
+    assert Adapter.owner_config().functions == ()
+
+
+def test_a_broken_pick_builds_the_gadget_without_extras():
+  class Adapter(Stock):
+    @classmethod
+    def gadget_functions(cls, params):
+      raise RuntimeError('fork bug')
+  with mock.patch.dict('sys.modules', {'openpilot': mock.Mock(), 'openpilot.common': mock.Mock(),
+                                       'openpilot.common.basedir': mock.Mock(BASEDIR='/data/openpilot')}):
+    assert Adapter.owner_config().functions == ()
+
+
 def test_the_config_has_none_by_default():
   config = OwnerConfig(Path('params'), None, frozenset(), 'adapter', Path('.'), {}, Path('log'))
   assert config.functions == ()

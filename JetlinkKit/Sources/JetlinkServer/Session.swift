@@ -376,14 +376,17 @@ final class Session: @unchecked Sendable {
   /// host (status, a build's progress, the control channel) should wait with it.
   private func onInfer(_ message: Message) throws {
     let (sha, skip) = wanted()
+    host.addonGate.frameStarted()
     host.lock.lock()
     guard let loaded = host.loaded, loaded.sha256 == sha, loaded.spec.frameSkip == skip, !host.benchmarking else {
       host.lock.unlock()
+      host.addonGate.frameEnded()
       try respond(message.seq, InferReply(status: .notReady))
       return
     }
     let reply = infer(loaded, message)
     host.lock.unlock()
+    host.addonGate.frameEnded()
 
     let state: Data? = reply.wantsState ? host.telemetry.json() : nil
     let sendStarted = DispatchTime.now().uptimeNanoseconds

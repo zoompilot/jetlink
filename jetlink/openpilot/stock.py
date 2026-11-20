@@ -29,6 +29,7 @@ run is started with, so it needs no ADAPTER_MODULE.
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
 from functools import cached_property
@@ -252,9 +253,24 @@ class Stock:
     op = cls()
     # the provisioning run starts in the checkout with it on the path, where
     # the launch script links jetlink in
-    return OwnerConfig(params_dir=op.params_dir(), keys=op.keys, chestnut_ids=cls.CHESTNUT_IDS,
+    from jetlink.openpilot.settings import FileParams
+    params_dir = op.params_dir()
+    try:
+      functions = tuple(cls.gadget_functions(FileParams(params_dir)))
+    except Exception:
+      # an add-on only ever takes work off the comma: a fork's bug here must not take the link down
+      logging.getLogger(__name__).exception("jetlink: gadget_functions failed, building the gadget without extras")
+      functions = ()
+    return OwnerConfig(params_dir=params_dir, keys=op.keys, chestnut_ids=cls.CHESTNUT_IDS,
                        adapter=cls.ADAPTER_MODULE or cls.__module__, cwd=Path(BASEDIR), env={'PYTHONPATH': BASEDIR},
-                       log_file=cls.OWNER_LOG, functions=tuple(cls.GADGET_FUNCTIONS))
+                       log_file=cls.OWNER_LOG, functions=functions)
+
+  @classmethod
+  def gadget_functions(cls, params) -> tuple:
+    """The extra interfaces the owner puts on the gadget, read once as it
+    starts: GADGET_FUNCTIONS, or a fork's pick from its own settings. params
+    is a jetlink.openpilot.settings.FileParams on the params store."""
+    return tuple(cls.GADGET_FUNCTIONS)
 
   @classmethod
   def main(cls) -> None:

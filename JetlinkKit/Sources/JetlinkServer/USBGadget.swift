@@ -53,7 +53,7 @@
 
     // MARK: the registry
 
-    private static func findDevice() -> io_service_t? {
+    static func findDevice() -> io_service_t? {
       guard let matching = IOServiceMatching(kIOUSBHostDeviceClassName) as NSMutableDictionary? else { return nil }
       matching["idVendor"] = Int(Pinned.usbVendorID)
       matching["idProduct"] = Int(Pinned.usbProductID)
@@ -90,11 +90,43 @@
       return first
     }
 
-    private static func property(_ entry: io_registry_entry_t, _ key: String) -> Int? {
+    static func property(_ entry: io_registry_entry_t, _ key: String) -> Int? {
       guard let value = IORegistryEntryCreateCFProperty(entry, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() else {
         return nil
       }
       return (value as? NSNumber)?.intValue
+    }
+  }
+
+  /// An add-on's interface on the comma's gadget, found by its class triple.
+  public struct USBAddonSource: AddonSource {
+    let kind: [UInt8]
+
+    public init(kind: [UInt8]) {
+      self.kind = kind
+    }
+
+    public func present() -> Bool {
+      USBGadget().present()
+    }
+
+    public func open() throws -> AddonPipes {
+      guard let device = USBGadget.findDevice() else { throw LinkError.closed("no jetlink gadget on the bus") }
+      defer { IOObjectRelease(device) }
+      var iterator: io_iterator_t = 0
+      guard IORegistryEntryGetChildIterator(device, kIOServicePlane, &iterator) == KERN_SUCCESS else {
+        throw LinkError.closed("cannot list the gadget's interfaces")
+      }
+      defer { IOObjectRelease(iterator) }
+      while case let child = IOIteratorNext(iterator), child != 0 {
+        let triple = ["bInterfaceClass", "bInterfaceSubClass", "bInterfaceProtocol"].map { USBGadget.property(child, $0) }
+        if IOObjectConformsTo(child, kIOUSBHostInterfaceClassName) != 0 && triple == kind.map(Int.init) {
+          // the pipes own the reference from here
+          return AddonPipes(try IOUSBHostPipes(service: child))
+        }
+        IOObjectRelease(child)
+      }
+      throw LinkError.closed("the gadget has no interface of class \(kind.map { String(format: "%02x", $0) }.joined(separator: "/"))")
     }
   }
 

@@ -46,6 +46,9 @@ FORK_IMPORTS = {
   'jetlink.comma': ('gadget',),
   'jetlink.comma.gadget': ('gadget_error', 'link_configured'),
   'jetlink.registry.index': ('fetch_index',),
+  # a fork's add-ons (docs/addons.md)
+  'jetlink.addons.link': ('AddonLink', 'JetsonNet', 'blob_to_u8'),
+  'jetlink.addons.wire': ('tag', 'pack_request', 'unpack_answer'),
 }
 # What jetlink.openpilot calls on a client and reads off one, off a loan, and
 # off the transport a client rides on: the comma's side of the link

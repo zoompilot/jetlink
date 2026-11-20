@@ -118,6 +118,15 @@ public final class EngineHost: @unchecked Sendable {
   var lastSeenAt: TimeInterval = 0
   private var warmFailed = false
   let frameStats = FrameStats()
+  /// When add-on passes may use the GPU (AddonService): between frames.
+  public let addonGate = AddonGate()
+  /// One build or load on the device at a time, the driving model's or an add-on's.
+  let buildSlot = NSLock()
+
+  /// The driving model's engine is building or loading.
+  var drivingBusy: Bool {
+    lock.withLock { job?.state == .building }
+  }
   let log = ServerLog(category: "server")
 
   private var lastProgress: TimeInterval = 0
@@ -379,7 +388,9 @@ public final class EngineHost: @unchecked Sendable {
   private func run(_ job: Job, request: Request, entry: CacheEntry, modelPath: URL, spec: ModelSpec?) {
     var engine: (any Engine)?
     var fatal: (any Error)?
+    buildSlot.lock()
     do {
+      defer { buildSlot.unlock() }
       // One engine resident at a time: a build needs the memory.
       unload()
       var spec = spec

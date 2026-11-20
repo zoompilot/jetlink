@@ -115,6 +115,10 @@
 
     /// 1209:0001 in /sys/bus/usb/devices, the first by name.
     func scan() -> Found? {
+      Self.scan(root: root)
+    }
+
+    static func scan(root: HostRoot) -> Found? {
       let devices = "/sys/bus/usb/devices"
       let vendor = String(format: "%04x", Pinned.usbVendorID)
       let product = String(format: "%04x", Pinned.usbProductID)
@@ -420,8 +424,9 @@
 
     /// From a usbfs node's bytes (the device descriptor, then every
     /// configuration): in configuration `configuration` (bConfigurationValue;
-    /// nil takes the first), the FF/FF/FF interface, else interface 0.
-    static func pick(_ bytes: [UInt8], configuration: Int? = nil) throws -> GadgetDescriptors {
+    /// nil takes the first), the FF/FF/FF interface, else interface 0; with
+    /// `kind`, that class's interface and no other (an add-on's).
+    static func pick(_ bytes: [UInt8], configuration: Int? = nil, kind: [UInt8]? = nil) throws -> GadgetDescriptors {
       var interfaces: [Interface] = []
       var inWanted = false
       var index = 0
@@ -444,8 +449,12 @@
         index += length
       }
       let usable = interfaces.filter { $0.alternate == 0 }
-      guard let chosen = usable.first(where: { $0.kind == [0xff, 0xff, 0xff] }) ?? usable.first(where: { $0.number == 0 }) else {
-        throw LinkError.closed("the gadget's descriptors have no vendor interface")
+      let found =
+        kind.map { kind in usable.first { $0.kind == kind } }
+        ?? usable.first(where: { $0.kind == [0xff, 0xff, 0xff] }) ?? usable.first(where: { $0.number == 0 })
+      guard let chosen = found else {
+        let what = kind.map { "an interface of class " + $0.map { String(format: "%02x", $0) }.joined(separator: "/") } ?? "a vendor interface"
+        throw LinkError.closed("the gadget's descriptors have no \(what)")
       }
       let bulk = chosen.endpoints.filter { $0.attributes & 0x03 == 0x02 }
       guard let input = bulk.first(where: { $0.address & 0x80 != 0 }), let output = bulk.first(where: { $0.address & 0x80 == 0 }) else {

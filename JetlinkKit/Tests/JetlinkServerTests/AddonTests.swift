@@ -1,0 +1,208 @@
+import Foundation
+import JetlinkKit
+import JetlinkTestSupport
+import Testing
+
+@testable import JetlinkServer
+
+#if canImport(CryptoKit)
+  import CryptoKit
+#else
+  import Crypto
+#endif
+
+/// The comma's end, as jetlink/addons/wire.py packs it.
+private func hex(_ s: String) -> [UInt8] {
+  stride(from: 0, to: s.count, by: 2).map { UInt8(s.dropFirst($0).prefix(2), radix: 16)! }
+}
+
+/// A byte stream each way: what the comma wrote, then a closed link.
+final class FakeAddonPipes: BulkPipes, @unchecked Sendable {
+  private let lock = NSLock()
+  private var inbound: [UInt8]
+  private(set) var written: [UInt8] = []
+
+  init(_ inbound: [UInt8]) {
+    self.inbound = inbound
+  }
+
+  func read(into buffer: UnsafeMutableRawPointer, count: Int, timeout: TimeInterval) throws -> Int {
+    try lock.withLock {
+      guard !inbound.isEmpty else { throw LinkError.closed("unplugged") }
+      let n = min(count, inbound.count)
+      inbound.withUnsafeBytes { buffer.copyMemory(from: $0.baseAddress!, byteCount: n) }
+      inbound.removeFirst(n)
+      return n
+    }
+  }
+
+  func write(from buffer: UnsafeRawPointer, count: Int, timeout: TimeInterval) throws -> Int {
+    lock.withLock { written += UnsafeRawBufferPointer(start: buffer, count: count) }
+    return count
+  }
+
+  func abort() {}
+  func close() {}
+}
+
+final class Ticks: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: UInt64 = 10_000_000_000
+  var now: UInt64 { lock.withLock { value } }
+  func advance(ms: UInt64) { lock.withLock { value += ms * 1_000_000 } }
+}
+
+@Suite("Add-ons", .serialized)
+struct AddonTests {
+  static let addon = Fixture.url("tiny_addon.onnx")
+
+  @Test("The wire is byte for byte the Python side's")
+  func wire() throws {
+    #expect(AddonWire.hello(tags: [7, 3], yielding: false) == hex("4a415231ffffffff010000006400000000000000020000000300000007000000"))
+    #expect(
+      AddonWire.answer(seq: 5, tag: 9, status: .ok, serverUs: 12, floats: [1.5, -2])
+        == hex("4a4152310500000009000000000000000c000000020000000000c03f000000c0"))
+    #expect(AddonWire.answer(seq: 1, tag: 1, status: .ok, floats: [Float](repeating: 0, count: 122)).count == 513)
+    let request = try hex("4a4151310400000001efcdab010002000300000106000000000102030405").withUnsafeBytes { try AddonWire.request(header: $0) }
+    #expect(request == AddonWire.Request(seq: 4, tag: 0xabcd_ef01, shape: [1, 2, 3], encoding: .u8, nbytes: 6))
+    #expect(AddonWire.tag(sha256: "abcdef0123") == 0xabcd_ef01)
+  }
+
+  @Test("A malformed header is refused")
+  func malformed() {
+    let good = hex("4a4151310400000001efcdab010002000300000106000000")
+    for (offset, byte) in [(0, UInt8(0x58)), (18, 9), (19, 2), (20, 7)] {
+      var bad = good
+      bad[offset] = byte
+      #expect(throws: AddonWire.WireError.self) { try bad.withUnsafeBytes { try AddonWire.request(header: $0) } }
+    }
+    #expect(throws: AddonWire.WireError.self) { try Array(good.prefix(10)).withUnsafeBytes { try AddonWire.request(header: $0) } }
+  }
+
+  @Test("The config names each add-on's class and models, never Jetlink's own")
+  func config() throws {
+    let dir = try TemporaryDirectory()
+    let file = dir.url.appending(path: "addons.json")
+    try Data(#"{"addons": [{"name": "vasm", "class": "ff/56/41", "models": ["m/v.onnx"]}]}"#.utf8).write(to: file)
+    let configs = try AddonConfig.load(file)
+    #expect(configs.count == 1 && configs[0].interfaceClass == [0xFF, 0x56, 0x41])
+    #expect(configs[0].models == [dir.url.appending(path: "m/v.onnx").standardizedFileURL])
+    for body in [
+      #"{"addons": [{"name": "x", "class": "ff/ff/ff", "models": ["a"]}]}"#,
+      #"{"addons": [{"name": "x", "class": "ff/56", "models": ["a"]}]}"#,
+      #"{"addons": [{"name": "Bad!", "class": "ff/56/41", "models": ["a"]}]}"#,
+      #"{"addons": [{"name": "x", "class": "ff/56/41", "models": []}]}"#,
+      #"{"addons": [{"name": "x", "class": "ff/56/41", "models": ["a"]}, {"name": "y", "class": "ff/56/41", "models": ["b"]}]}"#,
+    ] {
+      try Data(body.utf8).write(to: file)
+      #expect(throws: AddonConfigError.self) { try AddonConfig.load(file) }
+    }
+  }
+
+  @Test("A pass fits only in the gap before the next frame, or with nothing driving")
+  func gate() {
+    let ticks = Ticks()
+    let gate = AddonGate(clock: { ticks.now })
+    #expect(gate.gap(cost: 5_000_000, wait: 0))
+    for _ in 0..<10 {
+      gate.frameStarted()
+      ticks.advance(ms: 50)
+    }
+    gate.frameStarted()
+    #expect(!gate.gap(cost: 5_000_000, wait: 0), "in a frame")
+    #expect(!gate.yielding, "one miss is not yielding")
+    #expect(!gate.gap(cost: 5_000_000, wait: 0) && !gate.gap(cost: 5_000_000, wait: 0))
+    #expect(gate.yielding)
+    ticks.advance(ms: 10)
+    gate.frameEnded()
+    #expect(gate.gap(cost: 5_000_000, wait: 0), "the gap after it")
+    #expect(!gate.gap(cost: 40_000_000, wait: 0), "too long for the gap")
+    ticks.advance(ms: 40)
+    #expect(!gate.gap(cost: 5_000_000, wait: 0), "the next frame is due")
+    ticks.advance(ms: 2_000)
+    #expect(gate.gap(cost: 5_000_000, wait: 0), "nothing driving")
+    #expect(!gate.yielding)
+  }
+
+  @Test("At 20 Hz with 15 ms frames, a request at any point in the period gets a gap within the comma's budget")
+  func gateSweep() {
+    let cost: UInt64 = 8_000_000
+    let wait = max(0, AddonService.answerBudget - Double(cost) / 1e9)
+    var served = 0
+    for offset in stride(from: 0, to: 50, by: 2) {
+      let gate = AddonGate()
+      let frames = DispatchQueue(label: "frames")
+      let done = DispatchSemaphore(value: 0)
+      frames.async {
+        for _ in 0..<4 {
+          gate.frameStarted()
+          Thread.sleep(forTimeInterval: 0.015)
+          gate.frameEnded()
+          Thread.sleep(forTimeInterval: 0.035)
+        }
+        done.signal()
+      }
+      Thread.sleep(forTimeInterval: 0.100 + Double(offset) / 1000)
+      let started = Date()
+      if gate.gap(cost: cost, wait: wait), Date().timeIntervalSince(started) + Double(cost) / 1e9 < 0.050 { served += 1 }
+      done.wait()
+    }
+    // real sleeps: a loaded runner misses a few; a gate that never waits serves about half
+    #expect(served >= 20, "\(served) of 25 offsets served")
+  }
+
+  @Test("A model builds on the backend and answers every output, in name order")
+  func model() throws {
+    let cache = try TemporaryDirectory()
+    let model = try AddonModel.prepare(Self.addon, backend: cpuBackend(), root: cache.url, log: ServerLog(category: "test"))
+    defer { model.engine.close() }
+    #expect(model.shape == [3, 4, 4])
+    #expect(model.outputs.map(\.name) == ["a_scaled", "b_mean"])
+    let digest = SHA256.hash(data: try Data(contentsOf: Self.addon)).map { String(format: "%02x", $0) }.joined()
+    #expect(model.sha256 == digest && model.tag == AddonWire.tag(sha256: digest))
+    let image = (0..<48).map { UInt8($0 * 5) }
+    let request = AddonWire.Request(seq: 1, tag: model.tag, shape: [3, 4, 4], encoding: .u8, nbytes: 48)
+    let floats = try image.withUnsafeBytes { try model.run(request, image: $0) }
+    #expect(floats.count == 51)
+    for i in 0..<48 { #expect(abs(floats[i] - Float(image[i]) / 255 * 2) < 1e-5) }
+    for c in 0..<3 {
+      let mean = image[(c * 16)..<(c * 16 + 16)].reduce(Float(0)) { $0 + Float($1) / 255 } / 16
+      #expect(abs(floats[48 + c] - mean) < 1e-5)
+    }
+    let f32 = AddonWire.Request(seq: 2, tag: model.tag, shape: [3, 4, 4], encoding: .f32, nbytes: 192)
+    let again = try image.map { Float($0) / 255 }.withUnsafeBytes { try model.run(f32, image: $0) }
+    #expect(zip(again, floats).allSatisfy { abs($0 - $1) < 1e-6 })
+    let artifacts = try FileManager.default.contentsOfDirectory(atPath: cache.url.appending(path: "addons").path)
+    #expect(artifacts.contains { $0.hasPrefix(model.sha256.prefix(16)) })
+  }
+
+  @Test("The service answers a request over the link, refuses an unknown model, and hellos when idle")
+  func service() throws {
+    let cache = try TemporaryDirectory()
+    let backend = cpuBackend()
+    let host = EngineHost(cache: try ServerCache(root: cache.url, backend: backend), hooks: ServerHooks())
+    defer { host.close() }
+    let model = try AddonModel.prepare(Self.addon, backend: backend, root: cache.url, log: ServerLog(category: "test"), host: host)
+    defer { model.engine.close() }
+    let config = try AddonConfig(name: "tiny", interfaceClass: [0xFF, 0x54, 0x59], models: [Self.addon])
+    let service = AddonService(configs: [config], host: host, cacheRoot: cache.url) { _ in fatalError("unused") }
+    let served = AddonService.Served(config: config, models: [model.tag: model])
+
+    func request(_ seq: UInt32, _ tag: UInt32) -> [UInt8] {
+      var out = Array("JAQ1".utf8)
+      for v: UInt32 in [seq, tag] { withUnsafeBytes(of: v.littleEndian) { out += $0 } }
+      for v: UInt16 in [3, 4, 4] { withUnsafeBytes(of: v.littleEndian) { out += $0 } }
+      out += [0, 1]
+      withUnsafeBytes(of: UInt32(48).littleEndian) { out += $0 }
+      return out + [UInt8](repeating: 255, count: 48)
+    }
+    let pipes = FakeAddonPipes(request(1, model.tag) + request(2, 0xDEAD))
+    #expect(throws: LinkError.self) { try service.serve(served, pipes: AddonPipes(pipes)) }
+    let ok = Array(pipes.written.prefix(24 + 51 * 4))
+    #expect(ok.prefix(4) == ArraySlice("JAR1".utf8))
+    #expect(ok[12..<16] == [0, 0, 0, 0] && ok[20] == 51)
+    let unknown = Array(pipes.written.dropFirst(24 + 51 * 4))
+    #expect(unknown.count == 24 && unknown[4] == 2 && unknown[12] == UInt8(AddonWire.Status.unknownModel.rawValue))
+    #expect(served.passes == 1)
+  }
+}
