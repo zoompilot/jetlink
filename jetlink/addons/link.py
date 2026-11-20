@@ -377,14 +377,16 @@ class JetsonNet:
   host sends them in name order. scaled_u8: the caller promises the blob is a
   u8 image scaled by 1/255 (blobFromImage(img, 1/255)), so it goes as its u8
   bytes, a quarter of the size and exact. Any other blob must leave it False,
-  the default, and goes as f32."""
+  the default, and goes as f32. enabled: a cheap callable read on every
+  forward, so a setting turns the host off and on without a reload."""
 
-  def __init__(self, net, link: AddonLink, sha256: str, outputs, scaled_u8: bool = False):
+  def __init__(self, net, link: AddonLink, sha256: str, outputs, scaled_u8: bool = False, enabled=None):
     self.net, self.link, self.tag = net, link, W.tag(sha256)
     self.outputs = tuple((name, tuple(shape)) for name, shape in outputs)
     self.wire = sorted(self.outputs)
     self.sizes = [int(np.prod(shape)) for _, shape in self.wire]
     self.scaled_u8 = scaled_u8
+    self.enabled = enabled
     self.blob = None
     self.stats = {"host": 0, "local": 0}
     want = getattr(link, "want", None)
@@ -395,14 +397,20 @@ class JetsonNet:
     self.blob = blob
     self.net.setInput(blob, *args, **kwargs)
 
+  def on(self) -> bool:
+    try:
+      return self.enabled is None or bool(self.enabled())
+    except Exception:
+      return False
+
   def ready(self) -> bool:
-    return self.link.ready(self.tag)
+    return self.on() and self.link.ready(self.tag)
 
   def forward(self, names=None):
     wanted = [self.outputs[0][0]] if names is None else ([names] if isinstance(names, str) else list(names))
     known = {name for name, _ in self.outputs}
     # the image is built only for a host that will take it: no cost on the comma without one
-    if self.blob is not None and set(wanted) <= known and self.link.poll(self.tag):
+    if self.blob is not None and set(wanted) <= known and self.on() and self.link.poll(self.tag):
       blob = np.asarray(self.blob)
       image = blob_to_u8(blob) if self.scaled_u8 else np.ascontiguousarray(blob[0], np.float32)
       flat = self.link.infer(self.tag, image, sum(self.sizes))
@@ -416,8 +424,17 @@ class JetsonNet:
     self.stats["local"] += 1
     return self.net.forward() if names is None else self.net.forward(names)
 
+  _OWN = frozenset({"net", "link", "tag", "outputs", "wire", "sizes", "scaled_u8", "enabled", "blob", "stats"})
+
   def __getattr__(self, name):
     return getattr(self.net, name)
+
+  def __setattr__(self, name, value):
+    # a stand-in both ways: anything not the wrapper's own lands on the net it wraps
+    if name in self._OWN:
+      object.__setattr__(self, name, value)
+    else:
+      setattr(self.net, name, value)
 
 
 _shared: dict[str, AddonLink] = {}
@@ -434,12 +451,12 @@ def shared_link(function, **kwargs) -> AddonLink:
     return link
 
 
-def with_host(net, function, sha256: str, outputs, *, scaled_u8: bool = False, report=None):
+def with_host(net, function, sha256: str, outputs, *, scaled_u8: bool = False, report=None, enabled=None):
   """net, asking the host over the add-on's interface first; net itself if
   the wrapper cannot be made. Whether the gadget carries the interface yet is
   the link's to find out on each call, so a net loaded before the owner built
   the gadget still moves once it has."""
   try:
-    return JetsonNet(net, shared_link(function, report=report), sha256, outputs, scaled_u8=scaled_u8)
+    return JetsonNet(net, shared_link(function, report=report), sha256, outputs, scaled_u8=scaled_u8, enabled=enabled)
   except Exception:
     return net

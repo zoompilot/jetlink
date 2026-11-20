@@ -344,3 +344,29 @@ def test_no_image_is_built_while_the_host_is_not_ready(tmp_path, monkeypatch, no
   assert net.forward() == ("cpu", None)
   assert built == [] and link._rx is not None   # the link still opens, to hear a hello
   link._close()
+
+
+def test_a_switched_off_net_never_asks_and_switches_back_on(tmp_path, no_threads):
+  on = [False]
+  link = FakeLink(np.arange(3, dtype=np.float32))
+  net = JetsonNet(CpuNet(), link, SHA, (("output0", (1, 3)),), enabled=lambda: on[0])
+  net.setInput(np.zeros((1, 3, 4, 4), np.float32))
+  assert net.forward() == ("cpu", None) and link.sent == [] and not net.ready()
+  on[0] = True
+  assert net.forward().tolist() == [[0, 1, 2]] and net.ready()
+
+
+def test_a_broken_switch_is_off():
+  def broken():
+    raise OSError("no params")
+  net = JetsonNet(CpuNet(), FakeLink(None), SHA, (("output0", (1, 3)),), enabled=broken)
+  assert not net.on()
+
+
+def test_attributes_set_on_the_wrapper_land_on_the_net():
+  cpu = CpuNet()
+  net = JetsonNet(cpu, FakeLink(None), SHA, (("output0", (1, 3)),))
+  net.custom = 7
+  assert cpu.custom == 7 and net.custom == 7
+  net.blob = None
+  assert not hasattr(cpu, "blob")

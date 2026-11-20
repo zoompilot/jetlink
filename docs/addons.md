@@ -62,6 +62,11 @@ server answers them all in name order. `scaled_u8=True` promises a
 `blobFromImage(img, 1/255)` blob and sends its u8 bytes, a quarter of the size
 and exact. Leave it `False`, the default, for any other blob: it goes as f32.
 
+`enabled` is a cheap callable read on every forward: a fork's setting turns
+the host off and on without reloading the net. Declare the interface on the
+gadget whatever the setting, as one nothing opens costs nothing, so a change
+never needs the gadget rebuilt or the comma restarted.
+
 `report(dict)` hears the link every 30 s while the caller asks or hellos
 come: connected, yielding, the host's model tags, `missing` (the ones this
 comma asks for that a connected host lacks, a different file on each end most
