@@ -46,7 +46,7 @@ def main(config: OwnerConfig) -> None:
   gadget.set_logger(comma_owner.logger(config.log_file))
   owner = comma_owner.Owner(worker(config), cwd=str(config.cwd), env=dict(config.env),
                             settings=Settings(FileParams(config.params_dir), config.keys),
-                            chestnut_ids=config.chestnut_ids)
+                            chestnut_ids=config.chestnut_ids, functions=config.functions)
   signal.signal(signal.SIGTERM, owner.request_stop)
   signal.signal(signal.SIGINT, owner.request_stop)
   owner.run()

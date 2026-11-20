@@ -75,6 +75,8 @@ class OwnerConfig:
   cwd: Path                                  # where the run starts: the checkout
   env: Mapping[str, str]                     # over the owner's environment, for the run
   log_file: Path                             # the owner's rotating log
+  # a fork's extra interfaces on the gadget (jetlink.comma.functions.GadgetFunction)
+  functions: tuple = ()
 
 
 @dataclass(frozen=True)

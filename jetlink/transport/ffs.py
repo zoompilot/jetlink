@@ -114,9 +114,10 @@ _NOT_READY = (errno.EIO, errno.ESHUTDOWN, errno.ENODEV)
 _IO_SIGNALS = signal.valid_signals()
 
 
-def _interface_desc(n_endpoints: int = 2, i_interface: int = 1) -> bytes:
+def _interface_desc(n_endpoints: int = 2, i_interface: int = 1,
+                    iface_class: tuple[int, int, int] = P.USB_VENDOR_CLASS) -> bytes:
   return struct.pack('<BBBBBBBBB', 9, USB_DT_INTERFACE, 0, 0, n_endpoints,
-                     *P.USB_VENDOR_CLASS, i_interface)
+                     *iface_class, i_interface)
 
 
 def _endpoint_desc(addr: int, max_packet: int) -> bytes:
@@ -132,10 +133,11 @@ def _ss_companion(max_burst: int = 15) -> bytes:
   return struct.pack('<BBBBH', 6, USB_DT_SS_ENDPOINT_COMP, max_burst, 0, 0)
 
 
-def build_descriptors() -> bytes:
-  fs = _interface_desc() + _endpoint_desc(EP_OUT, 64) + _endpoint_desc(EP_IN, 64)
-  hs = _interface_desc() + _endpoint_desc(EP_OUT, 512) + _endpoint_desc(EP_IN, 512)
-  ss = (_interface_desc()
+def build_descriptors(iface_class: tuple[int, int, int] = P.USB_VENDOR_CLASS) -> bytes:
+  """Jetlink's interface, or with `iface_class` an extra one (jetlink.comma.functions)."""
+  fs = _interface_desc(iface_class=iface_class) + _endpoint_desc(EP_OUT, 64) + _endpoint_desc(EP_IN, 64)
+  hs = _interface_desc(iface_class=iface_class) + _endpoint_desc(EP_OUT, 512) + _endpoint_desc(EP_IN, 512)
+  ss = (_interface_desc(iface_class=iface_class)
         + _endpoint_desc(EP_OUT, P.USB_MAX_PACKET) + _ss_companion()
         + _endpoint_desc(EP_IN, P.USB_MAX_PACKET) + _ss_companion())
 

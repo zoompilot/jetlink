@@ -168,6 +168,44 @@ that param, with the model's `sha256` and `ref` where it has them, so the
 fork's list can show what drives. The param's write time is when the choice
 was made: write it only when the user chooses.
 
+### Extra USB interfaces
+
+A fork can put its own interfaces on the gadget next to Jetlink's, for an
+add-on that talks to the Jetson over the same cable (a second model with its
+own server on the Jetson, say). Declare them on the adapter, inside
+`_adapter_class()` like the rest, since the module's top level imports the
+standard library only:
+
+```python
+def _adapter_class():
+  from jetlink.comma.functions import GadgetFunction
+  from jetlink.openpilot.stock import Stock
+
+  class Adapter(Stock):
+    GADGET_FUNCTIONS = (GadgetFunction('vasm', (0xFF, 0x56, 0x41)),)
+
+  return Adapter
+```
+
+This needs a Jetlink release that has `jetlink.comma.functions`; on an older
+one the import fails and every hook answers as the link off.
+
+Each is a vendor interface with one bulk OUT and one bulk IN endpoint. The
+name is 1 to 16 of `a-z0-9`; the class triple is how the host finds it, so it
+must not be Jetlink's `(0xFF, 0xFF, 0xFF)`. Jetlink links each one after its
+own interface, so Jetlink stays interface 0, mounts it at `/dev/ffs-<name>`,
+and the owner writes its descriptors and holds its `ep0`. The add-on opens
+only `ep1` (host to comma) and `ep2` (comma to host), and only once a host
+has configured the gadget (`jetlink.comma.gadget.host_attached()`): opening an
+endpoint before that costs the gadget until the comma reboots. On the host,
+claim the interface by its class triple; Jetlink's server claims only its own.
+
+USB only: a gadget built for an iPhone has none. One that cannot be described
+is logged and left out until the owner restarts, and Jetlink comes up without
+it; so is one whose `ep0` stays busy for 10 s, because an add-on from before
+still has its endpoints open. Changing which are linked unbinds the gadget, so the owner does it only
+while nothing holds the link.
+
 ## manager
 
 Upstream's `PythonProcess` never starts a process again once it has died. The

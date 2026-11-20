@@ -70,6 +70,9 @@ class Stock:
   WARP_DIR = 'openpilot/selfdrive/modeld/models'
   WARP_NAME = 'driving_warp_{cam_w}x{cam_h}_tinygrad.pkl'
   OWNER_LOG = Path('/data/log/jetlink-owner.log')
+  # extra interfaces for the fork's own add-ons, after Jetlink's on the USB
+  # gadget: jetlink.comma.functions.GadgetFunction, and docs/porting.md
+  GADGET_FUNCTIONS: tuple = ()
 
   def __init__(self):
     # nothing imported here: owner_config() builds one in the owner
@@ -251,7 +254,7 @@ class Stock:
     # the launch script links jetlink in
     return OwnerConfig(params_dir=op.params_dir(), keys=op.keys, chestnut_ids=cls.CHESTNUT_IDS,
                        adapter=cls.ADAPTER_MODULE or cls.__module__, cwd=Path(BASEDIR), env={'PYTHONPATH': BASEDIR},
-                       log_file=cls.OWNER_LOG)
+                       log_file=cls.OWNER_LOG, functions=tuple(cls.GADGET_FUNCTIONS))
 
   @classmethod
   def main(cls) -> None:

@@ -52,6 +52,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from jetlink.comma import gadget, lending, port, root
+from jetlink.comma.functions import describe as describe_function, present as function_present
 
 POLL = 0.5
 # how long the gadget is held after the last thing that wanted it. The server
@@ -85,6 +86,10 @@ WORKER_GRACE = 10.0
 # it lets go. A refused open changes nothing in the kernel, so it is safe to
 # repeat; only a read of an endpoint no host has enabled is not (_ensure_epfiles)
 EP0_BUSY_RETRY = 1.0
+# how long an extra interface's busy ep0 (jetlink.comma.functions) holds
+# Jetlink's own bind back before it is left out: an add-on that never lets go
+# of its endpoint files must not keep the link down
+FUNCTION_BUSY_LIMIT = 10.0
 
 # A crash loop re-enumerates the Jetson at every start, since the gadget goes
 # with the owner that held it. Each start is written down and a clean stop
@@ -162,7 +167,7 @@ def forget_start(started: float) -> None:
 
 class Owner:
   def __init__(self, worker: Sequence[str], cwd: str | None = None, env: Mapping[str, str] | None = None, *,
-               settings, chestnut_ids):
+               settings, chestnut_ids, functions=()):
     # the provisioning run: its argv, its working directory, and what it gets
     # over this process's environment
     self.worker_argv = list(worker)
@@ -172,6 +177,13 @@ class Owner:
     # parked, and when the pick and the built model last changed
     self.settings = settings
     self.transport = None
+    # a fork's extra interfaces (jetlink.comma.functions): those declared, each
+    # one's ep0 while the gadget is presented, and those left out of the build
+    # because one could not be described or linked, until this owner restarts
+    self.functions = tuple(functions)
+    self.function_fds: dict[str, int] = {}
+    self.left_out: set[str] = set()
+    self.function_busy: dict[str, float] = {}   # when each one's ep0 first answered EBUSY, until it opens
     self.stop = False
     self.dormant = False
     # the link mode the root tuning was applied for, None while stock
@@ -250,6 +262,70 @@ class Owner:
         transport.close()
       except Exception:
         gadget.log.exception("jetlink: error closing the link")
+    # after Jetlink's: the gadget is down already, and the next open_link
+    # describes them again before its bind
+    self.close_functions()
+
+  def wanted_functions(self, ios: bool) -> tuple:
+    """The extra interfaces to build and describe: none for iOS."""
+    return () if ios else tuple(fn for fn in self.functions if fn.name not in self.left_out)
+
+  def close_functions(self) -> None:
+    fds, self.function_fds = self.function_fds, {}
+    for name, fd in fds.items():
+      try:
+        os.close(fd)
+      except OSError:
+        gadget.log.exception("jetlink: error closing %s's ep0", name)
+
+  def describe_functions(self) -> bool:
+    """Write each extra interface's descriptors before Jetlink's bind: a linked
+    function without them fails the bind for the whole gadget. A busy ep0
+    waits, as Jetlink's own does; any other failure leaves the function out,
+    and the next step builds the gadget without it (refresh_functions)."""
+    for fn in self.wanted_functions(bool(self.built_ios)):
+      if fn.name in self.function_fds or not function_present(fn):
+        continue
+      try:
+        self.function_fds[fn.name] = describe_function(fn)
+        self.function_busy.pop(fn.name, None)
+      except OSError as e:
+        self.close_functions()
+        now = time.monotonic()
+        if e.errno == errno.EBUSY and now - self.function_busy.setdefault(fn.name, now) < FUNCTION_BUSY_LIMIT:
+          if self.function_busy[fn.name] == now:
+            gadget.log.warning("jetlink: %s's ep0 is busy, an add-on from before still has its endpoint files open; "
+                               "presenting the gadget once they are closed", fn.name)
+          self.next_attempt = now + EP0_BUSY_RETRY
+        elif e.errno == errno.EBUSY:
+          gadget.log.warning("jetlink: %s's ep0 stayed busy for %.0f s, leaving it out of the gadget", fn.name,
+                             FUNCTION_BUSY_LIMIT)
+          self.function_busy.pop(fn.name, None)
+          self.left_out.add(fn.name)
+        else:
+          gadget.log.exception("jetlink: could not describe %s, leaving it out of the gadget", fn.name)
+          self.left_out.add(fn.name)
+        return False
+    return True
+
+  def refresh_functions(self) -> bool:
+    """Build the gadget again when the extra interfaces it links are not the
+    ones wanted. Only with nothing presented and the UDC unbound, as changing
+    the config unbinds it. One the build still did not link is left out from
+    then on, so this settles. False when the build failed."""
+    if self.transport is not None or self.built_ios is None:
+      return True
+    ios = bool(self.built_ios)
+    want = {fn.name for fn in self.wanted_functions(ios)}
+    if gadget.linked_functions() == want or gadget.bound_udc():
+      return True
+    gadget.log.warning("jetlink: rebuilding the gadget for its extra interfaces: %s", ', '.join(sorted(want)) or 'none')
+    if not self.build(ios):
+      return False
+    for name in sorted(want - gadget.linked_functions()):
+      gadget.log.warning("jetlink: the gadget was built without %s, leaving it out", name)
+      self.left_out.add(name)
+    return True
 
   def lendable(self) -> bool:
     """Is the gadget in a state a borrower can take the endpoints over from?"""
@@ -299,6 +375,8 @@ class Owner:
     """
     if self.transport is not None:
       return True
+    if not self.refresh_functions() or not self.describe_functions():
+      return False
     try:
       from jetlink.transport.ffs import FfsTransport
       self.transport = FfsTransport(str(gadget.FFS_MOUNT), gadget=str(gadget.GADGET_PATH))
@@ -308,6 +386,7 @@ class Owner:
       self.ep0_busy = False
       return True
     except OSError as e:
+      self.close_functions()
       if e.errno == errno.EBUSY and os.path.basename(os.fsdecode(e.filename or '')) == 'ep0':
         # an owner started after one that died: its borrower (modeld mid-drive,
         # or the dead owner's own run) still has ep1 and ep2, and FunctionFS
@@ -321,6 +400,7 @@ class Owner:
         return False
       return self._open_failed()
     except Exception:
+      self.close_functions()
       return self._open_failed()
 
   def _open_failed(self) -> bool:
@@ -333,7 +413,7 @@ class Owner:
     none: nothing sets it up at boot, so the owner's first step does, parked
     or onroad, and a link turned on later gets one at once."""
     if gadget.link_configured():
-      return True
+      return self.refresh_functions()
     return self.build(ios)
 
   def build(self, ios: bool) -> bool:
@@ -345,7 +425,8 @@ class Owner:
     now = time.monotonic()
     if now < self.next_gadget_attempt and ios == self.failed_ios:
       return False
-    if not gadget.setup_gadget(ios):
+    extra = self.wanted_functions(ios)
+    if not (gadget.setup_gadget(ios, extra) if extra else gadget.setup_gadget(ios)):
       self.failed_ios = ios
       held = gadget.other_gadget() is not None
       self.next_gadget_attempt = now + (GADGET_HELD_RETRY if held else GADGET_SETUP_BACKOFF)

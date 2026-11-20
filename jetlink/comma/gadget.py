@@ -375,15 +375,29 @@ def wait_for_host(timeout: float, bounce=None, should_stop=None, report=None, mo
     time.sleep(HOST_POLL)
 
 
-def setup_gadget(ios: bool) -> bool:
+def setup_gadget(ios: bool, functions=()) -> bool:
   """Create the gadget, for USB or iOS: there is none yet, or the setting
   moved between the two. The script records "ok" or the reason itself, in
   GADGET_STATUS, so a failure here reaches the offroad alert. Off AGNOS
-  there is nothing to create it with, and this is a False."""
-  if not root.run('gadget', *(['--ios'] if ios else [])):
+  there is nothing to create it with, and this is a False.
+
+  `functions` are a fork's extra interfaces (jetlink.comma.functions), for
+  USB only. The script changes which are linked only while the UDC is unbound,
+  dropping any it was not given."""
+  extra = [arg for fn in functions for arg in ('--function', fn.name)]
+  if not root.run('gadget', *(['--ios'] if ios else []), *extra):
     return False
   log.warning("jetlink: gadget set up for %s", 'iOS' if ios else 'USB')
   return link_configured()
+
+
+def linked_functions() -> frozenset[str]:
+  """The extra functions the gadget's config links (jetlink.comma.functions), by name."""
+  try:
+    names = {p.name[len('ffs.'):] for p in (GADGET_PATH / 'configs' / 'c.1').glob('ffs.*')}
+  except OSError:
+    return frozenset()
+  return frozenset(names - {'jetlink'})   # ffs.jetlink is Jetlink's own
 
 
 def built_for_ios() -> bool:

@@ -8,6 +8,7 @@
 #
 #   sudo jetlink/comma/jetlink-root.sh gadget            # the gadget for a Jetson or a Mac
 #   sudo jetlink/comma/jetlink-root.sh gadget --ios      # the gadget for an iPhone
+#   sudo jetlink/comma/jetlink-root.sh gadget --function NAME ...  # with a fork's extra interfaces, USB only
 #   sudo jetlink/comma/jetlink-root.sh net               # after a bind, iOS only: address, DHCP
 #   sudo jetlink/comma/jetlink-root.sh rps               # the cable's receive work onto core 6, read back
 #   sudo jetlink/comma/jetlink-root.sh check             # what is there now
@@ -152,7 +153,7 @@ PROC_SYS=${JETLINK_PROC_SYS:-/proc/sys}
 SYSCTL_PREV=${JETLINK_SYSCTL_PREV:-/dev/shm/jetlink-sysctl-prev}
 
 usage() {
-  echo "usage: $0 gadget [--ios] | net | rps | check | teardown | port hold|off|device|reset|source|sink | udc apply|restore|start|stop | vm apply|restore | draw off|on | boot SETTING" >&2
+  echo "usage: $0 gadget [--ios] [--function NAME]... | net | rps | check | teardown | port hold|off|device|reset|source|sink | udc apply|restore|start|stop | vm apply|restore | draw off|on | boot SETTING" >&2
   exit 2
 }
 
@@ -302,15 +303,35 @@ net_remove() {
   done
 }
 
+# Is $1 among the rest?
+has_function() {
+  local want=$1 name
+  shift
+  for name in "$@"; do
+    [[ "$name" == "$want" ]] && return 0
+  done
+  return 1
+}
+
 # -- subcommands ----------------------------------------------------------------
 
 cmd_gadget() {
-  local ios=0 udcs other owner bound serial uid gid
-  case "${1:-}" in
-    "") ;;
-    --ios) ios=1 ;;
-    *) usage ;;
-  esac
+  local ios=0 udcs other owner bound serial uid gid f name
+  local -a functions=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ios) ios=1 ;;
+      --function)
+        # a fork's extra interface (jetlink/comma/functions.py); the name goes
+        # into configfs and mount paths, so it is held to the same rule here
+        [[ $# -ge 2 && "$2" =~ ^[a-z0-9]{1,16}$ && "$2" != "$FFS_NAME" ]] ||
+          { echo "jetlink-root.sh: bad --function name '${2:-}'" >&2; usage; }
+        functions+=("$2")
+        shift ;;
+      *) usage ;;
+    esac
+    shift
+  done
   [[ $EUID -eq 0 ]] || fail "jetlink-root.sh gadget must run as root"
 
   # set -e alone exits without going through fail, leaving last boot's "ok" in
@@ -396,6 +417,32 @@ cmd_gadget() {
     ln -s "$GADGET/functions/ffs.$FFS_NAME" "configs/c.1/ffs.$FFS_NAME" ||
     fail "could not link ffs.$FFS_NAME into configs/c.1"
 
+  # A fork's extra interfaces, after ffs.$FFS_NAME so it stays interface 0, and
+  # for USB only. Linking into or unlinking from a bound config force-unbinds
+  # the UDC, so the set changes only while unbound: one the owner builds again
+  # after closing its link. Any not asked for this time, or all for iOS, go.
+  if [[ -z "$(cat UDC 2>/dev/null)" ]]; then
+    for f in configs/c.1/ffs.*; do
+      [[ -L "$f" ]] || continue
+      name=${f##*/ffs.}
+      [[ "$name" != "$FFS_NAME" ]] || continue
+      if [[ $ios -eq 1 ]] || ! has_function "$name" ${functions[@]+"${functions[@]}"}; then
+        rm -f "$f"
+        umount -l "/dev/ffs-$name" 2>/dev/null || true
+        rmdir "/dev/ffs-$name" 2>/dev/null || true
+        rmdir "functions/ffs.$name" 2>/dev/null || true
+      fi
+    done
+    if [[ $ios -eq 0 ]]; then
+      for name in ${functions[@]+"${functions[@]}"}; do
+        mkdir -p "functions/ffs.$name" || fail "could not create ffs.$name"
+        [[ -L "configs/c.1/ffs.$name" ]] ||
+          ln -s "$GADGET/functions/ffs.$name" "configs/c.1/ffs.$name" ||
+          fail "could not link ffs.$name into configs/c.1"
+      done
+    fi
+  fi
+
   # The network interface, for an iPhone only. A USB gadget left with one from an
   # iOS boot loses it here: unlinking it force-unbinds the UDC, which is why the
   # owner switches only while parked. The 4.9 kernel picks the interface's MAC
@@ -422,6 +469,17 @@ cmd_gadget() {
   # the check that proves the chain: ep0 is what the owner opens to write the
   # descriptors and bind the controller
   [[ -e "$FFS_MOUNT/ep0" ]] || fail "functionfs mounted at $FFS_MOUNT but has no ep0"
+
+  # each extra interface the config links, mounted the same way; the owner
+  # writes its descriptors before the bind
+  for f in configs/c.1/ffs.*; do
+    [[ -L "$f" ]] || continue
+    name=${f##*/ffs.}
+    [[ "$name" != "$FFS_NAME" ]] || continue
+    mkdir -p "/dev/ffs-$name"
+    mountpoint -q "/dev/ffs-$name" || mount -t functionfs -o "uid=$uid,gid=$gid" "$name" "/dev/ffs-$name" ||
+      fail "could not mount functionfs at /dev/ffs-$name"
+  done
 
   # the owner binds the UDC as the openpilot user, so hand it that one attribute
   chown "$OPENPILOT_USER" "$GADGET/UDC" 2>/dev/null || true
@@ -454,11 +512,20 @@ cmd_rps() {
 }
 
 cmd_teardown() {
-  local f linked=0
+  local f name linked=0
+  local -a extra=()
   net_remove
   if [[ -d "$GADGET" ]]; then
     echo "" > "$GADGET/UDC" 2>/dev/null || true
     rm -f "$GADGET/configs/c.1/ffs.$FFS_NAME" 2>/dev/null || true
+    # a fork's extra interfaces, and their mounts below
+    for f in "$GADGET"/functions/ffs.*; do
+      [[ -d "$f" ]] || continue
+      name=${f##*/ffs.}
+      [[ "$name" != "$FFS_NAME" ]] || continue
+      extra+=("$name")
+      rm -f "$GADGET/configs/c.1/ffs.$name" 2>/dev/null || true
+    done
     rmdir "$GADGET/configs/c.1/strings/0x409" 2>/dev/null || true
     # a config with a function still linked cannot go, and trying is a
     # configfs error worth not making
@@ -471,6 +538,9 @@ cmd_teardown() {
       echo "jetlink: configs/c.1 still has a function linked; left in place" >&2
     fi
     rmdir "$GADGET/functions/ffs.$FFS_NAME" 2>/dev/null || true
+    for name in ${extra[@]+"${extra[@]}"}; do
+      rmdir "$GADGET/functions/ffs.$name" 2>/dev/null || true
+    done
     rmdir "$GADGET/strings/0x409" 2>/dev/null || true
     rmdir "$GADGET" 2>/dev/null || true
   fi
@@ -478,6 +548,10 @@ cmd_teardown() {
   # with endpoints open; lazy-detach unhooks it now and lets the kernel finish.
   umount -l "$FFS_MOUNT" 2>/dev/null || umount "$FFS_MOUNT" 2>/dev/null || true
   rmdir "$FFS_MOUNT" 2>/dev/null || true
+  for name in ${extra[@]+"${extra[@]}"}; do
+    umount -l "/dev/ffs-$name" 2>/dev/null || true
+    rmdir "/dev/ffs-$name" 2>/dev/null || true
+  done
   status "error: gadget torn down"
   net_status "error: gadget torn down"
   echo "jetlink gadget torn down"

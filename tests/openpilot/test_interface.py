@@ -64,7 +64,7 @@ OPTIONAL = {'ModelSide': {'small_reset', 'model_warp'}, 'Openpilot': {'small_res
 
 FIELDS = {
   'Keys': ['link', 'offroad', 'progress', 'spec', 'big_model', 'catalog', 'charge_phone', 'select', 'pointers'],
-  'OwnerConfig': ['params_dir', 'keys', 'chestnut_ids', 'adapter', 'cwd', 'env', 'log_file'],
+  'OwnerConfig': ['params_dir', 'keys', 'chestnut_ids', 'adapter', 'cwd', 'env', 'log_file', 'functions'],
   'ModelFace': ['parser', 'frame_size', 'desire_len', 'constants', 'lat_smooth_seconds', 'long_smooth_seconds',
                 'get_action_from_model'],
 }
