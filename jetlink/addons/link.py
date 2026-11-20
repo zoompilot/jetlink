@@ -32,6 +32,7 @@ number is never reused under one. numpy and the standard library only. From Pete
 from __future__ import annotations
 
 import collections
+import logging
 import os
 import queue
 import signal
@@ -459,4 +460,5 @@ def with_host(net, function, sha256: str, outputs, *, scaled_u8: bool = False, r
   try:
     return JetsonNet(net, shared_link(function, report=report), sha256, outputs, scaled_u8=scaled_u8, enabled=enabled)
   except Exception:
+    logging.getLogger(__name__).exception("jetlink: %s runs on the comma alone", getattr(function, 'name', 'add-on'))
     return net
