@@ -43,7 +43,7 @@ class CommaUsb(private val context: Context) {
 
     private var open: Opened? = null
 
-    private class Opened(val device: UsbDevice, val connection: UsbDeviceConnection, val iface: UsbInterface)
+    private class Opened(val device: UsbDevice, val connection: UsbDeviceConnection, val iface: UsbInterface, val addons: List<UsbInterface>)
 
     /** The comma's gadget, if it is on the bus. */
     fun find(): UsbDevice? = manager.deviceList.values.firstOrNull(::isComma)
@@ -85,10 +85,30 @@ class CommaUsb(private val context: Context) {
             connection.close()
             return fail(error)
         }
-        open = Opened(device, connection, iface)
+        open = Opened(device, connection, iface, attachAddons(device, connection))
         state.value = UsbState.Attached
         Log.i(TAG, "comma attached: ${device.deviceName}, endpoints ${hex(bulkIn.address)} in, ${hex(bulkOut.address)} out")
     }
+
+    /**
+     * Claims each of the comma's add-on interfaces (a fork's own models, served
+     * beside the driving model) and hands it to the server. One that cannot be
+     * claimed is left to the comma, which then runs that model itself.
+     */
+    private fun attachAddons(device: UsbDevice, connection: UsbDeviceConnection): List<UsbInterface> =
+        addonInterfaces(device).filter { iface ->
+            val bulkIn = endpoint(iface, UsbConstants.USB_DIR_IN) ?: return@filter false
+            val bulkOut = endpoint(iface, UsbConstants.USB_DIR_OUT) ?: return@filter false
+            if (!connection.claimInterface(iface, true)) return@filter false
+            val error = Native.usbAttachAddon(
+                connection.fileDescriptor, iface.interfaceClass, iface.interfaceSubclass, iface.interfaceProtocol, bulkIn.address, bulkOut.address,
+            )
+            if (error != null) {
+                Log.w(TAG, "add-on interface ${iface.id} not attached: $error")
+                connection.releaseInterface(iface)
+            }
+            error == null
+        }
 
     /** Lets the gadget go: the server first, so nothing uses the descriptor when it closes. */
     @Synchronized
@@ -96,6 +116,7 @@ class CommaUsb(private val context: Context) {
         val current = open ?: return
         open = null
         Native.usbDetach()
+        current.addons.forEach(current.connection::releaseInterface)
         current.connection.releaseInterface(current.iface)
         current.connection.close()
         state.value = UsbState.None
@@ -143,6 +164,12 @@ class CommaUsb(private val context: Context) {
                 it.interfaceClass == VENDOR_CLASS && it.interfaceSubclass == VENDOR_CLASS && it.interfaceProtocol == VENDOR_CLASS
             } ?: all.firstOrNull { it.id == 0 }
         }
+
+        /** The comma's add-on interfaces: vendor class, any but the link's own triple. */
+        fun addonInterfaces(device: UsbDevice): List<UsbInterface> =
+            (0 until device.interfaceCount).map(device::getInterface).filter {
+                it.interfaceClass == VENDOR_CLASS && !(it.interfaceSubclass == VENDOR_CLASS && it.interfaceProtocol == VENDOR_CLASS)
+            }
 
         /** The interface's bulk endpoint in `direction`; addresses come from the descriptors, never assumed. */
         fun endpoint(iface: UsbInterface, direction: Int): UsbEndpoint? =

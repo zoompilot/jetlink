@@ -122,10 +122,27 @@
     }
   }
 
+  /// An add-on's interface on the same descriptor, claimed by the app too: its
+  /// class triple and its bulk endpoints' addresses. Nil or an error.
+  @_cdecl("Java_io_zoompilot_jetlink_server_Native_usbAttachAddon")
+  public func nativeUSBAttachAddon(
+    _ env: Env, _ cls: jclass?, _ fd: jint, _ kind: jint, _ subclass: jint, _ proto: jint, _ inEndpoint: jint, _ outEndpoint: jint
+  ) -> jstring? {
+    do {
+      let triple = [kind, subclass, proto].map { UInt8(truncatingIfNeeded: $0) }
+      try Host.shared.addonPort(triple).attach(
+        fd: fd, inEndpoint: UInt8(truncatingIfNeeded: inEndpoint), outEndpoint: UInt8(truncatingIfNeeded: outEndpoint))
+      return nil
+    } catch {
+      return jstring(env, String(describing: error))
+    }
+  }
+
   /// The gadget is going. Returns once nothing uses the descriptor, so the app
   /// can close the connection after.
   @_cdecl("Java_io_zoompilot_jetlink_server_Native_usbDetach")
   public func nativeUSBDetach(_ env: Env, _ cls: jclass?) {
+    Host.shared.detachAddons()
     Host.shared.gadget.detach()
   }
 
@@ -152,11 +169,26 @@
     /// The comma's descriptor, from the app's USB permission flow.
     let gadget = UsbfsGadget()
     private let lock = NSLock()
+    /// The comma's add-on interfaces on the same descriptor, by class triple.
+    private var addonPorts: [[UInt8]: UsbfsAddonPort] = [:]
     private var embedded: EmbeddedServer?
     private var thermalLabel = "unknown"
 
     var running: EmbeddedServer? {
       lock.withLock { embedded }
+    }
+
+    func addonPort(_ kind: [UInt8]) -> UsbfsAddonPort {
+      lock.withLock {
+        if let port = addonPorts[kind] { return port }
+        let port = UsbfsAddonPort()
+        addonPorts[kind] = port
+        return port
+      }
+    }
+
+    func detachAddons() {
+      for port in lock.withLock({ Array(addonPorts.values) }) { port.detach() }
     }
 
     var thermal: String {
@@ -189,8 +221,12 @@
       }
       let server: EmbeddedServer
       do {
+        // the comma's add-ons on the interfaces the app claimed beside the link's
+        var addonSource: (@Sendable (AddonInterface) -> any AddonSource)?
+        if configuration.usb { addonSource = { interface in Host.shared.addonPort(interface.kind) } }
         server = try EmbeddedServer(
-          configuration: configuration, backend: backend, gadget: gadget, hooks: ServerHooks(thermal: { Host.shared.thermal }))
+          configuration: configuration, backend: backend, gadget: gadget, hooks: ServerHooks(thermal: { Host.shared.thermal }),
+          addonBackend: (backend as? OrtBackend)?.wholeModel(), addonSource: addonSource)
         state.reset()
         let events = server.events
         let state = self.state

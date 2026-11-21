@@ -33,7 +33,13 @@ object Native {
      */
     external fun usbAttach(fd: Int, inEndpoint: Int, outEndpoint: Int): String?
 
-    /** The gadget is going; returns once nothing uses the descriptor. */
+    /**
+     * One of the comma's add-on interfaces on the same connection, claimed
+     * too: its class triple and its bulk endpoints' addresses. Null or an error.
+     */
+    external fun usbAttachAddon(fd: Int, kind: Int, subclass: Int, protocol: Int, inEndpoint: Int, outEndpoint: Int): String?
+
+    /** The gadget is going, add-ons and all; returns once nothing uses the descriptor. */
     external fun usbDetach()
 
     /** "nominal", "fair", "serious" or "critical", for the benchmark's reports. */
