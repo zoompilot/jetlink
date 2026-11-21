@@ -105,7 +105,8 @@ def test_the_owner_can_import_it():
   # the owner reads ADDONS off the adapter, and stays at the standard library
   import subprocess
   import sys
-  code = "import sys, jetlink.addons.addon; print(sorted(m for m in ('numpy', 'jetlink.addons.link') if m in sys.modules))"
+  code = ("import sys, jetlink.addons.addon; jetlink.addons.addon.Addon('vasm', (0xFF, 0x56, 0x41)).present(); "
+          "print(sorted(m for m in ('numpy', 'jetlink.addons.link') if m in sys.modules))")
   out = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, check=True,
                        env={**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[1])})
   assert out.stdout.strip() == '[]'

@@ -264,6 +264,9 @@ class Stock:
       # an add-on only ever takes work off the comma: a fork's bug here must not take the link down
       logging.getLogger(__name__).exception("jetlink: gadget_functions failed, building the gadget without extras")
       functions = ()
+    from jetlink.comma.functions import shared_ports
+    for message in shared_ports(functions):
+      logging.getLogger(__name__).warning("jetlink: %s", message)
     return OwnerConfig(params_dir=params_dir, keys=op.keys, chestnut_ids=cls.CHESTNUT_IDS,
                        adapter=cls.ADAPTER_MODULE or cls.__module__, cwd=Path(BASEDIR), env={'PYTHONPATH': BASEDIR},
                        log_file=cls.OWNER_LOG, functions=functions)
@@ -273,8 +276,7 @@ class Stock:
     """The extra interfaces the owner puts on the gadget, read once as it
     starts: ADDONS' by default, or a fork's pick from its own settings. params
     is a jetlink.openpilot.settings.FileParams on the params store."""
-    from jetlink.comma.functions import check_ports
-    return check_ports(tuple(a.function for a in cls.ADDONS))
+    return tuple(a.function for a in cls.ADDONS)
 
   @classmethod
   def addon_models(cls, params) -> tuple:

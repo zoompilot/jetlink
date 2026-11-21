@@ -55,13 +55,12 @@ def test_a_bad_class_is_refused(iface_class):
     functions.GadgetFunction('vasm', iface_class)
 
 
-def test_its_port_follows_its_class_and_two_on_one_port_are_refused():
+def test_its_port_follows_its_class_and_two_on_one_port_are_named():
   assert VASM.port == functions.PORT_BASE + 0x5641 % functions.PORTS
   assert VASM.port != SLV.port
-  assert functions.check_ports((VASM, SLV)) == (VASM, SLV)
+  assert functions.shared_ports((VASM, SLV)) == []
   twin = functions.GadgetFunction('twin', (0xFF, 0x57, 0xD1))   # 0x5641 + 400
-  with pytest.raises(ValueError):
-    functions.check_ports((VASM, twin))
+  assert functions.shared_ports((VASM, twin)) == [f"gadget functions vasm and twin share port {VASM.port}; pick another class for one"]
 
 
 def test_its_files_are_under_its_own_mount():

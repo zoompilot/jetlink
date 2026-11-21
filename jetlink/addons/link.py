@@ -49,6 +49,7 @@ import numpy as np
 
 from jetlink import protocol as P
 from jetlink.addons import wire as W
+from jetlink.comma import functions
 
 HELLO_FRESH_S = 2.5
 REPLY_TIMEOUT_S = 0.05
@@ -65,15 +66,6 @@ def _host_attached() -> bool:
   try:
     return gadget.host_attached()
   except OSError:
-    return False
-
-
-def _cable_network() -> bool:
-  """Is the comma's cable a network (an iPhone)? Then add-ons are served over TCP."""
-  from jetlink.comma import gadget
-  try:
-    return gadget.built_for_ios()
-  except Exception:
     return False
 
 
@@ -148,7 +140,7 @@ class AddonLink:
     numbers every REPORT_S, for a fork's status page; None drops them."""
     self.function, self.addon = function, getattr(function, 'name', 'addon')
     self.host_ready = host_ready if host_ready is not None else _host_attached
-    self.cable_network = cable_network if cable_network is not None else _cable_network
+    self.cable_network = cable_network if cable_network is not None else functions.cable_network
     self.report_to, self.clock = report, clock
     self.tags: frozenset[int] = frozenset()
     self.wanted: frozenset[int] = frozenset()   # the models this comma asks for, by tag; replaced, never changed

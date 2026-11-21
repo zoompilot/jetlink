@@ -84,14 +84,25 @@ class GadgetFunction:
     return self.mount / 'ep2'
 
 
-def check_ports(functions) -> tuple:
-  """functions, or ValueError when two would listen on the same port."""
+def cable_network() -> bool:
+  """Is the comma's cable a network (an iPhone)? Then add-ons are served over TCP, on each function's port."""
+  from jetlink.comma import gadget
+  try:
+    return gadget.built_for_ios()
+  except Exception:
+    return False
+
+
+def shared_ports(functions) -> list[str]:
+  """Where two would listen on one port: over an iPhone's cable only the first
+  is served then, and the comma runs the other itself. USB is unaffected."""
   ports: dict[int, str] = {}
+  clashes = []
   for fn in functions:
     if fn.port in ports:
-      raise ValueError(f"gadget functions {ports[fn.port]} and {fn.name} share port {fn.port}: pick another class for one")
-    ports[fn.port] = fn.name
-  return tuple(functions)
+      clashes.append(f"gadget functions {ports[fn.port]} and {fn.name} share port {fn.port}; pick another class for one")
+    ports.setdefault(fn.port, fn.name)
+  return clashes
 
 
 def present(fn: GadgetFunction) -> bool:

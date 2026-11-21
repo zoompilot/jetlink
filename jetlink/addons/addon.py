@@ -30,7 +30,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from jetlink.comma.functions import GadgetFunction, present
+from jetlink.comma.functions import GadgetFunction, cable_network, present
 from jetlink.openpilot.interface import AddonModel
 
 SETTING_REFRESH_S = 2.0
@@ -89,8 +89,7 @@ class Addon:
 
   def present(self) -> bool:
     """Does the gadget carry its interface, or the cable network that stands for it on an iPhone?"""
-    from jetlink.addons.link import _cable_network
-    return present(self.function) or _cable_network()
+    return present(self.function) or cable_network()
 
   # -- the comma's model process ------------------------------------------
 
