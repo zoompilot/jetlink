@@ -20,6 +20,11 @@ loaded on the server. The owner stops a run at the onroad transition with
 SIGTERM, so every long wait polls `stop`; the server's build thread carries on
 regardless and modeld picks the engine up over its own link.
 
+A server whose hello lists `addons` is sent the fork's add-on models it has
+neither ready nor failed (Stock.addon_models), once the driving model is
+ready, over the same link and the same upload, and builds them there; the
+hello after says what it has now, so the owner's record does too.
+
 What the owner cannot learn for itself it hears from the run: the server's
 hello, passed on over the loan (lending.Loan.note_server), and whether the
 round left work undone, which is the exit status: 0 when nothing is left,
@@ -29,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import signal
+from pathlib import Path
 
 from jetlink import protocol as P
 from jetlink.comma import gadget, lending
@@ -38,6 +44,8 @@ from jetlink.openpilot import link
 # The owner presented the gadget; a box that is asleep answers the bind in
 # about 8 s, one that is off never does and the next run will find it
 WAKE_TIMEOUT = 20.0
+# an add-on model is megabytes, built in seconds to a minute or two
+ADDON_BUILD_TIMEOUT = 600.0
 
 
 class ProvisioningRun:
@@ -181,8 +189,60 @@ class ProvisioningRun:
       self.hello()
       spec = ensure(model_path)
 
-    parts.progress.report('ready', 1.0, 'engine ready', code='engine_ready')
     self.log.warning("jetlink: engine ready for %s", spec.sha256[:16])
+    finished = self.provide_addons(hello)
+    parts.progress.report('ready', 1.0, 'engine ready', code='engine_ready')
+    return finished
+
+  def provide_addons(self, hello: dict) -> bool:
+    """Send the server the add-on models it lacks, one at a time, then say
+    hello so the owner keeps what it has now. False when one is left for the
+    next run: a link that failed, or a stop."""
+    missing = addons_missing(addon_models(self.parts), hello)
+    if not missing:
+      return True
+    done = True
+    for addon in missing:
+      if self.stop:
+        return False
+      done = self.provide_addon(addon) and done
+    self.hello()
+    return done
+
+  def provide_addon(self, addon) -> bool:
+    """One add-on model: uploaded and built, or failed on the server, which
+    then says so in its hello and is not asked again. False only for what the
+    next run may fix."""
+    parts = self.parts
+    path = Path(addon.path)
+    try:
+      nbytes = path.stat().st_size
+    except OSError:
+      self.log.error("jetlink: add-on %s has no model at %s", addon.name, path)
+      return True
+    upload = link.verified_upload(self.log, path, addon.sha256, nbytes)
+    if upload is None:
+      return True
+
+    def progress(stage: str, frac: float, msg: str) -> None:
+      text, args = f"{addon.name}: {stage} {frac:.0%}", {'name': addon.name, 'stage': stage}
+      if stage == 'upload':
+        parts.progress.report(stage, frac, text, code='addon_upload', args=args)
+      else:
+        parts.progress.report(stage, frac, text, code='addon_build', args=args)
+
+    from jetlink.client import AddonFailed, LinkError
+    self.log.warning("jetlink: sending the jetson add-on %s (%d KB, sha %s)", addon.name, nbytes >> 10, addon.sha256[:16])
+    try:
+      self.client.ensure_addon(addon.sha256, nbytes, upload, addon.function.iface_class, name=addon.name, progress=progress,
+                               build_timeout=ADDON_BUILD_TIMEOUT, should_stop=lambda: self.stop)
+    except AddonFailed as e:
+      self.log.error("jetlink: the jetson cannot run add-on %s: %s", addon.name, e)
+      return True
+    except LinkError as e:
+      self.log.warning("jetlink: add-on %s is left for the next run: %s", addon.name, e)
+      return False
+    self.log.warning("jetlink: add-on %s ready on the jetson", addon.name)
     return True
 
   def hello(self) -> dict:
@@ -222,7 +282,9 @@ class ProvisioningRun:
     if spec is None or not self.parts.spec.engine_ready_for(spec.sha256):
       return True
     selected = self.parts.models.selected_model()
-    return selected is not None and selected.get('oid') != spec.sha256
+    if selected is not None and selected.get('oid') != spec.sha256:
+      return True
+    return bool(addons_missing(addon_models(self.parts), gadget.read_record(gadget.SERVER)))
 
   def shutdown_jetson(self, reason: str) -> None:
     """hardwared is shutting the comma down and wants the Jetson off too.
@@ -302,6 +364,45 @@ class ProvisioningRun:
     finally:
       self.close_link()
     return finished
+
+
+def addon_models(parts) -> tuple:
+  """The fork's add-on models turned on now (Stock.addon_models); none on any doubt."""
+  hook = getattr(parts.op, 'addon_models', None)
+  if not callable(hook):
+    return ()
+  try:
+    return tuple(hook(parts.settings.params))
+  except Exception:
+    parts.log.exception("jetlink: addon_models failed, sending the jetson no add-ons")
+    return ()
+
+
+def addons_missing(models, server: dict | None) -> list:
+  """The add-on models a server that serves add-ons has neither ready nor
+  failed. None for one whose hello lists no `addons`: an older server would
+  take an add-on for its driving model."""
+  addons = (server or {}).get('addons')
+  if not isinstance(addons, dict):
+    return []
+  done = set(addons.get('ready') or ()) | set(addons.get('failed') or ())
+  return [m for m in models if m.sha256 not in done]
+
+
+def addon_state(sha256: str, server: dict | None) -> str | None:
+  """An add-on model on the server the comma last spoke to, as the owner
+  keeps its hello: ready, failed, missing, or unsupported for a server too old
+  to serve add-ons. None before any hello."""
+  if not server:
+    return None
+  addons = server.get('addons')
+  if not isinstance(addons, dict):
+    return 'unsupported'
+  if sha256 in (addons.get('ready') or ()):
+    return 'ready'
+  if sha256 in (addons.get('failed') or ()):
+    return 'failed'
+  return 'missing'
 
 
 def server_fetches() -> bool:

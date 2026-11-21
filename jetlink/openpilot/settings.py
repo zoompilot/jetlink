@@ -72,7 +72,7 @@ class Settings:
     # for the owner to look again. A stat, not a read: the owner does not parse
     # the catalog or the spec, it only notices they moved. Paths once, since
     # the owner stats them twice a second
-    watched = (keys.big_model, keys.spec)
+    watched = (keys.big_model, keys.spec, *keys.addons)
     self._watched = {k: str(params.path(k)) for k in watched if k}
 
   def mode(self) -> str:

@@ -36,10 +36,7 @@ public struct AddonConfig: Sendable, Equatable {
       guard let name = entry["name"] as? String, let triple = entry["class"] as? String, let models = entry["models"] as? [String] else {
         throw AddonConfigError.invalid("\(url.path): each add-on needs name, class and models")
       }
-      let bytes = triple.split(separator: "/").compactMap { UInt8($0, radix: 16) }
-      guard bytes.count == 3, triple.split(separator: "/").count == 3 else {
-        throw AddonConfigError.invalid("\(name): class \(triple) is not like ff/56/41")
-      }
+      guard let bytes = interfaceClass(triple) else { throw AddonConfigError.invalid("\(name): class \(triple) is not like ff/56/41") }
       return try AddonConfig(
         name: name, interfaceClass: bytes, models: models.map { URL(fileURLWithPath: $0, relativeTo: base).standardizedFileURL })
     }
@@ -47,6 +44,21 @@ public struct AddonConfig: Sendable, Equatable {
       throw AddonConfigError.invalid("\(url.path): two add-ons share a name or a class")
     }
     return configs
+  }
+}
+
+extension AddonConfig {
+  /// "ff/56/41" as bytes, or nil for anything else, Jetlink's own class included.
+  public static func interfaceClass(_ triple: String) -> [UInt8]? {
+    let parts = triple.split(separator: "/", omittingEmptySubsequences: false)
+    let bytes = parts.compactMap { $0.count == 2 ? UInt8($0, radix: 16) : nil }
+    guard parts.count == 3, bytes.count == 3, bytes != Pinned.usbVendorClass else { return nil }
+    return bytes
+  }
+
+  /// The class as "ff/56/41".
+  public static func triple(_ bytes: [UInt8]) -> String {
+    bytes.map { String(format: "%02x", $0) }.joined(separator: "/")
   }
 }
 

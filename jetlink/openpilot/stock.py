@@ -273,6 +273,14 @@ class Stock:
     return tuple(cls.GADGET_FUNCTIONS)
 
   @classmethod
+  def addon_models(cls, params) -> tuple:
+    """The add-on models turned on now (interface.AddonModel), which a
+    provisioning run sends a Jetson that serves add-ons and lacks them. params
+    is a jetlink.openpilot.settings.FileParams on the params store; their
+    toggles go in KEYS.addons, so a change starts a run."""
+    return ()
+
+  @classmethod
   def main(cls) -> None:
     """jetlinkd: hold the USB gadget until manager stops this process."""
     from jetlink.openpilot.owner import main

@@ -114,7 +114,12 @@ final class ServerStore: ServerControlling {
     startTask = Task { [weak self] in
       let started = await Task.detached(priority: .userInitiated) {
         Result {
-          let embedded = try EmbeddedServer(configuration: configuration, backend: ServerStore.backend(for: choice), gadget: USBGadget())
+          let backend = ServerStore.backend(for: choice)
+          // over USB the comma's add-on interfaces are served too, each model whole on the backend
+          var addonSource: (@Sendable ([UInt8]) -> any AddonSource)?
+          if configuration.usb { addonSource = { kind in USBAddonSource(kind: kind) } }
+          let embedded = try EmbeddedServer(
+            configuration: configuration, backend: backend, gadget: USBGadget(), addonBackend: backend.wholeModel(), addonSource: addonSource)
           try embedded.start()
           return embedded
         }

@@ -62,8 +62,8 @@ _header = struct.Struct(HEADER_FMT)
 
 class Msg(IntEnum):
   HELLO_REQ = 1        # {} -> server describes itself
-  HELLO_RESP = 2       # json: server caps, loaded engine, shapes
-  ENGINE_REQ = 3       # json: {sha256, nbytes, frame_skip} -> make this model ready
+  HELLO_RESP = 2       # json: server caps, loaded engine, shapes; addons {ready, failed} from one that serves add-ons
+  ENGINE_REQ = 3       # json: {sha256, nbytes, frame_skip} -> make this model ready; with addon {interface, name}, an add-on's
   ENGINE_RESP = 4      # json: {state: ready|need_upload|building|failed, spec when ready, ...}
   UPLOAD_CHUNK = 5     # u64 offset + bytes
   UPLOAD_DONE = 6      # json: {sha256}

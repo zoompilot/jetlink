@@ -122,6 +122,12 @@ public final class EngineHost: @unchecked Sendable {
   public let addonGate = AddonGate()
   /// One build or load on the device at a time, the driving model's or an add-on's.
   let buildSlot = NSLock()
+  private weak var addonService: AddonService?
+  /// The add-on service, when this server runs one: the hello says so, and add-on ENGINE_REQs go to it.
+  var addons: AddonService? {
+    get { lock.withLock { addonService } }
+    set { lock.withLock { addonService = newValue } }
+  }
 
   /// The driving model's engine is building or loading.
   var drivingBusy: Bool {

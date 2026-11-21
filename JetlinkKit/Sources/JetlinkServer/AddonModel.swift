@@ -2,6 +2,7 @@
 // own interface of the comma's gadget. docs/addons.md. From Peter Nguyen's
 // V-ASM and sign-vision servers (trung791997/openpilot).
 import Foundation
+import JetlinkKit
 import JetlinkRegistry
 
 /// One add-on model, built and loaded on the server's backend: a single
@@ -79,39 +80,55 @@ final class AddonModel: @unchecked Sendable {
     return floats
   }
 
-  /// Builds `file`'s artifact for `backend` under `root`/addons unless it is
-  /// there, loads it, and warms it. With `host`, after the driving model's own
-  /// build or load and never beside one, and warms under its lock.
-  static func prepare(_ file: URL, backend: any EngineBackend, root: URL, log: ServerLog, host: EngineHost? = nil) throws -> AddonModel {
+  /// The add-on artifacts for `backend`: `root`/addons, a cache of its own, so
+  /// add-ons and driving models never prune each other.
+  static func store(root: URL, backend: any EngineBackend) -> EngineCache {
+    EngineCache(
+      layout: CacheLayout(root: root.appending(path: "addons", directoryHint: .isDirectory)), tag: backend.tag(), suffix: backend.suffix,
+      backend: backend.name)
+  }
+
+  /// Builds `file`'s artifact for `backend` in the add-on store under `root`
+  /// unless it is there, loads it, and warms it. With `host`, after the driving
+  /// model's own build or load and never beside one, and warms under its lock.
+  /// `interface` goes in the sidecar, so the next start serves it there.
+  static func prepare(
+    _ file: URL, backend: any EngineBackend, root: URL, log: ServerLog, host: EngineHost? = nil, sha256 known: String? = nil,
+    name: String? = nil, interface: [UInt8]? = nil, report progress: ProgressFn? = nil
+  ) throws -> AddonModel {
     if let host {
       while host.drivingBusy { Thread.sleep(forTimeInterval: 1) }
       host.buildSlot.lock()
     }
     defer { host?.buildSlot.unlock() }
-    let sha256 = try Files.sha256(of: file)
-    let dir = root.appending(path: "addons", directoryHint: .isDirectory)
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let artifact = dir.appending(path: "\(sha256.prefix(16)).\(backend.tag())\(backend.suffix)")
-    let report: ProgressFn = { stage, _, message in
-      if !message.isEmpty { log.debug("\(file.lastPathComponent): \(stage) \(message)") }
+    let sha256 = try known ?? Files.sha256(of: file)
+    let name = name ?? file.lastPathComponent
+    let entry = try store(root: root, backend: backend).entry(sha256)
+    let report: ProgressFn = { stage, frac, message in
+      if !message.isEmpty { log.debug("\(name): \(stage) \(message)") }
+      progress?(stage, frac, message)
     }
-    if !FileManager.default.fileExists(atPath: artifact.path) {
-      log.info("building \(file.lastPathComponent) for \(backend.name)")
-      try backend.build(model: file, artifact: artifact, report: report, metaExtra: ["addon": file.lastPathComponent])
+    var meta: [String: Any] = ["addon": name, "spec": ["sha256": sha256]]
+    if let interface { meta["interface"] = AddonConfig.triple(interface) }
+    func build() throws {
+      log.info("building \(name) for \(backend.name)")
+      try backend.build(model: file, artifact: entry.path, report: report, metaExtra: meta)
     }
+    if !entry.exists { try build() }
     let engine: any Engine
     do {
-      engine = try backend.load(artifact: artifact, report: report)
+      engine = try backend.load(artifact: entry.path, report: report)
     } catch let invalid as ArtifactInvalid {
-      log.warning("rebuilding \(artifact.lastPathComponent): \(invalid.description)")
-      try? FileManager.default.removeItem(at: artifact)
-      try backend.build(model: file, artifact: artifact, report: report, metaExtra: ["addon": file.lastPathComponent])
-      engine = try backend.load(artifact: artifact, report: report)
+      log.warning("rebuilding \(entry.path.lastPathComponent): \(invalid.description)")
+      entry.remove()
+      try build()
+      engine = try backend.load(artifact: entry.path, report: report)
     }
     do {
-      let model = try AddonModel(file: file.lastPathComponent, sha256: sha256, engine: engine)
+      let model = try AddonModel(file: name, sha256: sha256, engine: engine)
+      progress?("warm", 0, "warming up")
       let warmed = try underLock(host) { try engine.warm() }
-      log.info("\(warmed); \(file.lastPathComponent) takes \(model.shape), gives \(model.outputs.map { "\($0.name)\($0.shape)" })")
+      log.info("\(warmed); \(name) takes \(model.shape), gives \(model.outputs.map { "\($0.name)\($0.shape)" })")
       return model
     } catch {
       engine.close()

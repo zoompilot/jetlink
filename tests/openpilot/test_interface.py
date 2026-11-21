@@ -63,7 +63,8 @@ OPTIONAL = {'ModelSide': {'small_reset', 'model_warp'}, 'Openpilot': {'small_res
             'JoinedModel': {'get_action_from_model', 'constants', 'LAT_SMOOTH_SECONDS', 'LONG_SMOOTH_SECONDS', 'lat_delay'}}
 
 FIELDS = {
-  'Keys': ['link', 'offroad', 'progress', 'spec', 'big_model', 'catalog', 'charge_phone', 'select', 'pointers'],
+  'Keys': ['link', 'offroad', 'progress', 'spec', 'big_model', 'catalog', 'charge_phone', 'select', 'pointers', 'addons'],
+  'AddonModel': ['function', 'name', 'path', 'sha256'],
   'OwnerConfig': ['params_dir', 'keys', 'chestnut_ids', 'adapter', 'cwd', 'env', 'log_file', 'functions'],
   'ModelFace': ['parser', 'frame_size', 'desire_len', 'constants', 'lat_smooth_seconds', 'long_smooth_seconds',
                 'get_action_from_model'],

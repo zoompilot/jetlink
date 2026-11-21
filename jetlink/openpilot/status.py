@@ -41,7 +41,7 @@ PROGRESS_MIN_INTERVAL = 0.25
 PROGRESS_CODES = ('waiting_for_host', 'finding_model', 'model_missing', 'ready_waiting_window', 'reconnecting',
                   'connecting', 'downloading', 'download_stalled', 'download_failed', 'downloaded_waiting_host',
                   'engine_ready', 'failed', 'download', 'upload', 'patch', 'parse', 'convert', 'compile', 'build',
-                  'load', 'warm')
+                  'load', 'warm', 'addon_upload', 'addon_build')
 
 
 def estimated_build_seconds(size: int) -> int:

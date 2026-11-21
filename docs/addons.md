@@ -13,9 +13,12 @@ Three parts, each in this repository:
 - **The comma's client.** `jetlink.addons.link`: `AddonLink` owns the
   interface, and `JetsonNet` stands in for a `cv2.dnn` net, so a fork changes
   one line where it loads the net (`with_host`).
-- **The server.** `jetlink-server --addons FILE` builds the add-on models on
-  its own backend (TensorRT on a Jetson, onnxruntime on a Mac) and serves each
-  add-on's interface.
+- **Provisioning.** The fork lists its add-on models (`Stock.addon_models`),
+  and the parked provisioning run sends the Jetson the ones it lacks, over the
+  main link, after the driving model.
+- **The server.** `jetlink-server --usb` builds the add-on models on its own
+  backend (TensorRT on a Jetson, onnxruntime on a Mac) and serves each
+  add-on's interface. The Mac app does the same over USB.
 
 From Peter Nguyen's V-ASM and sign-vision offload (trung791997/openpilot).
 
@@ -82,7 +85,41 @@ It never opens an endpoint before a host has configured the gadget, and closes
 both on any error. It reads in 16 KB pieces and writes in 8 KB ones, as
 FunctionFS allocates one contiguous kernel buffer per call.
 
+## Provisioning
+
+```python
+from jetlink.openpilot.interface import AddonModel
+
+class MyAdapter(Stock):
+  KEYS = Keys(..., addons=('MyVasmToggle',))   # a change starts a provisioning run
+
+  @classmethod
+  def addon_models(cls, params):
+    return (AddonModel(VASM, 'V-ASM', Path('/data/openpilot/models/v_asm_model.onnx'), VASM_SHA256),) \
+      if params.get_bool('MyVasmToggle') else ()
+```
+
+A server that serves add-ons says so in its hello: `addons`, `{ready, failed}`
+by sha256. A parked run sends it each add-on model in neither, once the
+driving model is ready: an `ENGINE_REQ` with `addon: {interface, name}`, then
+the usual upload, `PROGRESS` (progress codes `addon_upload` and `addon_build`)
+and `ENGINE_RESP`, whose `ready` carries no spec. The driving engine stays
+loaded. A server too old to list `addons` is never sent one, as it would take
+it for its driving model.
+
+Then the run says hello again, so the owner's record (`gadget.SERVER`) lists
+them, and the Jetson sleeps as after any run. A model the server cannot build
+or run is listed `failed` until its backend changes, so it is not sent on
+every park; deleting `<cache>/addons/failed.json` on the Jetson tries again. `provision.addon_state` reads one model's state off the record,
+for a panel.
+
 ## The server
+
+With `--usb` the server serves every add-on a comma provisions, from its cache
+after a restart too: `<cache>/addons`, a cache of its own beside the driving
+models', which keeps the newest 8 artifacts per backend and the interface each
+serves. `--no-addons` leaves the comma's add-on interfaces to another program.
+`--addons FILE` serves models before any comma sends them:
 
 ```json
 {"addons": [
@@ -93,15 +130,14 @@ FunctionFS allocates one contiguous kernel buffer per call.
 
 `class` is the interface's class triple, as the fork's `GadgetFunction` has
 it, and never Jetlink's `ff/ff/ff`. A relative model path is from the file's
-directory. The server keeps the built artifacts in `<cache>/addons`, apart from
-the driving models'.
+directory.
 
 A model takes one `[1, C, H, W]` input, float, fp16 or uint8, and gives any
 number of float outputs. Its tag on the wire is the first four bytes of the
 ONNX's sha256, so the comma and the server need the same file.
 
-On a Jetson, copy the models over, write the file, and name it in
-`/etc/jetlink/addons.env`, which the installer never writes:
+To preload them on a Jetson, copy the models over, write the file, and name
+it in `/etc/jetlink/addons.env`, which the installer never writes:
 
 ```bash
 sudo mkdir -p /opt/addons && sudo cp *.onnx addons.json /opt/addons/
@@ -109,8 +145,8 @@ echo 'JETLINK_ADDONS="--addons /opt/addons/addons.json"' | sudo tee /etc/jetlink
 sudo systemctl restart jetlink-server
 ```
 
-`jetlink logs` shows each model built, then `serving 1 model(s) on interface
-class ff/56/41` and `claimed its interface` once the comma's gadget carries it.
+`jetlink logs` shows each model built, then `serving interface class ff/56/41`
+and `claimed its interface` once the comma's gadget carries it.
 A minute's counts follow: passes, yields, failures and each model's cost.
 
 On a Mac, `jetlink-server serve --usb --addons FILE`. The add-on models build
@@ -136,6 +172,7 @@ A message whose length is a multiple of 512 carries one zero byte more, so it
 always ends in a short packet: FunctionFS reads end at one, and the host
 sends no zero-length packets. A message is at most 4 MiB.
 
-The server sends a hello after a second with no request. A malformed request
+The server sends a hello after a second with no request, and every 2 s
+regardless, with the models ready then. A malformed request
 ends the link, since a byte stream has no next message to skip to; the server
 claims the interface again.

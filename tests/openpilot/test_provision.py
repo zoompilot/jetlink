@@ -11,6 +11,7 @@ run has a host to talk to, and the owner starts another while the work is
 unfinished, so anything a run repeats it repeats for as long as the car is
 parked.
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -295,6 +296,107 @@ class TestProvisionCost(OpenpilotTest):
     # the hello came first, in case the server had a model picked on it
     d.client.hello.assert_called_once()
     d.client.ensure_engine.assert_not_called()
+
+
+class TestAddons(OpenpilotTest):
+  """The fork's add-on models: sent to a server that serves add-ons and lacks
+  them, after the driving model, and never to one too old to."""
+
+  def setUp(self):
+    super().setUp()
+    link._hashed.clear()
+    self.cache = FakeSpecRecord()
+    self.patch(self.parts, 'spec', self.cache)
+    self.patch(self.parts, 'progress', mock.Mock())
+    for name, value in (('shipped_model_path', None), ('selected_model', dict(TestProvisionCost.ENTRY))):
+      self.patch(self.parts.models, name, return_value=value)
+    from jetlink.comma.functions import GadgetFunction
+    from jetlink.openpilot.interface import AddonModel
+    self.addons = []
+    for name, triple in (('vasm', (0xFF, 0x56, 0x41)), ('signs', (0xFF, 0x53, 0x4C))):
+      path = self.tmp / f'addon_{name}.onnx'
+      path.write_bytes(name.encode() * 100)
+      self.addons.append(AddonModel(GadgetFunction(name, triple), name, path, hashlib.sha256(path.read_bytes()).hexdigest()))
+    self.patch(self.op, 'addon_models', mock.Mock(return_value=tuple(self.addons)), create=True)
+
+    def sha256_file(path, *args, **kwargs):
+      data = Path(path).read_bytes()
+      return (hashlib.sha256(data).hexdigest() if 'addon_' in str(path) else 'deadbeef'), len(data)
+
+    self.patch(sys.modules['jetlink.spec'], 'sha256_file', side_effect=sha256_file)
+
+  def run_with(self, client):
+    d = provision.ProvisioningRun(self.parts)
+    d.client = client
+    return d
+
+  def client_hearing(self, addons):
+    client = serving_client()
+    hello = {'device': 'orin'}
+    if addons is not None:
+      hello['addons'] = addons
+    client.hello.return_value = hello
+    return client
+
+  def test_each_missing_addon_is_sent_after_the_driving_model(self):
+    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    order = []
+    d.client.ensure_engine.side_effect = lambda *a, **k: order.append('driving') or FakeSpec()
+    d.client.ensure_addon.side_effect = lambda sha, *a, **k: order.append(sha)
+    assert d.provision() is True
+    assert order == ['driving'] + [a.sha256 for a in self.addons]
+    call = d.client.ensure_addon.call_args_list[0]
+    assert call.args[:4] == (self.addons[0].sha256, 400, self.addons[0].path, (0xFF, 0x56, 0x41))
+    assert call.kwargs['name'] == 'vasm'
+    # once more after, so the owner's record lists them and the next park has nothing to wake the jetson for
+    assert d.client.hello.call_count == 2
+
+  def test_ready_and_failed_addons_are_not_sent_again(self):
+    d = self.run_with(self.client_hearing({'ready': [self.addons[0].sha256], 'failed': [self.addons[1].sha256]}))
+    assert d.provision() is True
+    d.client.ensure_addon.assert_not_called()
+    assert d.client.hello.call_count == 1
+
+  def test_a_server_too_old_for_addons_is_never_sent_one(self):
+    d = self.run_with(self.client_hearing(None))
+    assert d.provision() is True
+    d.client.ensure_addon.assert_not_called()
+
+  def test_an_addon_the_jetson_cannot_run_is_done_and_a_lost_link_is_not(self):
+    from jetlink.client import AddonFailed
+    from jetlink.transport.base import LinkError
+    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d.client.ensure_addon.side_effect = [AddonFailed('no'), None]
+    assert d.provision() is True
+    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d.client.ensure_addon.side_effect = [LinkError('gone'), None]
+    assert d.provision() is False
+
+  def test_a_file_that_is_not_the_addon_is_never_sent(self):
+    self.addons[0].path.write_bytes(b'something else')
+    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    assert d.provision() is True
+    assert [c.args[0] for c in d.client.ensure_addon.call_args_list] == [self.addons[1].sha256]
+
+  def test_missing_addons_are_work_only_for_a_server_that_serves_them(self):
+    self.cache.store(FakeSpec())
+    d = provision.ProvisioningRun(self.parts)
+    for record, work in ((None, False), ({'device': 'orin'}, False), ({'addons': {'ready': []}}, True),
+                         ({'addons': {'ready': [a.sha256 for a in self.addons]}}, False)):
+      with self.subTest(record=record):
+        if record is None:
+          gadget.SERVER.unlink(missing_ok=True)
+        else:
+          gadget.write_record(gadget.SERVER, record)
+        assert d.has_work() is work
+
+  def test_the_panel_reads_each_addon_off_the_owner_s_record(self):
+    sha = self.addons[0].sha256
+    assert provision.addon_state(sha, None) is None
+    assert provision.addon_state(sha, {'device': 'orin'}) == 'unsupported'
+    assert provision.addon_state(sha, {'addons': {'ready': [sha]}}) == 'ready'
+    assert provision.addon_state(sha, {'addons': {'failed': [sha]}}) == 'failed'
+    assert provision.addon_state(sha, {'addons': {}}) == 'missing'
 
 
 class TestFetching(OpenpilotTest):

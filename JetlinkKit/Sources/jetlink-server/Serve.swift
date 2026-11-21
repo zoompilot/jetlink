@@ -66,8 +66,11 @@
     var powerMode: String?
     @Option(
       help: ArgumentHelp(
-        "A fork's add-ons (docs/addons.md): a JSON file naming each one's interface class and models. Needs --usb.", valueName: "file"))
+        "Add-on models to serve before a comma provisions any (docs/addons.md): a JSON file naming each one's interface class and models. Needs --usb.",
+        valueName: "file"))
     var addons: String?
+    @Flag(name: .customLong("no-addons"), help: "Serve no add-ons: leave the comma's add-on interfaces to another program.")
+    var noAddons = false
     @Flag(name: .customLong("no-preload"), help: "Do not load the engine loaded last before a comma asks.")
     var noPreload = false
     @Flag(name: .customLong("no-keepalive"), help: "Do not keep the GPU clocked up between frames (a Mac's onnxruntime).")
@@ -84,7 +87,7 @@
       guard sleepAfter >= 0 else { throw ValidationError("--sleep-after cannot be negative") }
       // A TCP listener never sees the comma go, so nothing would say when to sleep.
       guard sleepAfter == 0 || usb else { throw ValidationError("--sleep-after needs --usb") }
-      guard addons == nil || usb else { throw ValidationError("--addons needs --usb") }
+      guard addons == nil || (usb && !noAddons) else { throw ValidationError("--addons needs --usb, and not --no-addons") }
       guard (0...65535).contains(statusPort) else { throw ValidationError("--status-port \(statusPort) is not a port") }
       guard clocks == nil || (["on", "off"].contains(clocks) && powerMode != nil) else {
         throw ValidationError("--clocks takes on or off, with --power-mode")
@@ -130,9 +133,9 @@
         // it downloads a model the comma asks for and has not got either.
         controller = ServerController(server: server, registry: Registry(layout: server.cache.layout))
         log.info("backend \(backend.name) \(backend.runtimeVersion) on \(backend.deviceTag()), cache \(root.path)")
-        try server.start()
-        if let addons {
-          let configs = try AddonConfig.load(URL(fileURLWithPath: addons))
+        // over USB a comma provisions its add-ons on the main link; --addons only adds to them
+        if usb && !noAddons {
+          let configs = try addons.map { try AddonConfig.load(URL(fileURLWithPath: $0)) } ?? []
           var addonBackend: any EngineBackend = backend
           #if canImport(JetlinkORT)
             if let ort = backend as? OrtBackend { addonBackend = ort.wholeModel() }
@@ -144,8 +147,11 @@
               SysfsAddonSource(kind: kind)
             #endif
           }
-          addonService?.start()
+          // before the server starts, so its first hello says add-ons are served
+          addonService?.attach()
         }
+        try server.start()
+        addonService?.start()
         // The installer waits for this line. It is said whatever the comma is
         // doing: a comma on the bus that nothing on it serves yet gets no
         // line of its own that says the server is up.

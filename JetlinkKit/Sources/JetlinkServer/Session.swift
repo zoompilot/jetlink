@@ -16,6 +16,9 @@ final class Session: @unchecked Sendable {
   private var greeted = false
   private var lastSeq: UInt32 = 0
   private(set) var request: Request?
+  /// The add-on model this session asked for last, by interface: its uploads go
+  /// there until the next ENGINE_REQ, which never replaces `request`.
+  private var addonRequest: (request: Request, kind: [UInt8], name: String?)?
   private(set) var frames = 0
   /// The frames this session served, for its summary when it ends.
   private var trips = SessionTrips()
@@ -96,6 +99,12 @@ final class Session: @unchecked Sendable {
   func engineUpdate() {
     onMessage?()
     try? respondEngine(0)
+  }
+
+  /// An add-on's build ended: its ENGINE_RESP, which the comma tells from the driving model's by sha256.
+  func addonUpdate(_ state: [String: Any]) {
+    onMessage?()
+    try? sendJSON(.engineResp, seq: 0, state)
   }
 
   /// The connection is gone. The engine stays.
@@ -248,6 +257,7 @@ final class Session: @unchecked Sendable {
     greeted = true
     lastSeq = message.seq
     request = nil
+    addonRequest = nil
     frames = 0
     host.lock.lock()
     host.loaded?.staging.newClient()
@@ -279,6 +289,10 @@ final class Session: @unchecked Sendable {
     for (key, value) in host.backend.describe() {
       response[key] = value
     }
+    // its presence says add-on ENGINE_REQs are taken: an older server would replace its driving model with one
+    if let addons = host.addons {
+      response["addons"] = addons.helloState()
+    }
     // Over a phone's cable, frames may come as datagrams: a new token each
     // hello, so pieces of the last session's frames count for nothing
     if let offer = transport.offerDatagrams() {
@@ -309,11 +323,35 @@ final class Session: @unchecked Sendable {
       try error(message.seq, "bad_request", "ENGINE_REQ needs sha256 and nbytes")
       return
     }
+    if let addon = d["addon"] as? [String: Any] {
+      try onAddonReq(message, sha: sha, nbytes: nbytes, addon: addon)
+      return
+    }
+    addonRequest = nil
     let skip = (d["frame_skip"] as? NSNumber)?.intValue ?? ModelConstants.defaultFrameSkip
     let request = try Request(sha256: sha, nbytes: nbytes, frameSkip: skip, fetch: (d["fetch"] as? Bool) ?? false, ref: d["ref"] as? String)
     self.request = request
     try sendJSON(.engineResp, seq: message.seq, host.request(request, session: self))
   }
+
+  /// An add-on model, for its interface: never the driving model's request, nor its engine.
+  private func onAddonReq(_ message: Message, sha: String, nbytes: Int64, addon: [String: Any]) throws {
+    guard let service = host.addons else {
+      try error(message.seq, "no_addons", "this server serves no add-ons")
+      return
+    }
+    guard let kind = (addon["interface"] as? String).flatMap(AddonConfig.interfaceClass) else {
+      try error(message.seq, "bad_request", "an add-on needs its interface, like ff/56/41")
+      return
+    }
+    let request = try Request(sha256: sha, nbytes: nbytes, frameSkip: ModelConstants.defaultFrameSkip)
+    let name = addon["name"] as? String
+    addonRequest = (request, kind, name)
+    try sendJSON(.engineResp, seq: message.seq, service.request(sha256: sha, nbytes: nbytes, interface: kind, name: name, session: self))
+  }
+
+  /// Where an upload goes: the add-on asked for last, else the driving model.
+  private var uploading: Request? { addonRequest?.request ?? request }
 
   private func respondEngine(_ seq: UInt32) throws {
     let (sha, skip) = wanted()
@@ -321,7 +359,7 @@ final class Session: @unchecked Sendable {
   }
 
   private func onUploadChunk(_ message: Message) throws {
-    guard let request else {
+    guard let request = uploading else {
       try error(message.seq, "no_model", "send ENGINE_REQ first")
       return
     }
@@ -350,7 +388,7 @@ final class Session: @unchecked Sendable {
   }
 
   private func onUploadDone(_ message: Message) throws {
-    guard let request else {
+    guard let request = uploading else {
       try error(message.seq, "no_model", "send ENGINE_REQ first")
       return
     }
@@ -366,6 +404,16 @@ final class Session: @unchecked Sendable {
       return
     }
     progress("upload", 1, "verified")
+    if let addon = addonRequest {
+      guard let service = host.addons else {
+        try error(message.seq, "no_addons", "this server serves no add-ons")
+        return
+      }
+      try sendJSON(
+        .engineResp, seq: message.seq,
+        service.request(sha256: request.sha256, nbytes: request.nbytes, interface: addon.kind, name: addon.name, session: self))
+      return
+    }
     try sendJSON(.engineResp, seq: message.seq, host.request(request, session: self))
   }
 

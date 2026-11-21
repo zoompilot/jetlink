@@ -66,6 +66,10 @@ class Sent(NamedTuple):
   sent_at: float
 
 
+class AddonFailed(LinkError):
+  """The server cannot build or run an add-on model: it says so in its hello from now on."""
+
+
 class EngineMissing(LinkError):
   """The server has no engine and this caller has no ONNX to upload.
 
@@ -322,17 +326,41 @@ class JetlinkClient:
     `progress(stage, frac, msg)` has stage in
     download/upload/patch/parse/build/load. `should_stop` is polled during long waits.
     """
-    self.progress_cb = progress
-    self._should_stop = should_stop or (lambda: False)
     self.spec = None
-    self._engine_state = None
-
-    seq = self._next_seq()
     request = {'sha256': sha256, 'nbytes': nbytes, 'frame_skip': frame_skip}
     if fetch:
       request['fetch'] = True
     if ref:
       request['ref'] = ref
+    self._provide(request, onnx_path, nbytes, progress, build_timeout, should_stop)
+    spec = ModelSpec.from_dict(self._engine_state['spec'])
+    if spec.sha256 != sha256:
+      raise LinkError(f"server answered for {spec.sha256[:16]}, we asked for {sha256[:16]}")
+    self.spec = spec
+    return spec
+
+  def ensure_addon(self, sha256: str, nbytes: int, onnx_path: str | Path, interface: tuple[int, int, int], name: str = '',
+                   progress: ProgressFn | None = None, build_timeout: float = 900.0, should_stop: StopFn | None = None) -> None:
+    """Make an add-on model ready on its gadget interface, as ensure_engine
+    does the driving model: the same upload, progress and states, but the
+    driving engine stays loaded. Only for a server whose hello lists `addons`:
+    an older one would take it for a driving model. LinkError when the server
+    cannot build or run it."""
+    addon = {'interface': '/'.join(f'{b:02x}' for b in interface), 'name': name}
+    try:
+      self._provide({'sha256': sha256, 'nbytes': nbytes, 'addon': addon}, onnx_path, nbytes, progress, build_timeout, should_stop)
+    except LinkError as e:
+      if (self._engine_state or {}).get('state') == 'failed':
+        raise AddonFailed(str(e)) from e
+      raise
+
+  def _provide(self, request: dict, onnx_path, nbytes: int, progress, build_timeout: float, should_stop) -> None:
+    self.progress_cb = progress
+    self._should_stop = should_stop or (lambda: False)
+    self._engine_state = None
+    sha256 = request['sha256']
+
+    seq = self._next_seq()
     self.t.send_json(P.Msg.ENGINE_REQ, seq, request)
     resp = json.loads(bytes(self._expect(P.Msg.ENGINE_RESP, seq, 60.0).payload))
     self._engine_state = resp
@@ -352,11 +380,6 @@ class JetlinkClient:
         raise
       self._upload(Path(onnx_path), nbytes, int(self._engine_state.get('chunk') or CHUNK))
       self._await_ready(build_timeout)
-    spec = ModelSpec.from_dict(self._engine_state['spec'])
-    if spec.sha256 != sha256:
-      raise LinkError(f"server answered for {spec.sha256[:16]}, we asked for {sha256[:16]}")
-    self.spec = spec
-    return spec
 
   def _stopped(self) -> None:
     if self._should_stop():
@@ -388,7 +411,7 @@ class JetlinkClient:
     while True:
       st = (self._engine_state or {}).get('state')
       if st == 'ready':
-        if 'spec' not in (self._engine_state or {}):
+        if 'spec' not in (self._engine_state or {}) and not self._engine_state.get('addon'):
           raise LinkError("server reported ready without a model spec")
         return
       if st == 'failed':

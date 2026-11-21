@@ -45,6 +45,12 @@ final class FakeAddonPipes: BulkPipes, @unchecked Sendable {
   func close() {}
 }
 
+/// An interface never on the bus: the provisioning tests serve nothing over it.
+struct AbsentAddon: AddonSource {
+  func present() -> Bool { false }
+  func open() throws -> AddonPipes { throw LinkError.closed("absent") }
+}
+
 final class Ticks: @unchecked Sendable {
   private let lock = NSLock()
   private var value: UInt64 = 10_000_000_000
@@ -172,7 +178,7 @@ struct AddonTests {
     let f32 = AddonWire.Request(seq: 2, tag: model.tag, shape: [3, 4, 4], encoding: .f32, nbytes: 192)
     let again = try image.map { Float($0) / 255 }.withUnsafeBytes { try model.run(f32, image: $0) }
     #expect(zip(again, floats).allSatisfy { abs($0 - $1) < 1e-6 })
-    let artifacts = try FileManager.default.contentsOfDirectory(atPath: cache.url.appending(path: "addons").path)
+    let artifacts = try FileManager.default.contentsOfDirectory(atPath: cache.url.appending(path: "addons/engines").path)
     #expect(artifacts.contains { $0.hasPrefix(model.sha256.prefix(16)) })
   }
 
@@ -204,5 +210,83 @@ struct AddonTests {
     let unknown = Array(pipes.written.dropFirst(24 + 51 * 4))
     #expect(unknown.count == 24 && unknown[4] == 2 && unknown[12] == UInt8(AddonWire.Status.unknownModel.rawValue))
     #expect(served.passes == 1)
+  }
+
+  static let addonSHA = SHA256.hash(data: try! Data(contentsOf: addon)).map { String(format: "%02x", $0) }.joined()
+
+  /// ENGINE_REQ for an add-on, with the upload when asked, then the pushed states until one is final.
+  func provision(_ client: TestClient, model: URL, sha256: String, interface: String = "ff/54/59") throws -> [String: Any] {
+    let bytes = try Data(contentsOf: model)
+    try client.sendJSON(.engineReq, ["sha256": sha256, "nbytes": bytes.count, "addon": ["interface": interface, "name": "tiny"]])
+    var state = try client.recv(.engineResp).json
+    if state["state"] as? String == "need_upload" {
+      var payload = withUnsafeBytes(of: UInt64(0).littleEndian) { Data($0) }
+      payload.append(bytes)
+      try client.send(.uploadChunk, payload)
+      try client.sendJSON(.uploadDone, ["sha256": sha256])
+      state = try client.recv(.engineResp).json
+    }
+    while state["state"] as? String == "building" { state = try client.recv(.engineResp).json }
+    return state
+  }
+
+  @Test("An add-on ENGINE_REQ is uploaded, built and served, and the driving engine stays loaded")
+  func provisioned() throws {
+    let golden = try Golden("tiny_queued")
+    try serve { server, client in
+      let root = server.configuration.cacheRoot
+      let service = AddonService(configs: [], host: server.host, cacheRoot: root) { _ in AbsentAddon() }
+      service.start()
+      let hello = try client.hello()
+      let addons = try #require(hello["addons"] as? [String: Any])
+      #expect(addons["ready"] as? [String] == [] && addons["failed"] as? [String] == [])
+      _ = try client.ensureEngine(model: golden.model, sha256: golden.sha256)
+
+      let state = try provision(client, model: Self.addon, sha256: Self.addonSHA)
+      #expect(state["state"] as? String == "ready" && state["sha256"] as? String == Self.addonSHA && state["spec"] == nil)
+      #expect(server.host.loadedSHA() == golden.sha256)
+      let again = try client.hello()
+      #expect((again["addons"] as? [String: Any])?["ready"] as? [String] == [Self.addonSHA])
+      #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA)["state"] as? String == "ready")
+      // the driving model's frames still find their engine: the add-on never became the session's request
+      _ = try client.ensureEngine(model: golden.model, sha256: golden.sha256)
+      service.stop()
+
+      let restarted = AddonService(configs: [], host: server.host, cacheRoot: root) { _ in AbsentAddon() }
+      restarted.start()
+      defer { restarted.stop() }
+      #expect(eventually { restarted.helloState()["ready"] as? [String] == [Self.addonSHA] })
+    }
+  }
+
+  @Test("A model the backend cannot serve as an add-on answers failed, and says so after a restart")
+  func failedBuild() throws {
+    let golden = try Golden("tiny_queued")
+    try serve { server, client in
+      let root = server.configuration.cacheRoot
+      let service = AddonService(configs: [], host: server.host, cacheRoot: root) { _ in AbsentAddon() }
+      service.start()
+      _ = try client.hello()
+      let state = try provision(client, model: golden.model, sha256: golden.sha256)
+      #expect(state["state"] as? String == "failed")
+      #expect(server.host.loadedSHA() == nil)
+      service.stop()
+      let restarted = AddonService(configs: [], host: server.host, cacheRoot: root) { _ in AbsentAddon() }
+      restarted.start()
+      defer { restarted.stop() }
+      #expect(restarted.helloState()["failed"] as? [String] == [golden.sha256])
+      #expect(try provision(client, model: golden.model, sha256: golden.sha256)["state"] as? String == "failed")
+    }
+  }
+
+  @Test("A server without add-ons says nothing of them, and refuses an add-on request")
+  func noService() throws {
+    try serve { _, client in
+      #expect(try client.hello()["addons"] == nil)
+      try client.sendJSON(.engineReq, ["sha256": Self.addonSHA, "nbytes": 10, "addon": ["interface": "ff/54/59"]])
+      let reply = try client.recv()
+      #expect(reply.type == Wire.Msg.error.rawValue)
+      #expect(try reply.json["error"] as? String == "no_addons")
+    }
   }
 }

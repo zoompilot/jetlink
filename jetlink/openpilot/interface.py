@@ -63,6 +63,9 @@ class Keys:
   select: str | None = None
   # API 3's kept pointers, unread since the model index: until the next minor release
   pointers: str | None = None
+  # BOOLs a fork turns its add-on models on with (Stock.addon_models): a change
+  # starts a provisioning run, which sends the Jetson what it lacks
+  addons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,16 @@ class OwnerConfig:
   log_file: Path                             # the owner's rotating log
   # a fork's extra interfaces on the gadget (jetlink.comma.functions.GadgetFunction)
   functions: tuple = ()
+
+
+@dataclass(frozen=True)
+class AddonModel:
+  """One of a fork's add-on models, which a provisioning run sends the Jetson
+  (Stock.addon_models) to be served on its gadget function (docs/addons.md)."""
+  function: Any       # the jetlink.comma.functions.GadgetFunction it is asked over
+  name: str           # for the log and the panel
+  path: Path          # its ONNX on the comma
+  sha256: str         # what that file hashes to, which names it on the wire
 
 
 @dataclass(frozen=True)

@@ -10,28 +10,39 @@ import JetlinkRegistry
 public final class EmbeddedServer: @unchecked Sendable {
   public let server: Server
   public let controller: ServerController
+  /// The comma's add-on models, served beside the driving model (docs/addons.md).
+  public let addons: AddonService?
 
   /// The control channel's events, as the Python server's socket sends them.
   public var events: AsyncStream<ControlEvent> { controller.events }
 
   /// The server on `configuration` and the host's `backend`, `gadget` and
-  /// `hooks`, creating its cache directory.
+  /// `hooks`, creating its cache directory. With `addonSource`, the comma's
+  /// add-on interfaces are served too, their models built on `addonBackend`
+  /// (the host's backend without one).
   public convenience init(
-    configuration: Server.Configuration, backend: any EngineBackend, gadget: (any GadgetSource)? = nil, hooks: ServerHooks = ServerHooks()
+    configuration: Server.Configuration, backend: any EngineBackend, gadget: (any GadgetSource)? = nil, hooks: ServerHooks = ServerHooks(),
+    addonBackend: (any EngineBackend)? = nil, addonSource: (@Sendable ([UInt8]) -> any AddonSource)? = nil
   ) throws {
     try FileManager.default.createDirectory(at: configuration.cacheRoot, withIntermediateDirectories: true)
-    try self.init(server: Server(configuration: configuration, backend: backend, gadget: gadget, hooks: hooks))
+    try self.init(
+      server: Server(configuration: configuration, backend: backend, gadget: gadget, hooks: hooks), addonBackend: addonBackend, addonSource: addonSource)
   }
 
-  private init(server: Server) {
+  private init(server: Server, addonBackend: (any EngineBackend)?, addonSource: (@Sendable ([UInt8]) -> any AddonSource)?) {
     self.server = server
     controller = ServerController(server: server, registry: Registry(layout: CacheLayout(root: server.configuration.cacheRoot)))
+    addons = addonSource.map {
+      AddonService(configs: [], host: server.host, backend: addonBackend, cacheRoot: server.configuration.cacheRoot, source: $0)
+    }
   }
 
   /// Serves, and publishes the state a client's first screen needs.
   /// Subscribe to `events` first: nothing published before is kept.
   public func start() throws {
+    addons?.attach()
     try server.start()
+    addons?.start()
     controller.publishInitialState()
   }
 
@@ -44,6 +55,7 @@ public final class EmbeddedServer: @unchecked Sendable {
   /// the last reference to this server.
   public func stop(releasingEngine: Bool) {
     controller.finish()
+    addons?.stop()
     if releasingEngine {
       server.shutdown()
     } else {
