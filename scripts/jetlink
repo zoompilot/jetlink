@@ -57,8 +57,6 @@ load() {
   . "$CONF"
   # shellcheck disable=SC1090
   . "$ENV_FILE"
-  # shellcheck disable=SC1091
-  [ -r /etc/jetlink/addons.env ] && . /etc/jetlink/addons.env
   set +a
 }
 

@@ -33,7 +33,7 @@ public final class EmbeddedServer: @unchecked Sendable {
     self.server = server
     controller = ServerController(server: server, registry: Registry(layout: CacheLayout(root: server.configuration.cacheRoot)))
     addons = addonSource.map {
-      AddonService(configs: [], host: server.host, backend: addonBackend, cacheRoot: server.configuration.cacheRoot, source: $0)
+      AddonService(host: server.host, backend: addonBackend, cacheRoot: server.configuration.cacheRoot, source: $0)
     }
   }
 

@@ -109,7 +109,7 @@ final class AddonModel: @unchecked Sendable {
       progress?(stage, frac, message)
     }
     var meta: [String: Any] = ["addon": name, "spec": ["sha256": sha256]]
-    if let interface { meta["interface"] = AddonConfig.triple(interface) }
+    if let interface { meta["interface"] = AddonWire.triple(interface) }
     func build() throws {
       log.info("building \(name) for \(backend.name)")
       try backend.build(model: file, artifact: entry.path, report: report, metaExtra: meta)

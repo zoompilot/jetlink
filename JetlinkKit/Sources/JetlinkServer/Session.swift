@@ -340,7 +340,7 @@ final class Session: @unchecked Sendable {
       try error(message.seq, "no_addons", "this server serves no add-ons")
       return
     }
-    guard let kind = (addon["interface"] as? String).flatMap(AddonConfig.interfaceClass) else {
+    guard let kind = (addon["interface"] as? String).flatMap(AddonWire.interfaceClass) else {
       try error(message.seq, "bad_request", "an add-on needs its interface, like ff/56/41")
       return
     }

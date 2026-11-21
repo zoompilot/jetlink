@@ -85,24 +85,11 @@ struct AddonTests {
     #expect(throws: AddonWire.WireError.self) { try Array(good.prefix(10)).withUnsafeBytes { try AddonWire.request(header: $0) } }
   }
 
-  @Test("The config names each add-on's class and models, never Jetlink's own")
-  func config() throws {
-    let dir = try TemporaryDirectory()
-    let file = dir.url.appending(path: "addons.json")
-    try Data(#"{"addons": [{"name": "vasm", "class": "ff/56/41", "models": ["m/v.onnx"]}]}"#.utf8).write(to: file)
-    let configs = try AddonConfig.load(file)
-    #expect(configs.count == 1 && configs[0].interfaceClass == [0xFF, 0x56, 0x41])
-    #expect(configs[0].models == [dir.url.appending(path: "m/v.onnx").standardizedFileURL])
-    for body in [
-      #"{"addons": [{"name": "x", "class": "ff/ff/ff", "models": ["a"]}]}"#,
-      #"{"addons": [{"name": "x", "class": "ff/56", "models": ["a"]}]}"#,
-      #"{"addons": [{"name": "Bad!", "class": "ff/56/41", "models": ["a"]}]}"#,
-      #"{"addons": [{"name": "x", "class": "ff/56/41", "models": []}]}"#,
-      #"{"addons": [{"name": "x", "class": "ff/56/41", "models": ["a"]}, {"name": "y", "class": "ff/56/41", "models": ["b"]}]}"#,
-    ] {
-      try Data(body.utf8).write(to: file)
-      #expect(throws: AddonConfigError.self) { try AddonConfig.load(file) }
-    }
+  @Test("An interface class is three hex bytes, never Jetlink's own")
+  func interfaceClass() {
+    #expect(AddonWire.interfaceClass("ff/56/41") == [0xFF, 0x56, 0x41])
+    #expect(AddonWire.triple([0xFF, 0x56, 0x41]) == "ff/56/41")
+    for bad in ["ff/ff/ff", "ff/56", "ff/56/41/00", "fg/56/41", "f/56/41"] { #expect(AddonWire.interfaceClass(bad) == nil) }
   }
 
   @Test("A pass fits only in the gap before the next frame, or with nothing driving")
@@ -190,9 +177,8 @@ struct AddonTests {
     defer { host.close() }
     let model = try AddonModel.prepare(Self.addon, backend: backend, root: cache.url, log: ServerLog(category: "test"), host: host)
     defer { model.engine.close() }
-    let config = try AddonConfig(name: "tiny", interfaceClass: [0xFF, 0x54, 0x59], models: [Self.addon])
-    let service = AddonService(configs: [config], host: host, cacheRoot: cache.url) { _ in fatalError("unused") }
-    let served = AddonService.Served(config: config, models: [model.tag: model])
+    let service = AddonService(host: host, cacheRoot: cache.url) { _ in fatalError("unused") }
+    let served = AddonService.Served(kind: [0xFF, 0x54, 0x59], name: "tiny", models: [model.tag: model])
 
     func request(_ seq: UInt32, _ tag: UInt32) -> [UInt8] {
       var out = Array("JAQ1".utf8)
@@ -235,7 +221,7 @@ struct AddonTests {
     let golden = try Golden("tiny_queued")
     try serve { server, client in
       let root = server.configuration.cacheRoot
-      let service = AddonService(configs: [], host: server.host, cacheRoot: root) { _ in AbsentAddon() }
+      let service = AddonService(host: server.host, cacheRoot: root) { _ in AbsentAddon() }
       service.start()
       let hello = try client.hello()
       let addons = try #require(hello["addons"] as? [String: Any])
@@ -252,7 +238,7 @@ struct AddonTests {
       _ = try client.ensureEngine(model: golden.model, sha256: golden.sha256)
       service.stop()
 
-      let restarted = AddonService(configs: [], host: server.host, cacheRoot: root) { _ in AbsentAddon() }
+      let restarted = AddonService(host: server.host, cacheRoot: root) { _ in AbsentAddon() }
       restarted.start()
       defer { restarted.stop() }
       #expect(eventually { restarted.helloState()["ready"] as? [String] == [Self.addonSHA] })
@@ -264,14 +250,14 @@ struct AddonTests {
     let golden = try Golden("tiny_queued")
     try serve { server, client in
       let root = server.configuration.cacheRoot
-      let service = AddonService(configs: [], host: server.host, cacheRoot: root) { _ in AbsentAddon() }
+      let service = AddonService(host: server.host, cacheRoot: root) { _ in AbsentAddon() }
       service.start()
       _ = try client.hello()
       let state = try provision(client, model: golden.model, sha256: golden.sha256)
       #expect(state["state"] as? String == "failed")
       #expect(server.host.loadedSHA() == nil)
       service.stop()
-      let restarted = AddonService(configs: [], host: server.host, cacheRoot: root) { _ in AbsentAddon() }
+      let restarted = AddonService(host: server.host, cacheRoot: root) { _ in AbsentAddon() }
       restarted.start()
       defer { restarted.stop() }
       #expect(restarted.helloState()["failed"] as? [String] == [golden.sha256])

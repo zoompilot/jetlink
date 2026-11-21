@@ -64,11 +64,6 @@
     var clocks: String?
     @Option(help: "The nvpmodel power mode whose limits --clocks keeps to (MAXN_SUPER).")
     var powerMode: String?
-    @Option(
-      help: ArgumentHelp(
-        "Add-on models to serve before a comma provisions any (docs/addons.md): a JSON file naming each one's interface class and models. Needs --usb.",
-        valueName: "file"))
-    var addons: String?
     @Flag(name: .customLong("no-addons"), help: "Serve no add-ons: leave the comma's add-on interfaces to another program.")
     var noAddons = false
     @Flag(name: .customLong("no-preload"), help: "Do not load the engine loaded last before a comma asks.")
@@ -87,7 +82,6 @@
       guard sleepAfter >= 0 else { throw ValidationError("--sleep-after cannot be negative") }
       // A TCP listener never sees the comma go, so nothing would say when to sleep.
       guard sleepAfter == 0 || usb else { throw ValidationError("--sleep-after needs --usb") }
-      guard addons == nil || (usb && !noAddons) else { throw ValidationError("--addons needs --usb, and not --no-addons") }
       guard (0...65535).contains(statusPort) else { throw ValidationError("--status-port \(statusPort) is not a port") }
       guard clocks == nil || (["on", "off"].contains(clocks) && powerMode != nil) else {
         throw ValidationError("--clocks takes on or off, with --power-mode")
@@ -133,14 +127,13 @@
         // it downloads a model the comma asks for and has not got either.
         controller = ServerController(server: server, registry: Registry(layout: server.cache.layout))
         log.info("backend \(backend.name) \(backend.runtimeVersion) on \(backend.deviceTag()), cache \(root.path)")
-        // over USB a comma provisions its add-ons on the main link; --addons only adds to them
+        // over USB a comma provisions its add-ons on the main link
         if usb && !noAddons {
-          let configs = try addons.map { try AddonConfig.load(URL(fileURLWithPath: $0)) } ?? []
           var addonBackend: any EngineBackend = backend
           #if canImport(JetlinkORT)
             if let ort = backend as? OrtBackend { addonBackend = ort.wholeModel() }
           #endif
-          addonService = AddonService(configs: configs, host: server.host, backend: addonBackend, cacheRoot: root) { kind in
+          addonService = AddonService(host: server.host, backend: addonBackend, cacheRoot: root) { kind in
             #if os(macOS)
               USBAddonSource(kind: kind)
             #else

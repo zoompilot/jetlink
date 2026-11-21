@@ -169,37 +169,16 @@ With `--usb` the server serves every add-on a comma provisions, from its cache
 after a restart too: `<cache>/addons`, a cache of its own beside the driving
 models', which keeps the newest 8 artifacts per backend and the interface each
 serves. `--no-addons` leaves the comma's add-on interfaces to another program.
-`--addons FILE` serves models before any comma sends them:
-
-```json
-{"addons": [
-  {"name": "vasm", "class": "ff/56/41", "models": ["/opt/addons/v_asm_model.onnx"]},
-  {"name": "slv", "class": "ff/53/4c", "models": ["/opt/addons/sign_detector.onnx", "/opt/addons/light_detector.onnx"]}
-]}
-```
-
-`class` is the interface's class triple, as the fork's `GadgetFunction` has
-it, and never Jetlink's `ff/ff/ff`. A relative model path is from the file's
-directory.
 
 A model takes one `[1, C, H, W]` input, float, fp16 or uint8, and gives any
 number of float outputs. Its tag on the wire is the first four bytes of the
 ONNX's sha256, so the comma and the server need the same file.
 
-To preload them on a Jetson, copy the models over, write the file, and name
-it in `/etc/jetlink/addons.env`, which the installer never writes:
-
-```bash
-sudo mkdir -p /opt/addons && sudo cp *.onnx addons.json /opt/addons/
-echo 'JETLINK_ADDONS="--addons /opt/addons/addons.json"' | sudo tee /etc/jetlink/addons.env
-sudo systemctl restart jetlink-server
-```
-
 `jetlink logs` shows each model built, then `serving interface class ff/56/41`
 and `claimed its interface` once the comma's gadget carries it.
 A minute's counts follow: passes, yields, failures and each model's cost.
 
-On a Mac, `jetlink-server serve --usb --addons FILE`. The add-on models build
+On a Mac, `jetlink-server serve --usb`. The add-on models build
 on onnxruntime's one-session CoreML profile, since the Neural Engine profile
 splits a driving model in two.
 

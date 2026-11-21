@@ -2,6 +2,7 @@
 // own interface of the comma's gadget. docs/addons.md. From Peter Nguyen's
 // V-ASM and sign-vision servers (trung791997/openpilot).
 import Foundation
+import JetlinkKit
 
 /// The add-on wire, jetlink/addons/wire.py's format: one request, one answer,
 /// little-endian.
@@ -115,5 +116,20 @@ public enum AddonWire {
 
   private static func load<T: FixedWidthInteger>(_: T.Type, _ bytes: UnsafeRawBufferPointer, _ offset: Int) -> T {
     T(littleEndian: bytes.loadUnaligned(fromByteOffset: offset, as: T.self))
+  }
+}
+
+extension AddonWire {
+  /// "ff/56/41" as bytes, or nil for anything else, Jetlink's own class included.
+  public static func interfaceClass(_ triple: String) -> [UInt8]? {
+    let parts = triple.split(separator: "/", omittingEmptySubsequences: false)
+    let bytes = parts.compactMap { $0.count == 2 ? UInt8($0, radix: 16) : nil }
+    guard parts.count == 3, bytes.count == 3, bytes != Pinned.usbVendorClass else { return nil }
+    return bytes
+  }
+
+  /// The class as "ff/56/41".
+  public static func triple(_ bytes: [UInt8]) -> String {
+    bytes.map { String(format: "%02x", $0) }.joined(separator: "/")
   }
 }
