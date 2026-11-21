@@ -6,8 +6,9 @@
   import JetlinkKit
 
   /// An add-on interface already claimed on a usbfs descriptor: the add-on's
-  /// `UsbfsGadget`. The claimer (JetlinkLinux's SysfsAddonSource) keeps the
-  /// descriptor and calls `detach` before it closes it.
+  /// `UsbfsGadget`. The claimer (JetlinkLinux's SysfsAddonSource, or the
+  /// Android app on the gadget's own descriptor) keeps the descriptor and
+  /// calls `detach` before it closes it.
   public final class UsbfsAddonPort: @unchecked Sendable {
     private struct Attached {
       let device: UsbfsDevice
@@ -50,6 +51,11 @@
       lock.lock()
       defer { lock.unlock() }
       return attached.flatMap { $0.device.isGone ? nil : $0 }
+    }
+  }
+  extension UsbfsAddonPort: AddonSource {
+    public func present() -> Bool {
+      isAttached
     }
   }
 #endif

@@ -94,7 +94,7 @@ final class AddonModel: @unchecked Sendable {
   /// `interface` goes in the sidecar, so the next start serves it there.
   static func prepare(
     _ file: URL, backend: any EngineBackend, root: URL, log: ServerLog, host: EngineHost? = nil, sha256 known: String? = nil,
-    name: String? = nil, interface: [UInt8]? = nil, report progress: ProgressFn? = nil
+    name: String? = nil, interface: [UInt8]? = nil, port: UInt16? = nil, report progress: ProgressFn? = nil
   ) throws -> AddonModel {
     if let host {
       while host.drivingBusy { Thread.sleep(forTimeInterval: 1) }
@@ -110,6 +110,7 @@ final class AddonModel: @unchecked Sendable {
     }
     var meta: [String: Any] = ["addon": name, "spec": ["sha256": sha256]]
     if let interface { meta["interface"] = AddonWire.triple(interface) }
+    if let port { meta["port"] = Int(port) }
     func build() throws {
       log.info("building \(name) for \(backend.name)")
       try backend.build(model: file, artifact: entry.path, report: report, metaExtra: meta)

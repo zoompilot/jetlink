@@ -22,14 +22,14 @@ public final class EmbeddedServer: @unchecked Sendable {
   /// (the host's backend without one).
   public convenience init(
     configuration: Server.Configuration, backend: any EngineBackend, gadget: (any GadgetSource)? = nil, hooks: ServerHooks = ServerHooks(),
-    addonBackend: (any EngineBackend)? = nil, addonSource: (@Sendable ([UInt8]) -> any AddonSource)? = nil
+    addonBackend: (any EngineBackend)? = nil, addonSource: (@Sendable (AddonInterface) -> any AddonSource)? = nil
   ) throws {
     try FileManager.default.createDirectory(at: configuration.cacheRoot, withIntermediateDirectories: true)
     try self.init(
       server: Server(configuration: configuration, backend: backend, gadget: gadget, hooks: hooks), addonBackend: addonBackend, addonSource: addonSource)
   }
 
-  private init(server: Server, addonBackend: (any EngineBackend)?, addonSource: (@Sendable ([UInt8]) -> any AddonSource)?) {
+  private init(server: Server, addonBackend: (any EngineBackend)?, addonSource: (@Sendable (AddonInterface) -> any AddonSource)?) {
     self.server = server
     controller = ServerController(server: server, registry: Registry(layout: CacheLayout(root: server.configuration.cacheRoot)))
     addons = addonSource.map {

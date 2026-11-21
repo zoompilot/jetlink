@@ -198,6 +198,67 @@ struct AddonTests {
     #expect(served.passes == 1)
   }
 
+  @Test("Over a phone's cable the server dials the comma at the add-on's port and answers there")
+  func tcp() throws {
+    let cache = try TemporaryDirectory()
+    let backend = cpuBackend()
+    let host = EngineHost(cache: try ServerCache(root: cache.url, backend: backend), hooks: ServerHooks())
+    defer { host.close() }
+    let model = try AddonModel.prepare(Self.addon, backend: backend, root: cache.url, log: ServerLog(category: "test"), host: host)
+    defer { model.engine.close() }
+    let service = AddonService(host: host, cacheRoot: cache.url) { _ in fatalError("unused") }
+    let served = AddonService.Served(kind: [0xFF, 0x54, 0x59], name: "tiny", port: 1, models: [model.tag: model])
+    #expect(!TCPAddonSource(host: "127.0.0.1", port: nil).present(), "no port, never dialed")
+
+    let comma = try TCPListener(host: "127.0.0.1", port: 0)
+    defer { comma.close() }
+    let source = TCPAddonSource(host: "127.0.0.1", port: comma.port)
+    #expect(source.present())
+    let pipes = try source.open()
+    let fd = try #require(comma.acceptConnection()?.fd)
+    defer { Sys.close(fd) }
+    let done = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+      _ = try? service.serve(served, pipes: pipes)
+      done.signal()
+    }
+
+    var request = Array("JAQ1".utf8)
+    for v: UInt32 in [7, model.tag] { withUnsafeBytes(of: v.littleEndian) { request += $0 } }
+    for v: UInt16 in [3, 4, 4] { withUnsafeBytes(of: v.littleEndian) { request += $0 } }
+    request += [0, 1]
+    withUnsafeBytes(of: UInt32(48).littleEndian) { request += $0 }
+    request += [UInt8](repeating: 255, count: 48)
+    // in two pieces: a stream need not keep a message whole
+    for piece in [request.prefix(10), request.dropFirst(10)] {
+      var bytes = Array(piece)
+      var vector = bytes.withUnsafeMutableBytes { iovec(iov_base: $0.baseAddress, iov_len: $0.count) }
+      #expect(Sys.writev(fd, &vector, 1) == bytes.count)
+    }
+    func read(_ count: Int) -> [UInt8] {
+      var out = [UInt8](repeating: 0, count: count)
+      var have = 0
+      while have < count {
+        let got = out.withUnsafeMutableBytes { Sys.read(fd, $0.baseAddress! + have, count - have) }
+        if got <= 0 { break }
+        have += got
+      }
+      return Array(out.prefix(have))
+    }
+    var answer: [UInt8] = []
+    while answer.isEmpty {
+      let header = read(24)
+      guard header.count == 24 else { break }
+      let count = Int(header[20]) | Int(header[21]) << 8
+      let body = read(count * 4)
+      if header[4..<8] != [0xFF, 0xFF, 0xFF, 0xFF] { answer = header + body }  // hellos skipped
+    }
+    #expect(answer.prefix(4) == ArraySlice("JAR1".utf8) && answer[4] == 7 && answer[20] == 51)
+    pipes.pipes.abort()
+    #expect(done.wait(timeout: .now() + 5) == .success)
+    #expect(served.passes == 1)
+  }
+
   static let addonSHA = SHA256.hash(data: try! Data(contentsOf: addon)).map { String(format: "%02x", $0) }.joined()
 
   /// ENGINE_REQ for an add-on, with the upload when asked, then the pushed states until one is final.

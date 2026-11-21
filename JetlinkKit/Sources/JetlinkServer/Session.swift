@@ -18,7 +18,7 @@ final class Session: @unchecked Sendable {
   private(set) var request: Request?
   /// The add-on model this session asked for last, by interface: its uploads go
   /// there until the next ENGINE_REQ, which never replaces `request`.
-  private var addonRequest: (request: Request, kind: [UInt8], name: String?)?
+  private var addonRequest: (request: Request, interface: AddonInterface, name: String?)?
   private(set) var frames = 0
   /// The frames this session served, for its summary when it ends.
   private var trips = SessionTrips()
@@ -346,8 +346,10 @@ final class Session: @unchecked Sendable {
     }
     let request = try Request(sha256: sha, nbytes: nbytes, frameSkip: ModelConstants.defaultFrameSkip)
     let name = addon["name"] as? String
-    addonRequest = (request, kind, name)
-    try sendJSON(.engineResp, seq: message.seq, service.request(sha256: sha, nbytes: nbytes, interface: kind, name: name, session: self))
+    let port = (addon["port"] as? NSNumber).flatMap { UInt16(exactly: $0.intValue) }
+    let interface = AddonInterface(kind: kind, port: port)
+    addonRequest = (request, interface, name)
+    try sendJSON(.engineResp, seq: message.seq, service.request(sha256: sha, nbytes: nbytes, interface: interface, name: name, session: self))
   }
 
   /// Where an upload goes: the add-on asked for last, else the driving model.
@@ -411,7 +413,7 @@ final class Session: @unchecked Sendable {
       }
       try sendJSON(
         .engineResp, seq: message.seq,
-        service.request(sha256: request.sha256, nbytes: request.nbytes, interface: addon.kind, name: addon.name, session: self))
+        service.request(sha256: request.sha256, nbytes: request.nbytes, interface: addon.interface, name: addon.name, session: self))
       return
     }
     try sendJSON(.engineResp, seq: message.seq, host.request(request, session: self))

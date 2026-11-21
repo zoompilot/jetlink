@@ -106,11 +106,16 @@ final class PhoneServer: ServerControlling {
     lastFailure = nil
     do {
       let root = try PhoneServer.prepareCacheDirectory()
+      let comma = NetworkInterfaces.commaAddress
+      let backend = OrtBackend(
+        profile: settings.device, preparer: ONNXPreparer(), keepAlive: settings.keepGPUAwake, keepCPUWarm: settings.keepCPUWarm)
       let embedded = try EmbeddedServer(
         // The listener is only for bench tools over Wi-Fi; the comma never dials the phone.
         configuration: Server.Configuration(port: settings.port, cacheRoot: root, listen: settings.developer, keepPlans: 2),
-        backend: OrtBackend(
-          profile: settings.device, preparer: ONNXPreparer(), keepAlive: settings.keepGPUAwake, keepCPUWarm: settings.keepCPUWarm))
+        backend: backend,
+        // the comma's add-ons, dialed as the driving model's link is, each whole on the backend
+        addonBackend: backend.wholeModel(),
+        addonSource: { interface in TCPAddonSource(host: comma, port: interface.port) })
       self.embedded = embedded
       consumeTask = Task { [weak self] in
         for await event in embedded.events {

@@ -133,11 +133,11 @@
           #if canImport(JetlinkORT)
             if let ort = backend as? OrtBackend { addonBackend = ort.wholeModel() }
           #endif
-          addonService = AddonService(host: server.host, backend: addonBackend, cacheRoot: root) { kind in
+          addonService = AddonService(host: server.host, backend: addonBackend, cacheRoot: root) { interface in
             #if os(macOS)
-              USBAddonSource(kind: kind)
+              USBAddonSource(kind: interface.kind)
             #else
-              SysfsAddonSource(kind: kind)
+              SysfsAddonSource(kind: interface.kind)
             #endif
           }
           // before the server starts, so its first hello says add-ons are served

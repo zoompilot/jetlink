@@ -70,6 +70,11 @@ public final class TCPTransport: @unchecked Sendable {
   /// comma opens. With a `timeout`, a connect that takes longer fails
   /// rather than sit in SYN retries for a minute.
   public static func connect(host: String, port: UInt16, timeout: TimeInterval? = nil) throws -> TCPTransport {
+    TCPTransport(fd: try connectSocket(host: host, port: port, timeout: timeout), peer: "\(host):\(port)")
+  }
+
+  /// A connected socket to `host`:`port`, blocking, for `connect` and an add-on's stream.
+  static func connectSocket(host: String, port: UInt16, timeout: TimeInterval?) throws -> Int32 {
     let fd = socket(AF_INET, Sys.stream, 0)
     guard fd >= 0 else { throw LinkError.closed("socket: \(String(cString: strerror(errno)))") }
     var address = sockaddr_in()
@@ -109,7 +114,7 @@ public final class TCPTransport: @unchecked Sendable {
     if timeout != nil {
       _ = fcntl(fd, F_SETFL, flags)
     }
-    return TCPTransport(fd: fd, peer: "\(host):\(port)")
+    return fd
   }
 
   /// A receive timeout, so a test waiting on a reply that never comes fails
