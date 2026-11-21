@@ -18,8 +18,9 @@ again. infer() returns None, for the caller's own model, on any doubt:
     the wrong size; after a miss it rests MISS_HOLD_S, so a slow host cannot
     hold a caller at the faster cadence it keeps for the host.
 
-JetsonNet stands in for a cv2.dnn net (setInput/forward): only the forward pass
-moves, and the net it wraps runs whenever the host does not answer.
+HostModel wraps any runtime's model as a call, and JetsonNet stands in for a
+cv2.dnn net (setInput/forward): only the forward pass moves, and the caller's
+own model runs whenever the host does not answer.
 
 FunctionFS transfers are synchronous and a signal inside one loses bytes
 (jetlink.transport.ffs), so both I/O threads block every signal. FunctionFS
@@ -370,33 +371,29 @@ def blob_to_u8(blob: np.ndarray) -> np.ndarray:
   return np.rint(blob[0] * 255.0).clip(0, 255).astype(np.uint8)
 
 
-class JetsonNet:
-  """A cv2.dnn net whose forward() asks the host first.
+class HostModel:
+  """Any runtime's model, asking the host first: model(blob) gives every
+  output in `outputs` order, from the host when it answers and from
+  local(blob), the caller's own runner (onnxruntime, tinygrad, cv2), otherwise.
 
-  outputs: the model's (name, shape) for every graph output, the first being
-  what forward() with no names returns, as cv2 returns the graph's first; the
-  host sends them in name order. scaled_u8: the caller promises the blob is a
-  u8 image scaled by 1/255 (blobFromImage(img, 1/255)), so it goes as its u8
-  bytes, a quarter of the size and exact. Any other blob must leave it False,
-  the default, and goes as f32. enabled: a cheap callable read on every
-  forward, so a setting turns the host off and on without a reload."""
+  outputs: the model's (name, shape) for every graph output; the host sends
+  them in name order. scaled_u8: the caller promises the blob is a u8 image
+  scaled by 1/255 (blobFromImage(img, 1/255)), so it goes as its u8 bytes, a
+  quarter of the size and exact. Any other blob must leave it False, the
+  default, and goes as f32. enabled: a cheap callable read on every call, so a
+  setting turns the host off and on without a reload."""
 
-  def __init__(self, net, link: AddonLink, sha256: str, outputs, scaled_u8: bool = False, enabled=None):
-    self.net, self.link, self.tag = net, link, W.tag(sha256)
+  def __init__(self, link: AddonLink, sha256: str, outputs, scaled_u8: bool = False, enabled=None, local=None):
+    self.link, self.tag, self.local = link, W.tag(sha256), local
     self.outputs = tuple((name, tuple(shape)) for name, shape in outputs)
     self.wire = sorted(self.outputs)
     self.sizes = [int(np.prod(shape)) for _, shape in self.wire]
     self.scaled_u8 = scaled_u8
     self.enabled = enabled
-    self.blob = None
     self.stats = {"host": 0, "local": 0}
     want = getattr(link, "want", None)
     if callable(want):
       want(self.tag)
-
-  def setInput(self, blob, *args, **kwargs):
-    self.blob = blob
-    self.net.setInput(blob, *args, **kwargs)
 
   def on(self) -> bool:
     try:
@@ -407,25 +404,54 @@ class JetsonNet:
   def ready(self) -> bool:
     return self.on() and self.link.ready(self.tag)
 
+  def ask(self, blob) -> dict | None:
+    """Every output by name from the host; None for the caller's own model."""
+    # the image is built only for a host that will take it: no cost on the comma without one
+    if blob is None or not self.on() or not self.link.poll(self.tag):
+      return None
+    blob = np.asarray(blob)
+    image = blob_to_u8(blob) if self.scaled_u8 else np.ascontiguousarray(blob[0], np.float32)
+    flat = self.link.infer(self.tag, image, sum(self.sizes))
+    if flat is None:
+      return None
+    values, start = {}, 0
+    for (name, shape), size in zip(self.wire, self.sizes, strict=True):
+      values[name] = flat[start:start + size].reshape(shape)
+      start += size
+    return values
+
+  def __call__(self, blob):
+    values = self.ask(blob)
+    if values is not None:
+      self.stats["host"] += 1
+      return tuple(values[name] for name, _ in self.outputs)
+    self.stats["local"] += 1
+    return self.local(blob)
+
+
+class JetsonNet(HostModel):
+  """A cv2.dnn net whose forward() asks the host first (HostModel). The first
+  of `outputs` is what forward() with no names returns, as cv2 returns the
+  graph's first."""
+
+  _OWN = frozenset({"net", "link", "tag", "local", "outputs", "wire", "sizes", "scaled_u8", "enabled", "blob", "stats"})
+
+  def __init__(self, net, link: AddonLink, sha256: str, outputs, scaled_u8: bool = False, enabled=None):
+    self.net, self.blob = net, None
+    super().__init__(link, sha256, outputs, scaled_u8=scaled_u8, enabled=enabled)
+
+  def setInput(self, blob, *args, **kwargs):
+    self.blob = blob
+    self.net.setInput(blob, *args, **kwargs)
+
   def forward(self, names=None):
     wanted = [self.outputs[0][0]] if names is None else ([names] if isinstance(names, str) else list(names))
-    known = {name for name, _ in self.outputs}
-    # the image is built only for a host that will take it: no cost on the comma without one
-    if self.blob is not None and set(wanted) <= known and self.on() and self.link.poll(self.tag):
-      blob = np.asarray(self.blob)
-      image = blob_to_u8(blob) if self.scaled_u8 else np.ascontiguousarray(blob[0], np.float32)
-      flat = self.link.infer(self.tag, image, sum(self.sizes))
-      if flat is not None:
-        self.stats["host"] += 1
-        values, start = {}, 0
-        for (name, shape), size in zip(self.wire, self.sizes, strict=True):
-          values[name] = flat[start:start + size].reshape(shape)
-          start += size
-        return values[wanted[0]] if names is None or isinstance(names, str) else tuple(values[name] for name in wanted)
+    values = self.ask(self.blob) if set(wanted) <= {name for name, _ in self.outputs} else None
+    if values is not None:
+      self.stats["host"] += 1
+      return values[wanted[0]] if names is None or isinstance(names, str) else tuple(values[name] for name in wanted)
     self.stats["local"] += 1
     return self.net.forward() if names is None else self.net.forward(names)
-
-  _OWN = frozenset({"net", "link", "tag", "outputs", "wire", "sizes", "scaled_u8", "enabled", "blob", "stats"})
 
   def __getattr__(self, name):
     return getattr(self.net, name)
@@ -462,3 +488,13 @@ def with_host(net, function, sha256: str, outputs, *, scaled_u8: bool = False, r
   except Exception:
     logging.getLogger(__name__).exception("jetlink: %s runs on the comma alone", getattr(function, 'name', 'add-on'))
     return net
+
+
+def host_model(local, function, sha256: str, outputs, *, scaled_u8: bool = False, report=None, enabled=None):
+  """local, any runtime's model as a call, asking the host over the add-on's
+  interface first (HostModel); local itself if the wrapper cannot be made."""
+  try:
+    return HostModel(shared_link(function, report=report), sha256, outputs, scaled_u8=scaled_u8, enabled=enabled, local=local)
+  except Exception:
+    logging.getLogger(__name__).exception("jetlink: %s runs on the comma alone", getattr(function, 'name', 'add-on'))
+    return local

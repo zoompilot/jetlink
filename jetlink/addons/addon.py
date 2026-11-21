@@ -13,6 +13,7 @@ A fork's add-on, declared once (docs/addons.md, "Offload a model"):
       ADDONS = (VASM,)                     # the gadget, the provisioning run and the setting's watch
 
     net = VASM.wrap(cv2.dnn.readNetFromONNX(path), sha256, [('output0', (1, 3))], params=Params(), scaled_u8=True)
+    run = VASM.model(lambda blob: session.run(None, {'images': blob}), sha256, [('output0', (1, 3))], params=Params())
 
 From then on the setting turns it on and off live, a parked provisioning run
 sends the Jetson its models, the Jetson serves them, and the comma runs the
@@ -99,6 +100,14 @@ class Addon:
     from jetlink.addons.link import with_host
     return with_host(net, self.function, sha256, outputs, scaled_u8=scaled_u8, report=self.write_report,
                      enabled=live_setting(params, self.setting))
+
+  def model(self, local, sha256: str, outputs, *, params, scaled_u8: bool = False):
+    """local(blob), any runtime's model returning every output in `outputs`
+    order, as a call asking the Jetson first while the setting is on; local
+    itself if the wrapper cannot be made (jetlink.addons.link.host_model)."""
+    from jetlink.addons.link import host_model
+    return host_model(local, self.function, sha256, outputs, scaled_u8=scaled_u8, report=self.write_report,
+                      enabled=live_setting(params, self.setting))
 
   def write_report(self, report: dict) -> None:
     path = self.report_file

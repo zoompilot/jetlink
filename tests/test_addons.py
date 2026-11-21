@@ -17,7 +17,7 @@ import pytest
 
 from jetlink.addons import link as link_mod
 from jetlink.addons import wire as W
-from jetlink.addons.link import AddonLink, JetsonNet, blob_to_u8
+from jetlink.addons.link import AddonLink, HostModel, JetsonNet, blob_to_u8
 
 SHA = "ab12cd34" + "0" * 56
 TAG = W.tag(SHA)
@@ -295,6 +295,22 @@ def test_unscaled_blobs_go_as_f32_by_default():
   net.setInput(np.full((1, 3, 4, 4), -0.5, np.float32))
   assert net.forward().tolist() == [[0, 1]]
   assert link.images[0].dtype == np.float32
+
+
+def test_any_runtime_asks_the_host_first_and_runs_its_own_model_otherwise():
+  outputs = (("scores", (1, 2)), ("boxes", (1, 3)))   # the wire: boxes, then scores
+  link = FakeLink(np.arange(5, dtype=np.float32))
+  ran = []
+  model = HostModel(link, SHA, outputs, local=lambda blob: ran.append(blob.shape) or ("own", "model"))
+  blob = np.zeros((1, 3, 4, 4), np.float32)
+  scores, boxes = model(blob)
+  assert scores.tolist() == [[3, 4]] and boxes.tolist() == [[0, 1, 2]] and not ran
+  link.flat = None
+  assert model(blob) == ("own", "model") and ran == [(1, 3, 4, 4)]
+  model.enabled = lambda: False
+  link.flat = np.arange(5, dtype=np.float32)
+  assert model(blob) == ("own", "model")
+  assert model.stats == {"host": 1, "local": 2}
 
 
 def test_reports_go_to_the_callback(tmp_path, no_threads):

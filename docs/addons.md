@@ -62,6 +62,15 @@ its u8 bytes; leave it off for any other blob. The wrapper asks the Jetson
 while the setting is on and the Jetson has the model, and runs the net itself
 otherwise; it returns the net itself if it cannot be made.
 
+Any other runtime (onnxruntime, tinygrad) wraps its own run as a call that
+returns every output in `outputs` order:
+
+```python
+run = vasm().model(lambda blob: session.run(['output0'], {'images': blob}), V_ASM_SHA256, [('output0', (1, 3))],
+                   params=Params(), scaled_u8=True)
+(scores,) = run(blob)
+```
+
 **4. A panel (optional).** `Addon.present()` (the gadget carries it),
 `Addon.report()` (the link's last report: connected, yielding, counts, round
 trips) and `Addon.state(server, progress)`, from the owner's record of the
@@ -86,8 +95,9 @@ report says connected with answers counted.
 - **The comma's interface.** The add-on's `GadgetFunction`, which Jetlink puts
   on the gadget next to its own.
 - **The comma's client.** `jetlink.addons.link`: `AddonLink` owns the
-  interface, and `JetsonNet` stands in for a `cv2.dnn` net (`with_host`,
-  which `Addon.wrap` calls).
+  interface, `HostModel` wraps any runtime's model as a call (`host_model`,
+  which `Addon.model` calls), and `JetsonNet` stands in for a `cv2.dnn` net
+  (`with_host`, which `Addon.wrap` calls).
 - **Provisioning.** The parked provisioning run sends the Jetson the models it
   lacks (`Stock.addon_models`), over the main link, after the driving model.
 - **The server.** `jetlink-server --usb` builds the add-on models on its own
@@ -115,8 +125,10 @@ one, and stay resident: they are small.
 
 ## The comma
 
-`Addon.wrap` calls `with_host`, which wraps the net in a `JetsonNet` on the
-process's one `AddonLink` for that interface (`shared_link`), or returns the net itself if it cannot.
+`Addon.wrap` calls `with_host`, which wraps the net in a `JetsonNet` (and
+`Addon.model` calls `host_model`, a `HostModel`) on the process's one
+`AddonLink` for that interface (`shared_link`), or returns the net itself if it
+cannot.
 Wrap it whether or not the gadget carries the interface yet: the link looks
 on each call, so a net loaded before the owner built the gadget still moves
 once it has.

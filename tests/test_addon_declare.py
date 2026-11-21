@@ -66,6 +66,14 @@ def test_the_setting_is_read_live_and_cheaply(params):
   assert A.live_setting(params, None)() is True
 
 
+def test_model_wraps_any_runtime_and_follows_the_setting(vasm, params):
+  calls = {}
+  with mock.patch('jetlink.addons.link.host_model', lambda local, fn, sha, outputs, **kw: calls.update(local=local, fn=fn, **kw) or 'wrapped'):
+    assert vasm.model(len, 'ab' * 32, [('out', (1, 3))], params=params) == 'wrapped'
+  assert calls['local'] is len and calls['fn'] == vasm.function and calls['scaled_u8'] is False
+  assert calls['enabled']() is False
+
+
 def test_wrap_reports_the_link_and_follows_the_setting(vasm, params):
   calls = {}
   with mock.patch('jetlink.addons.link.with_host', lambda net, fn, sha, outputs, **kw: calls.update(fn=fn, sha=sha, **kw) or 'wrapped'):
