@@ -55,6 +55,15 @@ def test_a_bad_class_is_refused(iface_class):
     functions.GadgetFunction('vasm', iface_class)
 
 
+def test_its_port_follows_its_class_and_two_on_one_port_are_refused():
+  assert VASM.port == functions.PORT_BASE + 0x5641 % functions.PORTS
+  assert VASM.port != SLV.port
+  assert functions.check_ports((VASM, SLV)) == (VASM, SLV)
+  twin = functions.GadgetFunction('twin', (0xFF, 0x57, 0xD1))   # 0x5641 + 400
+  with pytest.raises(ValueError):
+    functions.check_ports((VASM, twin))
+
+
 def test_its_files_are_under_its_own_mount():
   assert VASM.mount == Path('/dev/ffs-vasm')
   assert (VASM.ep0.name, VASM.ep_out.name, VASM.ep_in.name) == ('ep0', 'ep1', 'ep2')

@@ -95,5 +95,15 @@ def unpack_answer(buf) -> tuple[int, int, int, int, int, memoryview]:
   return seq, model_tag, status, server_us, count, _trim(buf, RESP.size + 4 * count)[RESP.size:]
 
 
+def answer_length(buf) -> int:
+  """A whole answer's length on a byte stream, its pad byte included, from its
+  header. ValueError for a bad one."""
+  magic, _, _, _, _, count = RESP.unpack_from(buf)
+  size = RESP.size + 4 * count
+  if magic != RESP_MAGIC or size > MAX_ANSWER:
+    raise ValueError(f'bad answer header {magic!r}, {count} floats')
+  return size + 1 if size % PACKET == 0 else size
+
+
 def hello_tags(payload, count: int) -> frozenset[int]:
   return frozenset(struct.unpack_from(f'<{count}I', payload))

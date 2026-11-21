@@ -340,13 +340,17 @@ class JetlinkClient:
     return spec
 
   def ensure_addon(self, sha256: str, nbytes: int, onnx_path: str | Path, interface: tuple[int, int, int], name: str = '',
-                   progress: ProgressFn | None = None, build_timeout: float = 900.0, should_stop: StopFn | None = None) -> None:
+                   progress: ProgressFn | None = None, build_timeout: float = 900.0, should_stop: StopFn | None = None,
+                   port: int | None = None) -> None:
     """Make an add-on model ready on its gadget interface, as ensure_engine
     does the driving model: the same upload, progress and states, but the
-    driving engine stays loaded. Only for a server whose hello lists `addons`:
+    driving engine stays loaded. `port` is where the comma listens for it when
+    the cable is a network. Only for a server whose hello lists `addons`:
     an older one would take it for a driving model. LinkError when the server
     cannot build or run it."""
     addon = {'interface': '/'.join(f'{b:02x}' for b in interface), 'name': name}
+    if port is not None:
+      addon['port'] = port
     try:
       self._provide({'sha256': sha256, 'nbytes': nbytes, 'addon': addon}, onnx_path, nbytes, progress, build_timeout, should_stop)
     except LinkError as e:

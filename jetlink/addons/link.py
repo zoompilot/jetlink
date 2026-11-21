@@ -22,6 +22,10 @@ HostModel wraps any runtime's model as a call, and JetsonNet stands in for a
 cv2.dnn net (setInput/forward): only the forward pass moves, and the caller's
 own model runs whenever the host does not answer.
 
+Where the comma's cable is a network (an iPhone), the link listens on the
+cable address at the function's port instead and the phone dials it; a TCP
+stream has no transfers, so answers are framed by their headers there.
+
 FunctionFS transfers are synchronous and a signal inside one loses bytes
 (jetlink.transport.ffs), so both I/O threads block every signal. FunctionFS
 also allocates one contiguous kernel buffer per call, so reads go in 16 KB
@@ -37,6 +41,7 @@ import logging
 import os
 import queue
 import signal
+import socket
 import threading
 import time
 
@@ -60,6 +65,15 @@ def _host_attached() -> bool:
   try:
     return gadget.host_attached()
   except OSError:
+    return False
+
+
+def _cable_network() -> bool:
+  """Is the comma's cable a network (an iPhone)? Then add-ons are served over TCP."""
+  from jetlink.comma import gadget
+  try:
+    return gadget.built_for_ios()
+  except Exception:
     return False
 
 
@@ -129,11 +143,12 @@ class RoundTrips:
 
 
 class AddonLink:
-  def __init__(self, function, *, host_ready=None, report=None, clock=time.monotonic):
+  def __init__(self, function, *, host_ready=None, report=None, clock=time.monotonic, cable_network=None):
     """function: the add-on's GadgetFunction. report(dict) hears the link's
     numbers every REPORT_S, for a fork's status page; None drops them."""
     self.function, self.addon = function, getattr(function, 'name', 'addon')
     self.host_ready = host_ready if host_ready is not None else _host_attached
+    self.cable_network = cable_network if cable_network is not None else _cable_network
     self.report_to, self.clock = report, clock
     self.tags: frozenset[int] = frozenset()
     self.wanted: frozenset[int] = frozenset()   # the models this comma asks for, by tag; replaced, never changed
@@ -150,6 +165,9 @@ class AddonLink:
     self._writing = threading.Event()
     self._rx: _Endpoint | None = None   # ep1, host to comma
     self._tx: _Endpoint | None = None   # ep2, comma to host
+    self._stream = False                 # a TCP connection, framed by its headers, not FunctionFS transfers
+    self._listener: socket.socket | None = None
+    self._conn: socket.socket | None = None
     self._next_open = 0.0
     self._threads_started = False
     self._report_lock = threading.Lock()
@@ -255,25 +273,62 @@ class AddonLink:
     if self._rx is not None or self.clock() < self._next_open:
       return
     self._next_open = self.clock() + REOPEN_S
-    # never before a host has configured the gadget: that costs the gadget until a reboot
-    if not self.available() or not self.host_ready():
-      return
-    try:
-      fd_in = os.open(self.function.ep_out, os.O_RDONLY)
-    except OSError:
-      return
-    try:
-      fd_out = os.open(self.function.ep_in, os.O_WRONLY)
-    except OSError:
-      os.close(fd_in)
+    stream = self.cable_network()
+    fds = self._accept() if stream else self._open_endpoints()
+    if fds is None:
       return
     with self._lock:
-      self._rx, self._tx = _Endpoint(fd_in), _Endpoint(fd_out)
+      self._rx, self._tx = _Endpoint(fds[0]), _Endpoint(fds[1])
+      self._stream = stream
     self.stats["reopens"] += 1
     if not self._threads_started:
       self._threads_started = True
       threading.Thread(target=self._read_loop, name=f"{self.addon}-jetson-rx", daemon=True).start()
       threading.Thread(target=self._write_loop, name=f"{self.addon}-jetson-tx", daemon=True).start()
+
+  def _open_endpoints(self) -> tuple[int, int] | None:
+    self._stop_listening()
+    # never before a host has configured the gadget: that costs the gadget until a reboot
+    if not self.available() or not self.host_ready():
+      return None
+    try:
+      fd_in = os.open(self.function.ep_out, os.O_RDONLY)
+    except OSError:
+      return None
+    try:
+      fd_out = os.open(self.function.ep_in, os.O_WRONLY)
+    except OSError:
+      os.close(fd_in)
+      return None
+    return fd_in, fd_out
+
+  def _accept(self) -> tuple[int, int] | None:
+    """The phone's connection to this add-on's port on the cable address, if one came."""
+    from jetlink.transport.tcp import CABLE_ADDRESS
+    if self._listener is None:
+      listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+      try:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind((CABLE_ADDRESS, self.function.port))
+        listener.listen(1)
+        listener.setblocking(False)
+      except OSError:
+        listener.close()
+        return None
+      self._listener = listener
+    try:
+      conn, _ = self._listener.accept()
+    except OSError:
+      return None
+    conn.setblocking(True)
+    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    self._conn = conn
+    return os.dup(conn.fileno()), os.dup(conn.fileno())
+
+  def _stop_listening(self):
+    listener, self._listener = self._listener, None
+    if listener is not None:
+      listener.close()
 
   def _close(self, failed: _Endpoint | None = None):
     """Both endpoints at once, so the owner's ep0 is never left busy by one of
@@ -283,8 +338,16 @@ class AddonLink:
       if failed is not None and failed is not self._rx and failed is not self._tx:
         return
       endpoints, self._rx, self._tx = (self._rx, self._tx), None, None
+      conn, self._conn = self._conn, None
       self.tags, self.yield_seen = frozenset(), False
       self._next_open = self.clock() + REOPEN_S
+    if conn is not None:
+      # ends a read blocked on it, so its endpoint can close
+      try:
+        conn.shutdown(socket.SHUT_RDWR)
+      except OSError:
+        pass
+      conn.close()
     for endpoint in endpoints:
       if endpoint is not None:
         endpoint.close()
@@ -316,7 +379,7 @@ class AddonLink:
     buf = bytearray(READ_CHUNK)
     message = bytearray()
     while True:
-      endpoint = self._rx
+      endpoint, stream = self._rx, self._stream
       fd = endpoint.acquire() if endpoint is not None else -1
       if fd < 0:
         message.clear()
@@ -334,10 +397,25 @@ class AddonLink:
         self._close(endpoint)
         continue
       message += memoryview(buf)[:got]
+      if stream:
+        if not self._handle_stream(message):
+          message.clear()
+          self._close(endpoint)
+        continue
       # a transfer goes on through whole pieces and ends at a short one: the pad byte sees to that
       if got < READ_CHUNK:
         self.handle(bytes(message))
         message.clear()
+
+  def _handle_stream(self, message: bytearray) -> bool:
+    """Each whole answer at the front of a TCP stream; False for a bad header."""
+    try:
+      while len(message) >= W.RESP.size and len(message) >= (size := W.answer_length(message)):
+        self.handle(bytes(message[:size]))
+        del message[:size]
+    except ValueError:
+      return False
+    return True
 
   def _write_loop(self):
     _mask_signals()

@@ -347,7 +347,7 @@ class TestAddons(OpenpilotTest):
     assert order == ['driving'] + [a.sha256 for a in self.addons]
     call = d.client.ensure_addon.call_args_list[0]
     assert call.args[:4] == (self.addons[0].sha256, 400, self.addons[0].path, (0xFF, 0x56, 0x41))
-    assert call.kwargs['name'] == 'vasm'
+    assert call.kwargs['name'] == 'vasm' and call.kwargs['port'] == self.addons[0].function.port
     # once more after, so the owner's record lists them and the next park has nothing to wake the jetson for
     assert d.client.hello.call_count == 2
 

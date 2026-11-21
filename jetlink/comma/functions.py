@@ -19,7 +19,9 @@ out of the next build, and Jetlink comes up alone.
 The add-on opens only ep1 (OUT) and ep2 (IN), and only once a host has
 configured the gadget (gadget.host_attached): opening one before costs the
 gadget until a reboot. A host finds the interface by its class triple, not its
-number. USB only: an iOS gadget has none.
+number. An iOS gadget has none: there the cable is a network, and the add-on
+listens on the comma's cable address, on the function's port, for the phone
+to dial (jetlink.addons.link).
 
 Standard library and jetlink.protocol only at the top: the resident owner
 imports this.
@@ -37,6 +39,9 @@ NAME = re.compile(r'[a-z0-9]{1,16}\Z')
 # ffs.jetlink is Jetlink's own
 RESERVED = frozenset({'jetlink'})
 MOUNT_PREFIX = '/dev/ffs-'
+# where the cable is a network (an iPhone) the add-on listens on the comma's
+# cable address instead, on a port its class picks, which the server is told
+PORT_BASE, PORTS = 5600, 400
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,11 @@ class GadgetFunction:
     object.__setattr__(self, 'iface_class', triple)
 
   @property
+  def port(self) -> int:
+    """Its TCP port on the comma's cable address, where the cable is a network."""
+    return PORT_BASE + ((self.iface_class[1] << 8) | self.iface_class[2]) % PORTS
+
+  @property
   def mount(self) -> Path:
     return Path(MOUNT_PREFIX + self.name)
 
@@ -72,6 +82,16 @@ class GadgetFunction:
   def ep_in(self) -> Path:
     """Comma to host; the add-on opens it once the host has configured the gadget."""
     return self.mount / 'ep2'
+
+
+def check_ports(functions) -> tuple:
+  """functions, or ValueError when two would listen on the same port."""
+  ports: dict[int, str] = {}
+  for fn in functions:
+    if fn.port in ports:
+      raise ValueError(f"gadget functions {ports[fn.port]} and {fn.name} share port {fn.port}: pick another class for one")
+    ports[fn.port] = fn.name
+  return tuple(functions)
 
 
 def present(fn: GadgetFunction) -> bool:

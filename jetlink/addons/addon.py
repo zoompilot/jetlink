@@ -88,8 +88,9 @@ class Addon:
     return tuple(AddonModel(self.function, name, Path(path), sha256) for name, path, sha256 in self.models)
 
   def present(self) -> bool:
-    """Does the gadget carry its interface?"""
-    return present(self.function)
+    """Does the gadget carry its interface, or the cable network that stands for it on an iPhone?"""
+    from jetlink.addons.link import _cable_network
+    return present(self.function) or _cable_network()
 
   # -- the comma's model process ------------------------------------------
 

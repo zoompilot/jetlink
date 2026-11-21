@@ -235,7 +235,7 @@ class ProvisioningRun:
     self.log.warning("jetlink: sending the jetson add-on %s (%d KB, sha %s)", addon.name, nbytes >> 10, addon.sha256[:16])
     try:
       self.client.ensure_addon(addon.sha256, nbytes, upload, addon.function.iface_class, name=addon.name, progress=progress,
-                               build_timeout=ADDON_BUILD_TIMEOUT, should_stop=lambda: self.stop)
+                               build_timeout=ADDON_BUILD_TIMEOUT, should_stop=lambda: self.stop, port=addon.function.port)
     except AddonFailed as e:
       self.log.error("jetlink: the jetson cannot run add-on %s: %s", addon.name, e)
       return True

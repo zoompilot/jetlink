@@ -273,7 +273,8 @@ class Stock:
     """The extra interfaces the owner puts on the gadget, read once as it
     starts: ADDONS' by default, or a fork's pick from its own settings. params
     is a jetlink.openpilot.settings.FileParams on the params store."""
-    return tuple(a.function for a in cls.ADDONS)
+    from jetlink.comma.functions import check_ports
+    return check_ports(tuple(a.function for a in cls.ADDONS))
 
   @classmethod
   def addon_models(cls, params) -> tuple:

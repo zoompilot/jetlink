@@ -170,6 +170,51 @@ def test_reads_go_in_pieces_and_a_message_ends_at_a_short_one(tmp_path, monkeypa
   assert link.tags == {TAG} and slot[0].is_set() and np.array_equal(slot[1][2], big)
 
 
+def test_over_a_cable_network_the_phone_dials_and_answers_are_framed_by_header(monkeypatch):
+  import socket
+  import threading
+  from jetlink.transport import tcp
+  monkeypatch.setattr(tcp, "CABLE_ADDRESS", "127.0.0.1")
+  probe = socket.socket()
+  probe.bind(("127.0.0.1", 0))
+  port = probe.getsockname()[1]
+  probe.close()
+  link = AddonLink(SimpleNamespace(name="vasm", port=port), cable_network=lambda: True)
+  assert link.poll(TAG) is False   # listening now, nothing dialed yet
+
+  def phone():
+    conn = socket.create_connection(("127.0.0.1", port), timeout=2)
+    hello = W.pack_hello([TAG])
+    conn.sendall(hello[:5])
+    conn.sendall(hello[5:])
+    request = conn.recv(1 << 16)
+    seq = W.unpack_request(request)[0]
+    answer = W.pack_answer(seq, TAG, W.STATUS_OK, 7, np.asarray((0.25, 0.5, 0.25), np.float32).tobytes())
+    conn.sendall(answer + W.pack_hello([TAG]))   # an answer and a hello in one segment
+    conn.recv(1)
+    conn.close()
+  threading.Thread(target=phone, daemon=True).start()
+  link._next_open = 0
+  for _ in range(200):
+    link._next_open = 0
+    if link.poll(TAG):
+      break
+    threading.Event().wait(0.01)
+  assert link._stream and link.ready(TAG)
+  monkeypatch.setattr(link_mod, "REPLY_TIMEOUT_S", 2.0)
+  assert np.allclose(link.infer(TAG, np.zeros((3, 2, 2), np.uint8), 3), (0.25, 0.5, 0.25))
+  link._close()
+  assert link._conn is None and link._rx is None
+
+
+def test_a_stream_answer_is_its_header_and_floats_and_any_pad():
+  assert W.answer_length(W.pack_hello([TAG])) == W.RESP.size + 4
+  whole = W.pack_answer(1, TAG, W.STATUS_OK, 0, bytes(W.PACKET - W.RESP.size))
+  assert W.answer_length(whole) == len(whole) == W.PACKET + 1
+  with pytest.raises(ValueError):
+    W.answer_length(b"XXXX" + whole[4:])
+
+
 def answering(link, status=W.STATUS_OK, values=(0.1, 0.8, 0.1)):
   def put(msg):
     seq, tag, _, _, _ = W.unpack_request(msg)
