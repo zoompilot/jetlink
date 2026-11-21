@@ -7,14 +7,21 @@ import JetlinkRegistry
 
 /// An add-on as the comma provisions it: its interface's class triple on the
 /// gadget, and the port the comma listens on for it where the cable is a
-/// network (an iPhone), when the comma said one.
-public struct AddonInterface: Sendable, Hashable {
+/// network (an iPhone), from its latest ENGINE_REQ that named one.
+public final class AddonInterface: @unchecked Sendable {
   public let kind: [UInt8]
-  public let port: UInt16?
+  private let lock = NSLock()
+  private var learned: UInt16?
 
   public init(kind: [UInt8], port: UInt16? = nil) {
     self.kind = kind
-    self.port = port
+    learned = port
+  }
+
+  public var port: UInt16? { lock.withLock { learned } }
+
+  func learn(port: UInt16) {
+    lock.withLock { learned = port }
   }
 }
 
@@ -110,10 +117,8 @@ public final class AddonService: @unchecked Sendable {
   public func start() {
     if host.addons !== self { attach() }
     Thread.detachNewThread { [self] in builder() }
-    for (sha256, interface, name) in stored() {
-      enqueue(
-        Job(kind: interface.kind, port: interface.port, name: name, file: (try? host.cache.modelPath(sha256)) ?? cacheRoot, sha256: sha256),
-        session: nil)
+    for (sha256, kind, port, name) in stored() {
+      enqueue(Job(kind: kind, port: port, name: name, file: (try? host.cache.modelPath(sha256)) ?? cacheRoot, sha256: sha256), session: nil)
     }
   }
 
@@ -141,14 +146,14 @@ public final class AddonService: @unchecked Sendable {
   /// An add-on ENGINE_REQ, answered as the driving model's is: ready, building,
   /// need_upload or failed. A model whose bytes are here is queued to build,
   /// and `session` hears its progress and its end.
-  func request(sha256: String, nbytes: Int64, interface: AddonInterface, name: String?, session: Session?) -> [String: Any] {
+  func request(sha256: String, nbytes: Int64, kind: [UInt8], port: UInt16?, name: String?, session: Session?) -> [String: Any] {
     func state(_ state: String, _ detail: String = "") -> [String: Any] {
       ["state": state, "detail": detail, "sha256": sha256, "chunk": ModelConstants.chunk, "addon": true]
     }
     let (ready, why, queued) = lock.withLock { () -> (Bool, String?, Bool) in
       let queued = pending[sha256] != nil
       if queued, let session { pending[sha256] = session }
-      if let port = interface.port { served[interface.kind]?.learn(port: port) }
+      if let port { served[kind]?.interface.learn(port: port) }
       return (served.values.contains { $0.has(sha256) }, failed[sha256], queued)
     }
     if ready { return state("ready") }
@@ -158,7 +163,7 @@ public final class AddonService: @unchecked Sendable {
     let have = Files.size(of: file)
     guard have == nbytes else { return state("need_upload", "have \(have) of the model") }
     enqueue(
-      Job(kind: interface.kind, port: interface.port, name: name ?? String(sha256.prefix(16)), file: file, sha256: sha256), session: session)
+      Job(kind: kind, port: port, name: name ?? String(sha256.prefix(16)), file: file, sha256: sha256), session: session)
     return state("building", "building")
   }
 
@@ -204,7 +209,7 @@ public final class AddonService: @unchecked Sendable {
           job.file, backend: backend, root: cacheRoot, log: log, host: host, sha256: sha256, name: job.name, interface: job.kind,
           port: job.port
         ) { [self] stage, frac, message in waiting(sha256)?.progress(stage, frac, message) }
-        serve(AddonInterface(kind: job.kind, port: job.port)).add(model)
+        serve(job.kind, port: job.port).add(model)
         store.prune(keep: Self.keepArtifacts, protect: entry.path)
         finish(sha256, ["state": "ready", "detail": ""])
       } catch {
@@ -222,13 +227,13 @@ public final class AddonService: @unchecked Sendable {
   }
 
   /// The artifacts built here before, with the interface and name each was built for.
-  private func stored() -> [(String, AddonInterface, String)] {
+  private func stored() -> [(String, [UInt8], UInt16?, String)] {
     store.inventory().compactMap { sha256 in
       guard let entry = try? store.entry(sha256) else { return nil }
       let meta = Artifact.sidecar(entry.path)
       guard let kind = (meta["interface"] as? String).flatMap(AddonWire.interfaceClass) else { return nil }
       let port = (meta["port"] as? NSNumber).flatMap { UInt16(exactly: $0.intValue) }
-      return (sha256, AddonInterface(kind: kind, port: port), meta["addon"] as? String ?? String(sha256.prefix(16)))
+      return (sha256, kind, port, meta["addon"] as? String ?? String(sha256.prefix(16)))
     }
   }
 
@@ -248,14 +253,14 @@ public final class AddonService: @unchecked Sendable {
   // MARK: serving
 
   /// The interface's add-on, its thread started the first time a model is ready for it.
-  private func serve(_ interface: AddonInterface) -> Served {
+  private func serve(_ kind: [UInt8], port: UInt16?) -> Served {
     let (addon, new) = lock.withLock { () -> (Served, Bool) in
-      if let addon = served[interface.kind] {
-        if let port = interface.port { addon.learn(port: port) }
+      if let addon = served[kind] {
+        if let port { addon.interface.learn(port: port) }
         return (addon, false)
       }
-      let addon = Served(kind: interface.kind, name: AddonWire.triple(interface.kind), port: interface.port)
-      served[interface.kind] = addon
+      let addon = Served(kind: kind, name: AddonWire.triple(kind), port: port)
+      served[kind] = addon
       return (addon, true)
     }
     if new { Thread.detachNewThread { [self] in loop(addon) } }
@@ -273,20 +278,14 @@ public final class AddonService: @unchecked Sendable {
     var answered = 0
     var failures = 0
     var lastReport = Date()
-    private var port: UInt16?
+    /// The one its source is made for, its port learned in place.
+    let interface: AddonInterface
 
     init(kind: [UInt8], name: String, port: UInt16? = nil, models: [UInt32: AddonModel] = [:]) {
       self.kind = kind
       self.name = name
-      self.port = port
+      interface = AddonInterface(kind: kind, port: port)
       ready = models
-    }
-
-    var interface: AddonInterface { lock.withLock { AddonInterface(kind: kind, port: port) } }
-
-    /// The comma's port for it, from its latest ENGINE_REQ.
-    func learn(port: UInt16) {
-      lock.withLock { self.port = port }
     }
 
     var models: [UInt32: AddonModel] { lock.withLock { ready } }
@@ -301,17 +300,13 @@ public final class AddonService: @unchecked Sendable {
   }
 
   private func loop(_ addon: Served) {
-    var interface = addon.interface
-    var source = source(interface)
+    // made once: a source may hold its claim on the interface between opens
+    let source = source(addon.interface)
     let name = addon.name
     log.info("\(name): serving interface class \(AddonWire.triple(addon.kind))")
     var lastError = ""
     var quiet = false
     while !isStopped {
-      if addon.interface != interface {
-        interface = addon.interface
-        source = self.source(interface)
-      }
       guard source.present() else {
         Thread.sleep(forTimeInterval: 1)
         continue

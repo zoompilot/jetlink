@@ -11,24 +11,27 @@ import Foundation
 #endif
 
 /// The comma listens for each add-on on its cable address, at the port its
-/// ENGINE_REQ named, and the server dials it there as it dials the driving
-/// model's link. An add-on the comma named no port for is never present.
+/// ENGINE_REQ named, and the server dials it there while `reachable` says it
+/// dials the driving model's link. An add-on the comma named no port for is
+/// never present.
 public struct TCPAddonSource: AddonSource {
   static let connectTimeout: TimeInterval = 1
   let host: String
-  let port: UInt16?
+  let interface: AddonInterface
+  let reachable: @Sendable () -> Bool
 
-  public init(host: String, port: UInt16?) {
+  public init(host: String, interface: AddonInterface, reachable: @escaping @Sendable () -> Bool = { true }) {
     self.host = host
-    self.port = port
+    self.interface = interface
+    self.reachable = reachable
   }
 
   public func present() -> Bool {
-    port != nil
+    interface.port != nil && reachable()
   }
 
   public func open() throws -> AddonPipes {
-    guard let port else { throw LinkError.closed("the comma named no port for this add-on") }
+    guard let port = interface.port else { throw LinkError.closed("the comma named no port for this add-on") }
     return AddonPipes(SocketPipes(fd: try TCPTransport.connectSocket(host: host, port: port, timeout: Self.connectTimeout)))
   }
 }

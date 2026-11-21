@@ -107,6 +107,7 @@ final class PhoneServer: ServerControlling {
     do {
       let root = try PhoneServer.prepareCacheDirectory()
       let comma = NetworkInterfaces.commaAddress
+      let dialed = DialedServer()
       let backend = OrtBackend(
         profile: settings.device, preparer: ONNXPreparer(), keepAlive: settings.keepGPUAwake, keepCPUWarm: settings.keepCPUWarm)
       let embedded = try EmbeddedServer(
@@ -115,7 +116,10 @@ final class PhoneServer: ServerControlling {
         backend: backend,
         // the comma's add-ons, dialed as the driving model's link is, each whole on the backend
         addonBackend: backend.wholeModel(),
-        addonSource: { interface in TCPAddonSource(host: comma, port: interface.port) })
+        addonSource: { interface in
+          TCPAddonSource(host: comma, interface: interface, reachable: { dialed.server?.dialTarget != nil })
+        })
+      dialed.server = embedded.server
       self.embedded = embedded
       consumeTask = Task { [weak self] in
         for await event in embedded.events {
@@ -241,5 +245,17 @@ final class PhoneServer: ServerControlling {
     state.serverStopped()
     recent = nil
     port = nil
+  }
+}
+
+/// The server once it exists, for the add-ons' sources: they dial the comma
+/// only while it dials the driving model's link, over the cable.
+private final class DialedServer: @unchecked Sendable {
+  private let lock = NSLock()
+  private weak var stored: Server?
+
+  var server: Server? {
+    get { lock.withLock { stored } }
+    set { lock.withLock { stored = newValue } }
   }
 }

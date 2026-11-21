@@ -208,11 +208,15 @@ struct AddonTests {
     defer { model.engine.close() }
     let service = AddonService(host: host, cacheRoot: cache.url) { _ in fatalError("unused") }
     let served = AddonService.Served(kind: [0xFF, 0x54, 0x59], name: "tiny", port: 1, models: [model.tag: model])
-    #expect(!TCPAddonSource(host: "127.0.0.1", port: nil).present(), "no port, never dialed")
+    let later = AddonInterface(kind: [0xFF, 0x54, 0x59])
+    #expect(!TCPAddonSource(host: "127.0.0.1", interface: later).present(), "no port, never dialed")
+    later.learn(port: 1)
+    #expect(TCPAddonSource(host: "127.0.0.1", interface: later).present(), "a port learned later reaches the same interface")
+    #expect(!TCPAddonSource(host: "127.0.0.1", interface: later, reachable: { false }).present(), "not while the comma is not dialed")
 
     let comma = try TCPListener(host: "127.0.0.1", port: 0)
     defer { comma.close() }
-    let source = TCPAddonSource(host: "127.0.0.1", port: comma.port)
+    let source = TCPAddonSource(host: "127.0.0.1", interface: AddonInterface(kind: [0xFF, 0x54, 0x59], port: comma.port))
     #expect(source.present())
     let pipes = try source.open()
     let fd = try #require(comma.acceptConnection()?.fd)
