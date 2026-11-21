@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from dataclasses import replace
 from functools import cached_property
 from pathlib import Path
 
@@ -74,6 +75,10 @@ class Stock:
   # extra interfaces for the fork's own add-ons, after Jetlink's on the USB
   # gadget: jetlink.comma.functions.GadgetFunction, and docs/porting.md
   GADGET_FUNCTIONS: tuple = ()
+  # the fork's add-ons (jetlink.addons.addon.Addon, docs/addons.md): their
+  # interfaces go on the gadget, their models to the Jetson, and their
+  # settings into KEYS.addons
+  ADDONS: tuple = ()
 
   def __init__(self):
     # nothing imported here: owner_config() builds one in the owner
@@ -88,7 +93,8 @@ class Stock:
   # the interface's members, over the class attributes a fork sets
   @property
   def keys(self) -> Keys:
-    return self.KEYS
+    settings = tuple(a.setting for a in self.ADDONS if a.setting and a.setting not in self.KEYS.addons)
+    return replace(self.KEYS, addons=self.KEYS.addons + settings) if settings else self.KEYS
 
   @cached_property
   def log(self):
@@ -270,15 +276,15 @@ class Stock:
     """The extra interfaces the owner puts on the gadget, read once as it
     starts: GADGET_FUNCTIONS, or a fork's pick from its own settings. params
     is a jetlink.openpilot.settings.FileParams on the params store."""
-    return tuple(cls.GADGET_FUNCTIONS)
+    return tuple(cls.GADGET_FUNCTIONS) + tuple(a.function for a in cls.ADDONS)
 
   @classmethod
   def addon_models(cls, params) -> tuple:
     """The add-on models turned on now (interface.AddonModel), which a
     provisioning run sends a Jetson that serves add-ons and lacks them. params
     is a jetlink.openpilot.settings.FileParams on the params store; their
-    toggles go in KEYS.addons, so a change starts a run."""
-    return ()
+    toggles go in KEYS.addons, so a change starts a run. ADDONS' by default."""
+    return tuple(m for a in cls.ADDONS for m in a.addon_models(params))
 
   @classmethod
   def main(cls) -> None:

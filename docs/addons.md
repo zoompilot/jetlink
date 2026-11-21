@@ -5,22 +5,94 @@ over the same USB cable: openpilot's sign vision or a fork's V-ASM, say. The
 comma runs the model on its own CPU whenever the Jetson does not answer, so an
 add-on only ever takes work off the comma.
 
-Three parts, each in this repository:
+From Peter Nguyen's V-ASM and sign-vision offload (trung791997/openpilot).
 
-- **The comma's interface.** The fork declares a `GadgetFunction` on its
-  adapter, and Jetlink puts it on the gadget next to its own
-  ([porting.md](porting.md#extra-usb-interfaces)).
+## Offload a model
+
+Three changes in a fork, and nothing on the Jetson: `jetlink-server --usb`
+(and the Mac app over USB) serves any add-on a comma provisions.
+
+**1. Check the model.** One input, `[1, C, H, W]`, float, fp16 or uint8, and
+any number of float outputs. The comma names it on the wire by its ONNX's
+sha256, so pin the hash of the very file the comma runs.
+
+**2. Declare the add-on** in the adapter module, inside `_adapter_class()` like
+the rest, since its top level imports the standard library only:
+
+```python
+def _adapter_class():
+  from jetlink.openpilot.stock import Stock
+
+  class Adapter(Stock):
+    ADDONS = (vasm(),)
+  return Adapter
+
+
+def vasm():
+  from jetlink.addons.addon import Addon
+  return Addon('vasm', (0xFF, 0x56, 0x41), setting='MyForkVasmOnJetson',
+               models=(('V-ASM', BASEDIR / 'models/v_asm_model.onnx', V_ASM_SHA256),))
+```
+
+- `name`: 1 to 16 of `a-z0-9`, the gadget function's name.
+- `iface_class`: a vendor class triple of your own, never Jetlink's
+  `(0xFF, 0xFF, 0xFF)` or another add-on's.
+- `setting`: a BOOL param that turns it on, or None for always. Declare it in
+  the fork's params keys. Its changes start a provisioning run, and the model
+  process reads it live.
+- `models`: `(name, path, sha256)` for each model the add-on serves. `name`
+  is what the log and the progress show.
+
+`ADDONS` puts each interface on the gadget whatever its setting (one nothing
+opens costs nothing), sends a Jetson that lacks them the models of those turned
+on, and watches their settings. A fork that needs more overrides
+`gadget_functions` or `addon_models` on its adapter instead
+([porting.md](porting.md#extra-usb-interfaces)).
+
+**3. Wrap the net** where the fork loads it:
+
+```python
+net = cv2.dnn.readNetFromONNX(path)
+net = vasm().wrap(net, V_ASM_SHA256, [('output0', (1, 3))], params=Params(), scaled_u8=True)
+```
+
+`outputs` names every graph output with its shape, the one `forward()` returns
+first. `scaled_u8=True` promises a `blobFromImage(img, 1/255)` blob, sent as
+its u8 bytes; leave it off for any other blob. The wrapper asks the Jetson
+while the setting is on and the Jetson has the model, and runs the net itself
+otherwise; it returns the net itself if it cannot be made.
+
+**4. A panel (optional).** `Addon.present()` (the gadget carries it),
+`Addon.report()` (the link's last report: connected, yielding, counts, round
+trips) and `Addon.state(server, progress)`, from the owner's record of the
+server's hello and the fork's progress param:
+
+```python
+from jetlink.comma import gadget
+state = vasm().state(gadget.read_record(gadget.SERVER), params.get('JetlinkProgress'))
+# {'jetson': 'ready' | 'missing' | 'failed' | 'unsupported' | None, 'preparing': 'V-ASM: build 40%' or ''}
+```
+
+`missing` prepares the next time the car is parked, `failed` is a model this
+Jetson cannot build or run, and `unsupported` a Jetson whose JetLink is too
+old for add-ons.
+
+**Then check it**: turn the setting on while parked. The progress shows the
+upload and the build, the Jetson sleeps after, and on the next drive the
+report says connected with answers counted.
+
+## How it fits together
+
+- **The comma's interface.** The add-on's `GadgetFunction`, which Jetlink puts
+  on the gadget next to its own.
 - **The comma's client.** `jetlink.addons.link`: `AddonLink` owns the
-  interface, and `JetsonNet` stands in for a `cv2.dnn` net, so a fork changes
-  one line where it loads the net (`with_host`).
-- **Provisioning.** The fork lists its add-on models (`Stock.addon_models`),
-  and the parked provisioning run sends the Jetson the ones it lacks, over the
-  main link, after the driving model.
+  interface, and `JetsonNet` stands in for a `cv2.dnn` net (`with_host`,
+  which `Addon.wrap` calls).
+- **Provisioning.** The parked provisioning run sends the Jetson the models it
+  lacks (`Stock.addon_models`), over the main link, after the driving model.
 - **The server.** `jetlink-server --usb` builds the add-on models on its own
   backend (TensorRT on a Jetson, onnxruntime on a Mac) and serves each
   add-on's interface. The Mac app does the same over USB.
-
-From Peter Nguyen's V-ASM and sign-vision offload (trung791997/openpilot).
 
 ## The driving model first
 
@@ -87,18 +159,6 @@ FunctionFS allocates one contiguous kernel buffer per call.
 
 ## Provisioning
 
-```python
-from jetlink.openpilot.interface import AddonModel
-
-class MyAdapter(Stock):
-  KEYS = Keys(..., addons=('MyVasmToggle',))   # a change starts a provisioning run
-
-  @classmethod
-  def addon_models(cls, params):
-    return (AddonModel(VASM, 'V-ASM', Path('/data/openpilot/models/v_asm_model.onnx'), VASM_SHA256),) \
-      if params.get_bool('MyVasmToggle') else ()
-```
-
 A server that serves add-ons says so in its hello: `addons`, `{ready, failed}`
 by sha256. A parked run sends it each add-on model in neither, once the
 driving model is ready: an `ENGINE_REQ` with `addon: {interface, name}`, then
@@ -110,8 +170,8 @@ it for its driving model.
 Then the run says hello again, so the owner's record (`gadget.SERVER`) lists
 them, and the Jetson sleeps as after any run. A model the server cannot build
 or run is listed `failed` until its backend changes, so it is not sent on
-every park; deleting `<cache>/addons/failed.json` on the Jetson tries again. `provision.addon_state` reads one model's state off the record,
-for a panel.
+every park; deleting `<cache>/addons/failed.json` on the Jetson tries again.
+`Addon.state` reads it for a panel.
 
 ## The server
 

@@ -213,9 +213,10 @@ has configured the gadget (`jetlink.comma.gadget.host_attached()`): opening an
 endpoint before that costs the gadget until the comma reboots. On the host,
 claim the interface by its class triple; Jetlink's server claims only its own.
 
-For a model the Jetson serves, use [add-ons](addons.md): `jetlink.addons` on
-the comma and `jetlink-server --addons` on the host, rather than a server of
-your own.
+For a model the Jetson serves, use [add-ons](addons.md#offload-a-model): an
+`Addon` in the adapter's `ADDONS`, which declares its interface for you, and
+`Addon.wrap` where the model loads. The Jetson gets the model while parked;
+there is no server of your own to write.
 
 USB only: a gadget built for an iPhone has none. One that cannot be described
 is logged and left out until the owner restarts, and Jetlink comes up without
