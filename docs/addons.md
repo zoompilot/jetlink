@@ -1,16 +1,17 @@
 # Add-ons
 
-An add-on is a fork's own model served by the Jetson beside the driving model,
-over the same USB cable: openpilot's sign vision or a fork's V-ASM, say. The
-comma runs the model on its own CPU whenever the Jetson does not answer, so an
-add-on only ever takes work off the comma.
+An add-on is a fork's own model served beside the driving model by the Jetson,
+Mac, Android or iPhone server, over the same cable: openpilot's sign vision or
+a fork's V-ASM, say. The comma runs the model on its own CPU whenever the
+server does not answer, so an add-on only ever takes work off the comma.
 
 From Peter Nguyen's V-ASM and sign-vision offload (trung791997/openpilot).
 
 ## Offload a model
 
-Three changes in a fork, and nothing on the Jetson: `jetlink-server --usb`
-(and the Mac app over USB) serves any add-on a comma provisions.
+Three changes in a fork, and nothing on the server: `jetlink-server --usb`
+and the Mac, Android and iPhone apps serve any add-on a comma provisions
+([Platforms](#platforms)).
 
 **1. Check the model.** One input, `[1, C, H, W]`, float, fp16 or uint8, and
 any number of float outputs. The comma names it on the wire by its ONNX's
@@ -102,7 +103,7 @@ report says connected with answers counted.
   lacks (`Stock.addon_models`), over the main link, after the driving model.
 - **The server.** `jetlink-server --usb` builds the add-on models on its own
   backend (TensorRT on a Jetson, onnxruntime on a Mac) and serves each
-  add-on's interface. The Mac app does the same over USB.
+  add-on's interface. The Mac, Android and iPhone apps do the same.
 
 ## The driving model first
 
@@ -163,7 +164,7 @@ FunctionFS allocates one contiguous kernel buffer per call.
 
 A server that serves add-ons says so in its hello: `addons`, `{ready, failed}`
 by sha256. A parked run sends it each add-on model in neither, once the
-driving model is ready: an `ENGINE_REQ` with `addon: {interface, name}`, then
+driving model is ready: an `ENGINE_REQ` with `addon: {interface, name, port}`, then
 the usual upload, `PROGRESS` (progress codes `addon_upload` and `addon_build`)
 and `ENGINE_RESP`, whose `ready` carries no spec. The driving engine stays
 loaded. A server too old to list `addons` is never sent one, as it would take
@@ -174,6 +175,24 @@ them, and the Jetson sleeps as after any run. A model the server cannot build
 or run is listed `failed` until its backend changes, so it is not sent on
 every park; deleting `<cache>/addons/failed.json` on the Jetson tries again.
 `Addon.state` reads it for a panel.
+
+## Platforms
+
+Every server that runs ONNX serves add-ons, each finding the add-on's
+interface its own way:
+
+| Server | How it reaches the add-on |
+| --- | --- |
+| Jetson or Linux PC (`jetlink-server --usb`) | claims the interface by class through sysfs and usbfs |
+| Mac (`jetlink-server serve --usb`, the Mac app) | claims it by class through IOKit |
+| Android app | claims it by class on the connection it opened for the link |
+| iPhone app | dials the comma's cable address at the add-on's `port` |
+
+An iOS gadget is a network, with no interface for an add-on, so there the
+comma listens on `192.168.60.1` at the function's `port` (its class picks
+one in 5600 to 5999; a fork whose two add-ons share one is told when the owner
+starts) and the provisioning run tells the server that port. A stream has no
+transfers, so the comma frames answers by their headers there.
 
 ## The server
 
