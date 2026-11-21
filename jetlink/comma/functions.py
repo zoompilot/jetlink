@@ -7,7 +7,7 @@ See the LICENSE file in the root directory for more details.
 Extra FunctionFS interfaces on the comma's gadget, for a fork's own add-ons:
 models jetlink-server serves beside the driving model (docs/addons.md), or a
 server of the fork's own on a Jetson running jetlink-server --no-addons. A fork declares them on
-its adapter (Stock.GADGET_FUNCTIONS); jetlink only presents them.
+its adapter (Stock.ADDONS); jetlink only presents them.
 
 jetlink-root.sh gadget links each as ffs.<name> after ffs.jetlink, so Jetlink
 stays interface 0, and mounts it at /dev/ffs-<name>. A linked function with no

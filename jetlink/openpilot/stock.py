@@ -72,9 +72,6 @@ class Stock:
   WARP_DIR = 'openpilot/selfdrive/modeld/models'
   WARP_NAME = 'driving_warp_{cam_w}x{cam_h}_tinygrad.pkl'
   OWNER_LOG = Path('/data/log/jetlink-owner.log')
-  # extra interfaces for the fork's own add-ons, after Jetlink's on the USB
-  # gadget: jetlink.comma.functions.GadgetFunction, and docs/porting.md
-  GADGET_FUNCTIONS: tuple = ()
   # the fork's add-ons (jetlink.addons.addon.Addon, docs/addons.md): their
   # interfaces go on the gadget, their models to the Jetson, and their
   # settings into KEYS.addons
@@ -274,9 +271,9 @@ class Stock:
   @classmethod
   def gadget_functions(cls, params) -> tuple:
     """The extra interfaces the owner puts on the gadget, read once as it
-    starts: GADGET_FUNCTIONS, or a fork's pick from its own settings. params
+    starts: ADDONS' by default, or a fork's pick from its own settings. params
     is a jetlink.openpilot.settings.FileParams on the params store."""
-    return tuple(cls.GADGET_FUNCTIONS) + tuple(a.function for a in cls.ADDONS)
+    return tuple(a.function for a in cls.ADDONS)
 
   @classmethod
   def addon_models(cls, params) -> tuple:

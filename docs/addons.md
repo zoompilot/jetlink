@@ -115,18 +115,8 @@ one, and stay resident: they are small.
 
 ## The comma
 
-```python
-from jetlink.addons.link import with_host
-from jetlink.comma.functions import GadgetFunction
-
-VASM = GadgetFunction('vasm', (0xFF, 0x56, 0x41))   # also on the adapter's gadget_functions()
-
-net = cv2.dnn.readNetFromONNX(path)
-net = with_host(net, VASM, sha256_of(path), [('output0', (1, 3))], scaled_u8=True, report=write_status)
-```
-
-`with_host` wraps the net in a `JetsonNet` on the process's one `AddonLink`
-for that interface (`shared_link`), or returns the net itself if it cannot.
+`Addon.wrap` calls `with_host`, which wraps the net in a `JetsonNet` on the
+process's one `AddonLink` for that interface (`shared_link`), or returns the net itself if it cannot.
 Wrap it whether or not the gadget carries the interface yet: the link looks
 on each call, so a net loaded before the owner built the gadget still moves
 once it has.

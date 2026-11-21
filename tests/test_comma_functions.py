@@ -17,6 +17,7 @@ from unittest import mock
 import pytest
 
 from jetlink import protocol as P
+from jetlink.addons.addon import Addon
 from jetlink.comma import functions, gadget, owner
 from jetlink.openpilot.interface import OwnerConfig
 from jetlink.openpilot.stock import Stock
@@ -61,7 +62,7 @@ def test_its_files_are_under_its_own_mount():
 
 def test_a_fork_declares_them_on_its_adapter():
   class Adapter(Stock):
-    GADGET_FUNCTIONS = (VASM, SLV)
+    ADDONS = (Addon(VASM.name, VASM.iface_class), Addon(SLV.name, SLV.iface_class))
   with mock.patch.dict('sys.modules', {'openpilot': mock.Mock(), 'openpilot.common': mock.Mock(),
                                        'openpilot.common.basedir': mock.Mock(BASEDIR='/data/openpilot')}):
     assert Adapter.owner_config().functions == (VASM, SLV)

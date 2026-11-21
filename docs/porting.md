@@ -170,23 +170,8 @@ was made: write it only when the user chooses.
 
 ### Extra USB interfaces
 
-A fork can put its own interfaces on the gadget next to Jetlink's, for an
-add-on that talks to the Jetson over the same cable (a second model with its
-own server on the Jetson, say). Declare them on the adapter, inside
-`_adapter_class()` like the rest, since the module's top level imports the
-standard library only:
-
-```python
-def _adapter_class():
-  from jetlink.comma.functions import GadgetFunction
-  from jetlink.openpilot.stock import Stock
-
-  class Adapter(Stock):
-    GADGET_FUNCTIONS = (GadgetFunction('vasm', (0xFF, 0x56, 0x41)),)
-
-  return Adapter
-```
-
+A fork's own interfaces on the gadget, next to Jetlink's, come from its
+add-ons: declare them as `ADDONS` on the adapter ([addons.md](addons.md#offload-a-model)).
 To follow a setting instead, override `gadget_functions(cls, params)`, which
 the owner calls once as it starts; `params` reads the params store as files
 (`jetlink.openpilot.settings.FileParams`):
@@ -195,12 +180,12 @@ the owner calls once as it starts; `params` reads the params store as files
   class Adapter(Stock):
     @classmethod
     def gadget_functions(cls, params):
-      return (VASM,) if params.get_bool('MyForkVasmOnJetson') else ()
+      return (VASM.function,) if params.get_bool('MyForkVasmOnJetson') else ()
 ```
 
 A change takes effect when the owner next starts, a reboot most simply.
 
-This needs a Jetlink release that has `jetlink.comma.functions`; on an older
+This needs a Jetlink release that has `jetlink.addons`; on an older
 one the import fails and every hook answers as the link off.
 
 Each is a vendor interface with one bulk OUT and one bulk IN endpoint. The
