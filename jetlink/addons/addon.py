@@ -131,16 +131,34 @@ class Addon:
       return None
     return report if isinstance(report, dict) else None
 
-  def state(self, server: dict | None, progress: dict | None) -> dict:
+  def state(self, server: dict | None, progress: dict | None, run: dict | None = None) -> dict:
     """Its models on the server the comma last spoke to (a Jetson, a Mac, a
     phone), as the owner keeps its hello (jetlink.comma.gadget.SERVER): `host`
     the worst of ready on its interface, missing, failed and unsupported (None
     before any hello), and `preparing`, the provisioning run's progress text
-    (the fork's progress param) while it sends or builds one of them."""
+    (the fork's progress param) while it sends or builds one of them. With
+    the last provisioning run's record (jetlink.comma.gadget.ADDON_RUN),
+    `last_check` says what came of it for this add-on and `last_check_at` when,
+    in epoch seconds; '' and None without one."""
     from jetlink.openpilot.provision import addon_state
     states = {addon_state(sha256, server, self.iface_class) for _, _, sha256 in self.models}
     host = next((s for s in WORST_FIRST if s in states), 'ready') if states else None
     progress = progress if isinstance(progress, dict) else {}
     args = progress.get('args') if isinstance(progress.get('args'), dict) else {}
     mine = progress.get('code') in PREPARING_CODES and args.get('name') in {name for name, _, _ in self.models}
-    return {'host': host, 'preparing': str(progress.get('msg', '')) if mine else ''}
+    return {'host': host, 'preparing': str(progress.get('msg', '')) if mine else '', **self.last_check(run)}
+
+  def last_check(self, run: dict | None) -> dict:
+    """What the last provisioning run made of this add-on's models: each it
+    sent, else the run's own result."""
+    if not isinstance(run, dict) or not isinstance(run.get('at'), (int, float)):
+      return {'last_check': '', 'last_check_at': None}
+    models = run.get('models') if isinstance(run.get('models'), dict) else {}
+    words = {'ready': 'sent and built', 'failed': "JetLink can't run it", 'left': 'left for the next park'}
+    mine = []
+    for name, _, sha256 in self.models:
+      r = models.get(sha256)
+      if isinstance(r, dict) and r.get('state') in words:
+        detail = str(r.get('detail') or '')
+        mine.append(f"{name} {words[r['state']]}" + (f": {detail}" if detail and r['state'] != 'ready' else ''))
+    return {'last_check': '; '.join(mine) or str(run.get('result', '')), 'last_check_at': float(run['at'])}

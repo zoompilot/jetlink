@@ -90,7 +90,7 @@ def test_the_panel_state_is_the_worst_of_its_models(vasm, tmp_path):
   stop = tmp_path / 'stop.onnx'
   stop.write_bytes(b'stop')
   signs = A.Addon('signs', (0xFF, 0x53, 0x4C), models=(('Sign', vasm.models[0][1], 'a' * 64), ('Stop', stop, 'b' * 64)))
-  assert signs.state(None, None) == {'host': None, 'preparing': ''}
+  assert signs.state(None, None) == {'host': None, 'preparing': '', 'last_check': '', 'last_check_at': None}
   assert signs.state({'device': 'orin'}, None)['host'] == 'unsupported'
   assert signs.state({'addons': {'ready': ['a' * 64, 'b' * 64]}}, None)['host'] == 'ready'
   assert signs.state({'addons': {'ready': ['a' * 64]}}, None)['host'] == 'missing'
@@ -100,6 +100,14 @@ def test_the_panel_state_is_the_worst_of_its_models(vasm, tmp_path):
   assert signs.state(both, None)['host'] == 'missing'
   both['addons']['serving']['ff/53/4c'].append('b' * 64)
   assert signs.state(both, None)['host'] == 'ready'
+  # the last provisioning run: each of its models it sent, else the run's result
+  run = {'at': 1000.0, 'result': 'no JetLink computer answered within 20 s', 'models': {}}
+  assert signs.state(None, None, run)['last_check'] == 'no JetLink computer answered within 20 s'
+  assert signs.state(None, None, run)['last_check_at'] == 1000.0
+  run['models'] = {'b' * 64: {'name': 'Stop', 'state': 'failed', 'detail': 'too big'}, 'a' * 64: {'name': 'Sign', 'state': 'ready'}}
+  assert signs.state(None, None, run)['last_check'] == "Sign sent and built; Stop JetLink can't run it: too big"
+  assert vasm.state(None, None, run)['last_check'] == run['result']
+  assert signs.state(None, None, None) == {**signs.state(None, None), 'last_check': '', 'last_check_at': None}
   progress = {'msg': 'Stop: build 40%', 'code': 'addon_build', 'args': {'name': 'Stop'}}
   assert signs.state(None, progress)['preparing'] == 'Stop: build 40%'
   assert vasm.state(None, progress)['preparing'] == ''

@@ -180,6 +180,9 @@ SERVER = Path("/dev/shm/jetlink/server.json")
 # second and on every handover: whether the big model drives, for a reader
 # with no modelV2 (status.runtime). modeld's close() leaves it stopping
 MODELD = Path("/dev/shm/jetlink/modeld.json")
+# what the last provisioning run made of the add-ons, for a fork's panel: when,
+# what came of the run, and each model it sent (provision.ProvisioningRun.note_addons)
+ADDON_RUN = Path("/dev/shm/jetlink/addons.json")
 # how often modeld rewrites that record without a handover
 RECORD_PERIOD = 1.0
 # how long a host that stopped reading configured still counts as there: long

@@ -381,7 +381,8 @@ class TestAddons(OpenpilotTest):
   def test_missing_addons_are_work_only_for_a_server_that_serves_them(self):
     self.cache.store(FakeSpec())
     d = provision.ProvisioningRun(self.parts)
-    for record, work in ((None, False), ({'device': 'orin'}, False), ({'addons': {'ready': []}}, True),
+    # no hello since boot: a hello decides, so a parked run wakes the server for one
+    for record, work in ((None, True), ({'device': 'orin'}, False), ({'addons': {'ready': []}}, True),
                          ({'addons': {'ready': [a.sha256 for a in self.addons]}}, False)):
       with self.subTest(record=record):
         if record is None:
@@ -389,6 +390,19 @@ class TestAddons(OpenpilotTest):
         else:
           gadget.write_record(gadget.SERVER, record)
         assert d.has_work() is work
+
+  def test_each_run_says_what_came_of_the_addons_for_the_panel(self):
+    from jetlink.client import AddonFailed
+    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d.client.ensure_addon.side_effect = [None, AddonFailed('too big')]
+    assert d.provision() is True
+    run = gadget.read_record(gadget.ADDON_RUN)
+    assert run['result'] == 'sent the add-on models' and isinstance(run['at'], float)
+    assert {r['name']: r['state'] for r in run['models'].values()} == {self.addons[0].name: 'ready', self.addons[1].name: 'failed'}
+    assert run['models'][self.addons[1].sha256]['detail'] == 'too big'
+    d = self.run_with(self.client_hearing(None))
+    assert d.provision() is True
+    assert gadget.read_record(gadget.ADDON_RUN)['result'] == 'JetLink is too old for add-ons'
 
   def test_the_panel_reads_each_addon_off_the_owner_s_record(self):
     sha = self.addons[0].sha256

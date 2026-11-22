@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import signal
+import time
 from pathlib import Path
 
 from jetlink import protocol as P
@@ -56,6 +57,8 @@ class ProvisioningRun:
     self.loan = None
     self.stop = False
     self.fetch_failed = False
+    # what came of each add-on model this run, by sha256 (note_addons)
+    self.addon_results: dict[str, dict] = {}
 
   # -- lifecycle ------------------------------------------------------------
 
@@ -200,14 +203,33 @@ class ProvisioningRun:
     next run: a link that failed, or a stop."""
     missing = addons_missing(addon_models(self.parts), hello)
     if not missing:
+      self.note_addons('JetLink has every add-on model' if isinstance(hello.get('addons'), dict)
+                       else 'JetLink is too old for add-ons')
       return True
     done = True
     for addon in missing:
       if self.stop:
+        self.note_addons('stopped: the car started')
         return False
       done = self.provide_addon(addon) and done
     self.hello()
+    self.note_addons('sent the add-on models' if done else 'some add-on models are left for the next park')
     return done
+
+  def note_addons(self, result: str) -> None:
+    """Say what this run made of the add-ons (gadget.ADDON_RUN), for a fork's
+    panel: the run's result and each model it sent. Only with an add-on on."""
+    models = addon_models(self.parts)
+    if not models:
+      return
+    names = {m.sha256: m.name for m in models}
+    record = {'at': time.time(), 'result': result,
+              'models': {sha: {'name': names.get(sha, sha[:16]), **r} for sha, r in self.addon_results.items()}}
+    self.log.warning("jetlink: add-ons: %s", result)
+    try:
+      gadget.write_record(gadget.ADDON_RUN, record)
+    except OSError:
+      self.log.exception("jetlink: could not write the add-on record")
 
   def provide_addon(self, addon) -> bool:
     """One add-on model: uploaded and built, or failed on the server, which
@@ -219,9 +241,11 @@ class ProvisioningRun:
       nbytes = path.stat().st_size
     except OSError:
       self.log.error("jetlink: add-on %s has no model at %s", addon.name, path)
+      self.addon_results[addon.sha256] = {'state': 'failed', 'detail': 'the comma has no copy of the model'}
       return True
     upload = link.verified_upload(self.log, path, addon.sha256, nbytes)
     if upload is None:
+      self.addon_results[addon.sha256] = {'state': 'failed', 'detail': "the comma's copy is not the file it names"}
       return True
 
     def progress(stage: str, frac: float, msg: str) -> None:
@@ -238,11 +262,14 @@ class ProvisioningRun:
                                build_timeout=ADDON_BUILD_TIMEOUT, should_stop=lambda: self.stop, port=addon.function.port)
     except AddonFailed as e:
       self.log.error("jetlink: the jetson cannot run add-on %s: %s", addon.name, e)
+      self.addon_results[addon.sha256] = {'state': 'failed', 'detail': str(e)}
       return True
     except LinkError as e:
       self.log.warning("jetlink: add-on %s is left for the next run: %s", addon.name, e)
+      self.addon_results[addon.sha256] = {'state': 'left', 'detail': str(e)}
       return False
     self.log.warning("jetlink: add-on %s ready on the jetson", addon.name)
+    self.addon_results[addon.sha256] = {'state': 'ready', 'detail': ''}
     return True
 
   def hello(self) -> dict:
@@ -284,7 +311,11 @@ class ProvisioningRun:
     selected = self.parts.models.selected_model()
     if selected is not None and selected.get('oid') != spec.sha256:
       return True
-    return bool(addons_missing(addon_models(self.parts), gadget.read_record(gadget.SERVER)))
+    models, server = addon_models(self.parts), gadget.read_record(gadget.SERVER)
+    # no hello since boot: whether the server has them is not known until one
+    if models and not server:
+      return True
+    return bool(addons_missing(models, server))
 
   def shutdown_jetson(self, reason: str) -> None:
     """hardwared is shutting the comma down and wants the Jetson off too.
@@ -339,6 +370,7 @@ class ProvisioningRun:
     # alert says so, and waking the Jetson to build one would not change it
     if not self.parts.warps.built():
       self.log.warning("jetlink: no warp built for this camera, nothing to provision for")
+      self.note_addons('waiting for the camera to be calibrated')
       return True
 
     # Nothing to build, unless a model was picked on the server since: a
@@ -346,6 +378,7 @@ class ProvisioningRun:
     # a phone's cable, which is there only once the app dials in
     if not self.has_work() and not (gadget.host_attached() and gadget.link_kind(self.parts.settings.mode()) == 'usb'):
       self.log.warning("jetlink: nothing to provision")
+      self.note_addons('JetLink has every add-on model')
       return True
 
     finished = False
@@ -354,6 +387,7 @@ class ProvisioningRun:
         return False
       if not self.wait_for_jetson():
         self.log.warning("jetlink: no jetson within %.0f s, leaving it for the next run", WAKE_TIMEOUT)
+        self.note_addons(f'no JetLink computer answered within {WAKE_TIMEOUT:.0f} s')
         self.close_link()
         self.without_jetson()
         return False
@@ -361,6 +395,7 @@ class ProvisioningRun:
     except Exception:
       self.log.exception("jetlink: provisioning failed")
       self.parts.progress.report('failed', 1.0, 'see the log', code='failed')
+      self.note_addons('the run failed; see the log')
     finally:
       self.close_link()
     return finished
