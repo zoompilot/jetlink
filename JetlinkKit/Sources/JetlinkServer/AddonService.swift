@@ -95,6 +95,9 @@ public final class AddonService: @unchecked Sendable {
   private var failed: [String: String] = [:]
   /// Each model's name, by sha256, for the web page.
   private var names: [String: String] = [:]
+  /// What a comma last said it wants on each interface it named (keep(_:)):
+  /// a build that ends for anything else is not served.
+  private var keeping: [[UInt8]: Set<String>] = [:]
   /// Interfaces and models serving.json holds or is about to.
   private var remembered = Set<Key>()
   private let servingLock = NSLock()
@@ -158,8 +161,12 @@ public final class AddonService: @unchecked Sendable {
   func helloState() -> [String: Any] {
     lock.withLock {
       var serving: [String: [String]] = [:]
-      for (kind, addon) in served { serving[AddonWire.triple(kind)] = Set(addon.models.values.map(\.sha256)).sorted() }
-      return ["ready": Set(serving.values.joined()).sorted(), "serving": serving, "failed": failed.keys.sorted()]
+      for (kind, addon) in served {
+        let shas = Set(addon.models.values.map(\.sha256)).sorted()
+        if !shas.isEmpty { serving[AddonWire.triple(kind)] = shas }
+      }
+      // forgets: a hello's addons_keep is heard, and what it leaves out is deleted
+      return ["ready": Set(serving.values.joined()).sorted(), "serving": serving, "failed": failed.keys.sorted(), "forgets": true]
     }
   }
 
@@ -174,6 +181,8 @@ public final class AddonService: @unchecked Sendable {
     let (ready, why, queued, elsewhere) = lock.withLock { () -> (Bool, String?, Bool, Bool) in
       let queued = pending[key] != nil
       if queued, let session { pending[key] = session }
+      // asked for: wanted, whatever the last hello said
+      keeping[kind]?.insert(sha256)
       if let port { served[kind]?.interface.learn(port: port) }
       return (served[kind]?.has(sha256) == true, failed[sha256], queued, served.values.contains { $0.has(sha256) })
     }
@@ -224,6 +233,10 @@ public final class AddonService: @unchecked Sendable {
       guard let job = next else { return }
       let sha256 = job.sha256
       let key = Key(kind: job.kind, sha256: sha256)
+      if unwanted(key) {
+        finish(key, ["state": "failed", "detail": "the comma no longer wants it"])
+        continue
+      }
       do {
         if lock.withLock({ served[job.kind]?.has(sha256) == true }) {
           finish(key, ["state": "ready", "detail": ""])
@@ -231,6 +244,10 @@ public final class AddonService: @unchecked Sendable {
         }
         // the one engine serves every interface that asks for it: passes take the host's lock
         if let loaded = lock.withLock({ served.values.lazy.compactMap { $0.model(sha256) }.first }) {
+          if unwanted(key) {
+            finish(key, ["state": "failed", "detail": "the comma no longer wants it"])
+            continue
+          }
           serve(job.kind, port: job.port).add(loaded)
           remember(key, name: job.name, port: job.port)
           finish(key, ["state": "ready", "detail": ""])
@@ -247,6 +264,12 @@ public final class AddonService: @unchecked Sendable {
         ) { [self] stage, frac, message in
           waiting(key)?.progress(stage, frac, message, extra: ["addon": true, "sha256": sha256])
         }
+        // turned off while it built: kept for nothing
+        if unwanted(key) {
+          finish(key, ["state": "failed", "detail": "the comma no longer wants it"])
+          deleteIfUnused([sha256])
+          continue
+        }
         serve(job.kind, port: job.port).add(model)
         remember(key, name: job.name, port: job.port)
         store.prune(keep: Self.keepArtifacts, protect: entry.path)
@@ -257,6 +280,94 @@ public final class AddonService: @unchecked Sendable {
         saveFailed()
         finish(key, ["state": "failed", "detail": "\(error)"])
       }
+    }
+  }
+
+  private func unwanted(_ key: Key) -> Bool {
+    lock.withLock { keeping[key.kind].map { !$0.contains(key.sha256) } ?? false }
+  }
+
+  /// A comma's word on what it wants, its hello's `addons_keep` (class
+  /// triple, then the sha256s turned on): every other model on an interface it
+  /// names is unloaded and forgotten, and once nothing serves or builds one,
+  /// its artifact and its bytes are deleted. An interface it does not name is
+  /// left as it is, and a model it turns on again is built again.
+  func keep(_ said: [String: Any]) {
+    var wanted: [[UInt8]: Set<String>] = [:]
+    for (triple, value) in said {
+      guard let kind = AddonWire.interfaceClass(triple), let shas = value as? [String] else { continue }
+      wanted[kind] = Set(shas)
+    }
+    guard !wanted.isEmpty else { return }
+    let union = Set(wanted.values.joined())
+    let (dropped, unfailed) = lock.withLock { () -> ([Key], [String]) in
+      var dropped: [Key] = []
+      for (kind, shas) in wanted {
+        keeping[kind] = shas
+        for sha256 in served[kind]?.drop(keeping: shas) ?? [] { dropped.append(Key(kind: kind, sha256: sha256)) }
+      }
+      for key in dropped { remembered.remove(key) }
+      let unfailed = failed.keys.filter { !union.contains($0) }
+      for sha256 in unfailed { failed[sha256] = nil }
+      return (dropped, unfailed)
+    }
+    // queued and not started: never built
+    func notWanted(_ job: Job) -> Bool { wanted[job.kind].map { !$0.contains(job.sha256) } ?? false }
+    let unqueued = jobs.withLock { () -> [Job] in
+      let gone = queue.filter(notWanted)
+      queue.removeAll(where: notWanted)
+      return gone
+    }
+    for job in unqueued { finish(Key(kind: job.kind, sha256: job.sha256), ["state": "failed", "detail": "the comma no longer wants it"]) }
+    for key in dropped { log.info("\(AddonWire.triple(key.kind)): the comma turned \(name(key.sha256)) off, no longer serving it") }
+    if !unfailed.isEmpty { saveFailed() }
+    let unserved = forgetServing(wanted)
+    let unloaded: Set<String> = Set(dropped.map { $0.sha256 })
+    deleteIfUnused(unloaded.union(unserved).union(unqueued.map { $0.sha256 }))
+  }
+
+  private func name(_ sha256: String) -> String {
+    lock.withLock { names[sha256] } ?? String(sha256.prefix(16))
+  }
+
+  /// Leaves only `wanted`'s models in serving.json on the interfaces it names; the sha256s taken out.
+  private func forgetServing(_ wanted: [[UInt8]: Set<String>]) -> Set<String> {
+    servingLock.withLock {
+      var all = (try? JSONSerialization.jsonObject(with: Data(contentsOf: servingURL))) as? [String: Any] ?? [:]
+      var mine = all[backend.tag()] as? [String: [String: [String: Any]]] ?? [:]
+      var gone = Set<String>()
+      for (kind, shas) in wanted {
+        let triple = AddonWire.triple(kind)
+        guard let models = mine[triple] else { continue }
+        let kept = models.filter { shas.contains($0.key) }
+        gone.formUnion(models.keys.filter { !shas.contains($0) })
+        mine[triple] = kept.isEmpty ? nil : kept
+      }
+      guard !gone.isEmpty else { return gone }
+      all[backend.tag()] = mine
+      if let data = try? JSONSerialization.data(withJSONObject: all, options: [.sortedKeys]) { try? data.write(to: servingURL, options: .atomic) }
+      return gone
+    }
+  }
+
+  /// Deletes the artifact and the uploaded bytes of each model nothing serves,
+  /// builds or means to serve after a restart; never the driving model's.
+  private func deleteIfUnused(_ shas: Set<String>) {
+    guard !shas.isEmpty else { return }
+    let listed = Set(loadServing().values.flatMap(\.keys))
+    let loaded = host.loadedSHA()
+    for sha256 in shas.sorted() {
+      let busy = lock.withLock {
+        served.values.contains { $0.has(sha256) } || pending.keys.contains { $0.sha256 == sha256 }
+      }
+      guard !busy, !listed.contains(sha256), sha256 != loaded else { continue }
+      if let entry = try? store.entry(sha256) { entry.remove() }
+      if let model = try? host.cache.modelPath(sha256) {
+        try? FileManager.default.removeItem(at: model)
+        try? FileManager.default.removeItem(at: model.deletingLastPathComponent().appending(path: model.lastPathComponent + ".part"))
+      }
+      lock.withLock { names[sha256] = nil }
+      log.info("deleted \(sha256.prefix(16)): no add-on wants it")
     }
   }
 
@@ -271,14 +382,17 @@ public final class AddonService: @unchecked Sendable {
     let built = Set(store.inventory())
     var out: [(String, [UInt8], UInt16?, String)] = []
     var seen = Set<Key>()
-    for (triple, models) in loadServing() {
+    let serving = loadServing()
+    // the sidecar's interface counts only for an artifact serving.json does not know
+    let listed = Set(serving.values.flatMap(\.keys))
+    for (triple, models) in serving {
       guard let kind = AddonWire.interfaceClass(triple) else { continue }
       for (sha256, meta) in models where built.contains(sha256) && seen.insert(Key(kind: kind, sha256: sha256)).inserted {
         let port = (meta["port"] as? NSNumber).flatMap { UInt16(exactly: $0.intValue) }
         out.append((sha256, kind, port, meta["name"] as? String ?? String(sha256.prefix(16))))
       }
     }
-    for sha256 in built.sorted() {
+    for sha256 in built.sorted() where !listed.contains(sha256) {
       guard let entry = try? store.entry(sha256) else { continue }
       let meta = Artifact.sidecar(entry.path)
       guard let kind = (meta["interface"] as? String).flatMap(AddonWire.interfaceClass),
@@ -337,7 +451,7 @@ public final class AddonService: @unchecked Sendable {
     let now = Date()
     func name(_ sha256: String) -> String { known[sha256] ?? String(sha256.prefix(16)) }
     var rows: [[String: Any]] = []
-    for addon in addons.sorted(by: { $0.name < $1.name }) {
+    for addon in addons.sorted(by: { $0.name < $1.name }) where !addon.models.isEmpty {
       var models: [[String: Any]] = []
       for model in addon.models.values.sorted(by: { $0.file < $1.file }) {
         let ms: Double = (Double(model.costNs) / 1e5).rounded() / 10
@@ -412,6 +526,16 @@ public final class AddonService: @unchecked Sendable {
 
     func add(_ model: AddonModel) {
       lock.withLock { ready[model.tag] = model }
+    }
+
+    /// Unloads every model but `shas`; the sha256s unloaded. A pass in
+    /// flight holds its own: its engine goes when the pass ends.
+    func drop(keeping shas: Set<String>) -> [String] {
+      lock.withLock {
+        let gone = ready.filter { !shas.contains($0.value.sha256) }
+        for tag in gone.keys { ready[tag] = nil }
+        return gone.values.map(\.sha256)
+      }
     }
 
     func has(_ sha256: String) -> Bool {

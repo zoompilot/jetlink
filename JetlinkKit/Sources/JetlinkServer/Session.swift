@@ -270,6 +270,10 @@ final class Session: @unchecked Sendable {
   }
 
   private func onHello(_ message: Message, client hello: [String: Any]?) throws {
+    // the add-ons it turned off go before the answer, which then says so
+    if let keep = hello?["addons_keep"] as? [String: Any] {
+      host.addons?.keep(keep)
+    }
     let (sha, skip) = wanted()
     var response: [String: Any] = [
       "protocol": Int(Wire.version),

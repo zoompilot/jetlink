@@ -282,7 +282,10 @@ class ProvisioningRun:
     server's pick and whether it downloads for the comma (Models.heard)."""
     models = self.parts.models
     sent = models.hello_pick()
-    hello = models.heard(self.client.hello(timeout=10.0, pick=sent), sent)
+    # the add-ons turned off go: a server that serves them deletes what this leaves out
+    keep = addon_keep(self.parts)
+    extra = {'addons_keep': keep} if keep is not None else {}
+    hello = models.heard(self.client.hello(timeout=10.0, pick=sent, **extra), sent)
     if self.loan is not None:
       self.loan.note_server(hello)
     return hello
@@ -318,7 +321,7 @@ class ProvisioningRun:
     # no hello since boot: whether the server has them is not known until one
     if models and not server:
       return True
-    return bool(addons_missing(models, server))
+    return bool(addons_missing(models, server)) or addons_extra(addon_keep(self.parts), server)
 
   def shutdown_jetson(self, reason: str) -> None:
     """hardwared is shutting the comma down and wants the Jetson off too.
@@ -406,14 +409,54 @@ class ProvisioningRun:
 
 def addon_models(parts) -> tuple:
   """The fork's add-on models turned on now (Stock.addon_models); none on any doubt."""
+  return _addon_models(parts) or ()
+
+
+def _addon_models(parts) -> tuple | None:
+  """addon_models, or None when the fork has no hook or it failed."""
   hook = getattr(parts.op, 'addon_models', None)
   if not callable(hook):
-    return ()
+    return None
   try:
     return tuple(hook(parts.settings.params))
   except Exception:
     parts.log.exception("jetlink: addon_models failed, sending the jetson no add-ons")
-    return ()
+    return None
+
+
+def addon_keep(parts) -> dict | None:
+  """What a server may keep on each of the fork's add-on interfaces, for the
+  hello (addons_keep): class triple, then the sha256s turned on, an empty
+  list for an interface whose add-ons are all off. A server deletes the rest
+  there. None on any doubt, a hook missing or failing, or no add-on
+  declared: the server then deletes nothing."""
+  from jetlink.addons.wire import interface_triple
+  models = _addon_models(parts)
+  hook = getattr(parts.op, 'gadget_functions', None)
+  if models is None or not callable(hook):
+    return None
+  try:
+    functions = tuple(hook(parts.settings.params))
+  except Exception:
+    parts.log.exception("jetlink: gadget_functions failed, the jetson keeps every add-on")
+    return None
+  keep = {interface_triple(f.iface_class): [] for f in functions}
+  for m in models:
+    triple = interface_triple(m.function.iface_class)
+    if triple in keep and m.sha256 not in keep[triple]:
+      keep[triple].append(m.sha256)
+  return keep or None
+
+
+def addons_extra(keep: dict | None, server: dict | None) -> bool:
+  """Does the server serve a model on one of keep's interfaces that is not
+  in it, and delete one on a hello's word (`forgets`)? Never for an older
+  server: it would keep it, and the Jetson would be woken every park."""
+  addons = (server or {}).get('addons')
+  if not keep or not isinstance(addons, dict) or addons.get('forgets') is not True:
+    return False
+  serving = addons.get('serving') if isinstance(addons.get('serving'), dict) else {}
+  return any(set(serving.get(triple) or ()) - set(shas) for triple, shas in keep.items())
 
 
 def _serves(addons: dict, sha256: str, iface_class) -> bool:

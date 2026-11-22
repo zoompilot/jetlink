@@ -424,6 +424,44 @@ struct AddonTests {
     }
   }
 
+  @Test("A hello's addons_keep unloads what it leaves out on the interfaces it names, deletes it once nothing serves it, and a later request builds it again")
+  func turnedOff() throws {
+    let golden = try Golden("tiny_queued")
+    try serve { server, client in
+      let root = server.configuration.cacheRoot
+      let service = AddonService(host: server.host, cacheRoot: root) { _ in AbsentAddon() }
+      service.start()
+      defer { service.stop() }
+      let hello = try client.hello()
+      #expect((hello["addons"] as? [String: Any])?["forgets"] as? Bool == true)
+      _ = try client.ensureEngine(model: golden.model, sha256: golden.sha256)
+      #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA)["state"] as? String == "ready")
+      #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA, interface: "ff/56/41")["state"] as? String == "ready")
+      let store = AddonModel.store(root: root, backend: server.host.backend)
+      let artifact = try store.entry(Self.addonSHA)
+      let bytes = try server.host.cache.modelPath(Self.addonSHA)
+      #expect(artifact.exists && FileManager.default.fileExists(atPath: bytes.path))
+
+      // no word: nothing changes; an interface not named is left alone
+      _ = try client.hello()
+      let off = try client.hello(addonsKeep: ["ff/54/59": []])
+      #expect((off["addons"] as? [String: Any])?["serving"] as? [String: [String]] == ["ff/56/41": [Self.addonSHA]])
+      // still served on the other interface: kept on disk
+      #expect(artifact.exists && FileManager.default.fileExists(atPath: bytes.path))
+
+      let none = try client.hello(addonsKeep: ["ff/54/59": [], "ff/56/41": []])
+      #expect((none["addons"] as? [String: Any])?["serving"] as? [String: [String]] == [:])
+      #expect(!artifact.exists && !FileManager.default.fileExists(atPath: bytes.path))
+      #expect(server.host.loadedSHA() == golden.sha256)
+      let serving = (try? JSONSerialization.jsonObject(with: Data(contentsOf: store.layout.root.appending(path: "serving.json")))) as? [String: Any]
+      #expect((serving?[server.host.backend.tag()] as? [String: Any])?.isEmpty == true)
+
+      // turned on again: asked for, uploaded and built again
+      #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA)["state"] as? String == "ready")
+      #expect((try client.hello()["addons"] as? [String: Any])?["serving"] as? [String: [String]] == ["ff/54/59": [Self.addonSHA]])
+    }
+  }
+
   @Test("A model the backend cannot serve as an add-on answers failed, and says so after a restart")
   func failedBuild() throws {
     let golden = try Golden("tiny_queued")

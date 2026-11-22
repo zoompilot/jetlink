@@ -185,6 +185,18 @@ as f32) would not fit the wire's 4 MiB, which is refused when it is built.
 `<cache>/addons/serving.json` keeps which interface serves what, for a restart.
 `Addon.state` reads it for a panel.
 
+An add-on turned off is deleted from the server. The run's hellos carry
+`client.addons_keep`: each interface the fork puts on the gadget, then the
+sha256s turned on there, an empty list where all are off
+(`provision.addon_keep`). A server whose `addons` says `forgets` unloads
+every other model on those interfaces and, once no interface serves or
+builds it, deletes its artifact and its uploaded bytes; an interface not
+named is left as it is. Turning one off starts a parked run, which wakes the
+Jetson only for a server that forgets; an older one ignores the field. A
+hook that fails sends no `addons_keep`, so nothing is deleted on a doubt.
+Turned on again, the model is sent and built again. A model whose file
+changed loses its old sha256 the same way.
+
 ## Platforms
 
 Every server that runs ONNX serves add-ons, each finding the add-on's

@@ -338,6 +338,38 @@ class TestAddons(OpenpilotTest):
     client.hello.return_value = hello
     return client
 
+  def keep_functions(self):
+    funcs = tuple(a.function for a in self.addons)
+    self.patch(self.op, 'gadget_functions', mock.Mock(return_value=funcs), create=True)
+
+  def test_the_hello_says_what_to_keep_with_an_interface_all_off_empty(self):
+    self.keep_functions()
+    vasm, signs = self.addons
+    self.op.addon_models.return_value = (vasm,)
+    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d.hello()
+    self.assertEqual(d.client.hello.call_args.kwargs['addons_keep'], {'ff/56/41': [vasm.sha256], 'ff/53/4c': []})
+
+  def test_a_failing_hook_keeps_everything(self):
+    self.keep_functions()
+    self.op.addon_models.side_effect = RuntimeError('boom')
+    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d.hello()
+    self.assertNotIn('addons_keep', d.client.hello.call_args.kwargs)
+    self.assertIsNone(provision.addon_keep(self.parts))
+
+  def test_an_addon_turned_off_wakes_the_jetson_only_if_it_forgets(self):
+    vasm, signs = self.addons
+    keep = {'ff/56/41': [vasm.sha256], 'ff/53/4c': []}
+    serving = {'ff/56/41': [vasm.sha256], 'ff/53/4c': [signs.sha256]}
+    self.assertTrue(provision.addons_extra(keep, {'addons': {'serving': serving, 'forgets': True}}))
+    # an older server keeps it whatever the hello says: waking it every park would change nothing
+    self.assertFalse(provision.addons_extra(keep, {'addons': {'serving': serving}}))
+    self.assertFalse(provision.addons_extra(keep, {'addons': {'serving': {'ff/56/41': [vasm.sha256]}, 'forgets': True}}))
+    # an interface the comma does not name is not its business
+    self.assertFalse(provision.addons_extra({'ff/56/41': [vasm.sha256]}, {'addons': {'serving': serving, 'forgets': True}}))
+    self.assertFalse(provision.addons_extra(None, {'addons': {'serving': serving, 'forgets': True}}))
+
   def test_each_missing_addon_is_sent_after_the_driving_model(self):
     d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
     order = []
