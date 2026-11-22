@@ -221,6 +221,7 @@ class Owner:
     self.next_lender = 0.0
     self.worker: subprocess.Popen | None = None
     self.seen: dict[str, int] = {}      # watched param -> mtime when last looked
+    self.spawn_marks: dict[str, int] | None = None  # self.seen as the running run started
     self.had_host = False
     # the status record every other process reads (gadget.STATUS): the setting
     # the last step acted on, when a host last had us configured (presence's
@@ -557,12 +558,18 @@ class Owner:
     self.idle_since = time.monotonic()
     # after the run, not before it: a run writes JetlinkSpec itself, so a mark
     # taken at spawn would always differ by the time it exits and every
-    # successful provision would start a second one
-    self.note_marks()
+    # successful provision would start a second one. Not for an add-on's
+    # toggle, which a run never writes: one turned while it ran keeps the
+    # mark from its start, so it starts the next run
+    self.note_marks(since=self.spawn_marks)
     return False
 
-  def note_marks(self) -> None:
-    self.seen = self.settings.marks()
+  def note_marks(self, since: dict[str, int] | None = None) -> None:
+    marks = self.settings.marks()
+    if since is not None:
+      toggles = set(self.settings.keys.addons)
+      marks = {k: since.get(k, v) if k in toggles else v for k, v in marks.items()}
+    self.seen = marks
     self.had_host = gadget.host_attached()
 
   def wanted(self) -> str | None:
@@ -586,6 +593,7 @@ class Owner:
     gadget.log.warning("jetlink: starting a provisioning run: %s", why)
     self.dialed = False
     self.note_marks()
+    self.spawn_marks = dict(self.seen)
     self.next_worker = time.monotonic() + WORKER_BACKOFF
     try:
       self.worker = subprocess.Popen(self.worker_argv, cwd=self.worker_cwd,

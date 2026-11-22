@@ -12,6 +12,7 @@ hands them over.
 import errno
 import json
 import logging
+import dataclasses
 import os
 import select
 import socket
@@ -339,6 +340,29 @@ class TestTheRunThatFinishes(OwnerTest):
     self.write('ModelManager_ActiveBundleChestnut', b'{"ref": "d"}')
     o.step()
     o.spawn_worker.assert_called_once()   # ...and a later pick still starts one
+
+  def test_an_addon_turned_while_the_run_was_going_starts_the_next_one(self):
+    # a run never writes an add-on's toggle: one turned while it ran is a change still to act on
+    o = self.make(settings=Settings(FileParams(self.params), dataclasses.replace(KEYS, addons=('MyAddon',))))
+    for name in ('open_link', 'spawn_worker'):
+      p = mock.patch.object(o, name, mock.Mock(return_value=True))
+      self.addCleanup(p.stop)
+      p.start()
+    self.addCleanup(o.cable.close)
+    o.transport = mock.Mock(lendable=False)
+    o.lender = mock.Mock(lent=False, listening=True)
+    self.heard(o, sleep_after=1.0)
+    o.seen = o.settings.marks()
+    o.spawn_marks = dict(o.seen)
+    o.had_host = True
+    o.worker = mock.Mock(**{'poll.return_value': None})
+    o.step()
+    self.write('MyAddon', b'1')
+    self.write('JetlinkSpec', b'{}')
+    o.worker.poll.return_value = o.worker.returncode = 0
+    o.step()
+    o.spawn_worker.assert_called_once()
+    self.assertIn('MyAddon changed', o.spawn_worker.call_args.args[0])
 
 
 class TestWhatItIsTold(OwnerTest):
