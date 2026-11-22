@@ -201,17 +201,26 @@ public final class ServerController: @unchecked Sendable {
     }
     lock.unlock()
     var payload = registry.inventory(artifactTag: server.backend.tag(), artifactSuffix: server.backend.suffix, loaded: server.host.loadedSHA())
-    // an add-on's model is uploaded into the same cache; it is no driving model to prepare
-    if let addons = server.host.addons?.modelSHAs(), !addons.isEmpty {
-      payload = InventoryEvent(
-        loaded: payload.loaded, lastLoaded: payload.lastLoaded, models: payload.models.filter { !addons.contains($0.sha256) },
-        artifacts: payload.artifacts.filter { !addons.contains($0.sha256) }, disk: payload.disk)
+    if let addons = server.host.addons?.modelSHAs() {
+      payload = ServerController.withoutAddons(payload, addons)
     }
     lock.lock()
     inventoryPayload = payload
     inventoryAt = now
     lock.unlock()
     return payload
+  }
+
+  /// `payload` less the models of `addons`: an add-on's model is uploaded
+  /// into the same cache, and is no driving model to prepare. A file no index
+  /// names is listed by its 16-character prefix, so that is what is matched.
+  static func withoutAddons(_ payload: InventoryEvent, _ addons: Set<String>) -> InventoryEvent {
+    guard !addons.isEmpty else { return payload }
+    let prefixes = Set(addons.map { String($0.prefix(16)) })
+    func addon(_ sha256: String) -> Bool { prefixes.contains(String(sha256.prefix(16))) }
+    return InventoryEvent(
+      loaded: payload.loaded, lastLoaded: payload.lastLoaded, models: payload.models.filter { !addon($0.sha256) },
+      artifacts: payload.artifacts.filter { !addon($0.sha256) }, disk: payload.disk)
   }
 
   private func publishInventory() {

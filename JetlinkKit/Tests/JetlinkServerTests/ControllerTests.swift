@@ -126,6 +126,20 @@ struct ControllerTests {
     try await body(controller, registry, log)
   }
 
+  @Test("An add-on's model is left out by its full sha256 or the 16-character prefix a file no index names is listed by")
+  func withoutAddons() {
+    let full = String(repeating: "ab", count: 32), other = String(repeating: "cd", count: 32)
+    let disk = InventoryDisk(modelsBytes: 0, enginesBytes: 0, freeBytes: 0)
+    let payload = InventoryEvent(
+      loaded: nil, lastLoaded: nil,
+      models: [
+        InventoryModel(sha256: String(full.prefix(16)), bytes: 1, path: "/a", name: nil, ref: nil),
+        InventoryModel(sha256: other, bytes: 1, path: "/b", name: "Driving", ref: nil),
+      ], artifacts: [], disk: disk)
+    #expect(ServerController.withoutAddons(payload, [full]).models.map(\.sha256) == [other])
+    #expect(ServerController.withoutAddons(payload, []).models.count == 2)
+  }
+
   @Test("An add-on's model shares the cache and is left out of the inventory")
   func addonModelsHidden() async throws {
     try await withController { controller, registry, log in
