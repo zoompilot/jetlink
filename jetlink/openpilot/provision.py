@@ -250,6 +250,9 @@ class ProvisioningRun:
 
     def progress(stage: str, frac: float, msg: str) -> None:
       text, args = f"{addon.name}: {stage} {frac:.0%}", {'name': addon.name, 'stage': stage}
+      if stage == 'build':
+        # TensorRT says little while it builds: a percentage would sit at one value for minutes
+        text = f"{addon.name}: building on JetLink, several minutes"
       if stage == 'upload':
         parts.progress.report(stage, frac, text, code='addon_upload', args=args)
       else:
