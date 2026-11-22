@@ -194,7 +194,11 @@ builds it, deletes its artifact and its uploaded bytes; an interface not
 named is left as it is. Turning one off starts a parked run, which wakes the
 Jetson only for a server that forgets; an older one ignores the field. A
 hook that fails sends no `addons_keep`, so nothing is deleted on a doubt.
-Turned on again, the model is sent and built again. A model whose file
+Turned on again, the model is sent and built again.
+
+Each add-on's toggle (`Keys.addons`) starts a run when it changes, one turned
+while a run is going included: the owner keeps the mark it took as that run
+started, as a run never writes a toggle itself. A model whose file
 changed loses its old sha256 the same way.
 
 ## Platforms
@@ -229,6 +233,14 @@ ONNX's sha256, so the comma and the server need the same file.
 `jetlink logs` shows each model built, then `serving interface class ff/56/41`
 and `claimed its interface` once the comma's gadget carries it.
 A minute's counts follow: passes, yields, failures and each model's cost.
+An add-on turned off logs `the comma turned V-ASM off, no longer serving it`,
+then `deleted <sha>: no add-on wants it` once nothing serves the model.
+
+The web page's **Models** tab has an **Add-ons** card, read from
+`GET /api/addons` every 2 s while the tab is open: each interface's models and
+how long a pass takes, what the comma had since the server started, Answering
+while it had an answer in the last 5 s, and the models building or that this
+computer cannot run, with why.
 
 On a Mac, `jetlink-server serve --usb`. The add-on models build
 on onnxruntime's one-session CoreML profile, since the Neural Engine profile
