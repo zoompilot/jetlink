@@ -404,6 +404,14 @@ struct AddonTests {
       #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA, interface: "ff/56/41")["state"] as? String == "ready")
       let both = ["ff/54/59": [Self.addonSHA], "ff/56/41": [Self.addonSHA]]
       #expect((try client.hello()["addons"] as? [String: Any])?["serving"] as? [String: [String]] == both)
+      // the web page's Models tab: each interface, its model by name and a pass's time, nothing building or failed
+      let page = service.pageState()
+      let rows = try #require(page["addons"] as? [[String: Any]])
+      #expect(rows.map { $0["interface"] as? String } == ["ff/54/59", "ff/56/41"])
+      let model = try #require((rows.first?["models"] as? [[String: Any]])?.first)
+      #expect(model["name"] as? String == "tiny" && model["sha256"] as? String == Self.addonSHA && (model["pass_ms"] as? Double).map { $0 >= 0 } == true)
+      #expect(rows.first?["passes"] as? Int == 0 && rows.first?["last_answer_s"] == nil)
+      #expect((page["building"] as? [Any])?.isEmpty == true && (page["failed"] as? [Any])?.isEmpty == true)
       // the driving model's frames still find their engine: the add-on never became the session's request
       _ = try client.ensureEngine(model: golden.model, sha256: golden.sha256)
       service.stop()

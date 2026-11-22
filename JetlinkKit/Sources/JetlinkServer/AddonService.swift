@@ -93,6 +93,8 @@ public final class AddonService: @unchecked Sendable {
   private var pending: [Key: Session?] = [:]
   /// What this backend could not build or run, by sha256: kept, so a comma is not asked for it on every park.
   private var failed: [String: String] = [:]
+  /// Each model's name, by sha256, for the web page.
+  private var names: [String: String] = [:]
   /// Interfaces and models serving.json holds or is about to.
   private var remembered = Set<Key>()
   private let servingLock = NSLock()
@@ -194,6 +196,7 @@ public final class AddonService: @unchecked Sendable {
   private func enqueue(_ job: Job, session: Session?) {
     let key = Key(kind: job.kind, sha256: job.sha256)
     let queued = lock.withLock { () -> Bool in
+      names[job.sha256] = job.name
       if let waiting = pending[key] {
         pending[key] = .some(session ?? waiting)
         return true
@@ -322,6 +325,45 @@ public final class AddonService: @unchecked Sendable {
     if let data = try? JSONSerialization.data(withJSONObject: all, options: [.sortedKeys]) { try? data.write(to: failedURL, options: .atomic) }
   }
 
+  /// For the web page (`GET /api/addons`): each interface served, its models
+  /// and how long a pass takes, what the comma had from it since the start,
+  /// and how long ago its last answer was; the models building, and those
+  /// this backend cannot build or run, with why.
+  public func pageState() -> [String: Any] {
+    let snapshot: ([Served], [Key], [String: String], [String: String]) = lock.withLock {
+      (Array(self.served.values), Array(self.pending.keys), self.failed, self.names)
+    }
+    let (addons, building, refusals, known) = snapshot
+    let now = Date()
+    func name(_ sha256: String) -> String { known[sha256] ?? String(sha256.prefix(16)) }
+    var rows: [[String: Any]] = []
+    for addon in addons.sorted(by: { $0.name < $1.name }) {
+      var models: [[String: Any]] = []
+      for model in addon.models.values.sorted(by: { $0.file < $1.file }) {
+        let ms: Double = (Double(model.costNs) / 1e5).rounded() / 10
+        models.append(["name": model.file, "sha256": model.sha256, "pass_ms": ms])
+      }
+      var row: [String: Any] = ["interface": addon.name, "models": models, "answers": addon.answered]
+      row["passes"] = addon.allPasses
+      row["yields"] = addon.allYields
+      row["failures"] = addon.allFailures
+      if let last = addon.lastAnswer {
+        let ago: Double = (now.timeIntervalSince(last) * 10).rounded() / 10
+        row["last_answer_s"] = ago
+      }
+      rows.append(row)
+    }
+    var queued: [[String: Any]] = []
+    for key in building.sorted(by: { $0.sha256 < $1.sha256 }) {
+      queued.append(["interface": AddonWire.triple(key.kind), "sha256": key.sha256, "name": name(key.sha256)])
+    }
+    var refused: [[String: Any]] = []
+    for sha256 in refusals.keys.sorted() {
+      refused.append(["sha256": sha256, "name": name(sha256), "detail": refusals[sha256] ?? ""])
+    }
+    return ["served": true, "addons": rows, "building": queued, "failed": refused]
+  }
+
   // MARK: serving
 
   /// The interface's add-on, its thread started the first time a model is ready for it.
@@ -350,6 +392,12 @@ public final class AddonService: @unchecked Sendable {
     var answered = 0
     var failures = 0
     var lastReport = Date()
+    /// Since the server started, for the web page: the counts above are a report's.
+    var allPasses = 0
+    var allYields = 0
+    var allFailures = 0
+    /// When the comma last had an answer here.
+    var lastAnswer: Date?
     /// The one its source is made for, its port learned in place.
     let interface: AddonInterface
 
@@ -443,6 +491,7 @@ public final class AddonService: @unchecked Sendable {
       let answer = body.withUnsafeBytes { handle(addon, request, image: UnsafeRawBufferPointer(rebasing: $0[0..<request.nbytes])) }
       try writeFully(pipes, answer)
       addon.answered += 1
+      addon.lastAnswer = Date()
     }
   }
 
@@ -454,6 +503,7 @@ public final class AddonService: @unchecked Sendable {
     // admitted, the gap is this pass's until it ends: no other add-on spends it too
     guard gate.admit(cost: model.costNs, wait: max(0, Self.answerBudget - Double(model.costNs) / 1e9)) else {
       addon.yields += 1
+      addon.allYields += 1
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .yield)
     }
     defer { gate.passEnded() }
@@ -462,10 +512,12 @@ public final class AddonService: @unchecked Sendable {
     do {
       let floats = try model.run(request, image: image)
       addon.passes += 1
+      addon.allPasses += 1
       let us = UInt32(min(UInt64(UInt32.max), (DispatchTime.now().uptimeNanoseconds - started) / 1000))
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .ok, serverUs: us, floats: floats)
     } catch {
       addon.failures += 1
+      addon.allFailures += 1
       if addon.failures == 1 || addon.failures % 100 == 0 { log.warning("\(addon.name): \(model.file) failed: \(error)") }
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .inferFailed)
     }

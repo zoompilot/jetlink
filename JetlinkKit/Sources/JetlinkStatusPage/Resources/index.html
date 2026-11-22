@@ -388,6 +388,10 @@ dialog[open] { position: fixed; inset: auto 0 0 0; }
         <div class="bar" id="disk-bar" hidden><i></i></div>
         <div id="models" style="margin-top:6px"><div class="empty">Loading</div></div>
       </section>
+      <section class="card" id="addons-card" hidden>
+        <h2>Add-ons <small id="addons-sub"></small></h2>
+        <div id="addons"></div>
+      </section>
       <section class="card">
         <h2>Model library <small id="lib-at"></small></h2>
         <div id="library"></div>
@@ -919,6 +923,43 @@ function drawModels() {
   }).join('');
 }
 
+// -- add-ons: the comma's own models beside the driving one ---------------------
+
+// polled while the Models tab is open: its answers count up many times a second
+let addonsTimer = null;
+async function pollAddons() {
+  clearTimeout(addonsTimer);
+  if (S.tab === 'models' && !document.hidden) {
+    try { S.addons = await api('GET', 'api/addons'); } catch (_) { S.addons = null; }
+    mark('addons');
+  }
+  addonsTimer = setTimeout(pollAddons, 2000);
+}
+
+function drawAddons() {
+  if (S.tab !== 'models') return;
+  const a = S.addons, card = $('addons-card');
+  card.hidden = !a || a.served === false;
+  if (card.hidden) return;
+  const row = (title, sub, tag, tone) => `<div class="row"><span class="k"><b>${esc(title)}</b><span class="sub">${esc(sub)}</span></span>` +
+    `<span class="v"><span class="badge${tone ? ' t-' + tone : ''}">${esc(tag)}</span></span></div>`;
+  let answering = 0;
+  const rows = (a.addons || []).map(x => {
+    const live = x.last_answer_s != null && x.last_answer_s < 5;
+    if (live) answering++;
+    const models = (x.models || []).map(m => m.name + ' ' + m.pass_ms.toFixed(1) + ' ms').join(', ');
+    const counts = x.passes ? x.passes.toLocaleString() + ' answered' + (x.yields ? ', ' + x.yields.toLocaleString() + ' yielded to driving' : '') +
+      (x.failures ? ', ' + x.failures + ' failed' : '') : 'no answers yet';
+    const [tag, tone] = live ? ['Answering', 'good'] : x.failures && !x.passes ? ['Failing', 'bad'] : ['Ready', ''];
+    return row(models || x.interface, counts + ' · interface ' + x.interface, tag, tone);
+  });
+  for (const b of a.building || []) rows.push(row(b.name, 'Building for this computer, several minutes', 'Building', 'info'));
+  for (const f of a.failed || []) rows.push(row(f.name, f.detail, 'Cannot run', 'bad'));
+  $('addons-sub').textContent = answering ? answering + ' answering the comma' : '';
+  $('addons').innerHTML = rows.length ? rows.join('') :
+    '<div class="empty">None yet. The comma sends its add-on models while parked, once one is turned on.</div>';
+}
+
 function drawLibrary() {
   if (S.tab !== 'models') return;
   const box = $('library'), cat = S.catalog, why = controls() ? '' : blocked();
@@ -1420,6 +1461,7 @@ function go(tab) {
   for (const b of $('tabs').children) b.setAttribute('aria-current', b.dataset.tab === tab ? 'page' : 'false');
   if (location.hash.slice(1) !== tab) history.replaceState(null, '', '#' + tab);
   if (tab === 'settings' || tab === 'system') loadSystem();
+  if (tab === 'models' && changed) pollAddons();
   mark(...Object.keys(DRAW));
   if (changed) window.scrollTo(0, 0);
 }
@@ -1428,7 +1470,7 @@ window.addEventListener('hashchange', () => go(location.hash.slice(1)));
 
 const DRAW = {
   status: drawStatus, budget: drawBudget, host: drawHost, hw: drawHw,
-  models: drawModels, library: drawLibrary, bench: drawBench,
+  models: drawModels, addons: drawAddons, library: drawLibrary, bench: drawBench,
   settings: drawSettings, system: drawSystem,
 };
 

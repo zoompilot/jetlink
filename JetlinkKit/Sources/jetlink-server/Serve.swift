@@ -158,7 +158,7 @@
       #if os(Linux)
         hardware = PageHardware(cache: root, gpu: telemetry)
       #endif
-      let page = statusPort > 0 ? startPage(controller, hardware: hardware, log: log) : nil
+      let page = statusPort > 0 ? startPage(controller, hardware: hardware, addons: addonService, log: log) : nil
       stopOnSignals { signal in
         log.info("stopping on \(signal)")
         stopAddons?.stop()
@@ -181,15 +181,20 @@
     /// open page never starts a catalog fetch, a download or a build by
     /// itself. Without its page it stays off: the comma matters more than a
     /// page.
-    private func startPage(_ controller: ServerController, hardware: (any PageHardwareSource)?, log: ServerLog) -> PageServer? {
+    private func startPage(
+      _ controller: ServerController, hardware: (any PageHardwareSource)?, addons: AddonService?, log: ServerLog
+    ) -> PageServer? {
       let auth = webAuth.map { WebAuth(url: URL(fileURLWithPath: $0)) }
       var system: (any PageSystem)?
       #if os(Linux)
         system = PageHost()
       #endif
+      var state: (@Sendable () -> [String: Any])?
+      if let addons { state = { @Sendable in addons.pageState() } }
       do {
         let page = try PageServer.start(
-          port: statusPort, controller: controller, version: productVersion(), hardware: hardware, auth: auth, system: system)
+          port: statusPort, controller: controller, version: productVersion(), hardware: hardware, auth: auth, system: system,
+          addons: state)
         let signIn = auth == nil ? "read-only" : auth!.isConfigured ? "with sign-in" : "read-only until \(auth!.url.path) is written"
         log.info("web page on port \(page.port), \(signIn)")
         return page

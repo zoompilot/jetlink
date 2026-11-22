@@ -60,6 +60,8 @@
     private let logs: @Sendable () -> [String]
     private let auth: WebAuth?
     private let system: (any PageSystem)?
+    /// The add-on server's state for the Models tab, where there is one.
+    private let addons: (@Sendable () -> [String: Any])?
     private let log = ServerLog(category: "page")
     private let listener: TCPListener
     private let condition = NSCondition()
@@ -75,9 +77,11 @@
     /// why it cannot listen.
     public static func start(
       port: Int, controller: ServerController, version: String, hardware: (any PageHardwareSource)?, auth: WebAuth? = nil,
-      system: (any PageSystem)? = nil
+      system: (any PageSystem)? = nil, addons: (@Sendable () -> [String: Any])? = nil
     ) throws -> PageServer {
-      let server = try PageServer(port: port, page: StatusPage.page(), feed: PageFeed(hardware: hardware), auth: auth, system: system) {
+      let server = try PageServer(
+        port: port, page: StatusPage.page(), feed: PageFeed(hardware: hardware), auth: auth, system: system, addons: addons
+      ) {
         LogRing.shared.lines()
       }
       server.watch(controller, version: version)
@@ -85,7 +89,8 @@
     }
 
     init(
-      port: Int, page: Data, feed: PageFeed, auth: WebAuth? = nil, system: (any PageSystem)? = nil, headerTimeout: TimeInterval = 30,
+      port: Int, page: Data, feed: PageFeed, auth: WebAuth? = nil, system: (any PageSystem)? = nil,
+      addons: (@Sendable () -> [String: Any])? = nil, headerTimeout: TimeInterval = 30,
       keepalive: TimeInterval = 15, logs: @escaping @Sendable () -> [String]
     ) throws {
       guard let port = UInt16(exactly: port) else { throw HostError.invalid("\(port) is not a port") }
@@ -102,6 +107,7 @@
       self.logs = logs
       self.auth = auth
       self.system = system
+      self.addons = addons
       threads = 1
       PageThread.start("jetlink-page") { [self] in acceptLoop() }
     }
@@ -226,6 +232,9 @@
         guard mayWatch else { return PageServer.signInFirst }
         let lines = logs().suffix(PageServer.logLines)
         return PageResponse.text(200, lines.isEmpty ? "" : lines.joined(separator: "\n") + "\n", cache: "no-store")
+      case ("GET", "/api/addons"):
+        guard mayWatch else { return PageServer.signInFirst }
+        return PageResponse.json(200, addons?() ?? ["served": false])
       case ("GET", "/api/system"):
         if let refusal = refusal(file, session) { return refusal }
         return PageResponse.json(200, system?.info() ?? ["installed": false])
