@@ -397,6 +397,19 @@ class TestAddons(OpenpilotTest):
     assert provision.addon_state(sha, {'addons': {'ready': [sha]}}) == 'ready'
     assert provision.addon_state(sha, {'addons': {'failed': [sha]}}) == 'failed'
     assert provision.addon_state(sha, {'addons': {}}) == 'missing'
+    iface = self.addons[0].function.iface_class
+    elsewhere = {'addons': {'ready': [sha], 'serving': {'ff/00/01': [sha]}}}
+    assert provision.addon_state(sha, elsewhere, iface) == 'missing', 'ready, but on another interface'
+    assert provision.addon_state(sha, elsewhere) == 'ready', 'no interface asked: any'
+
+  def test_a_model_ready_on_another_interface_is_still_sent_for_its_own(self):
+    from jetlink.addons.wire import interface_triple
+    ready = [a.sha256 for a in self.addons]
+    mine = {interface_triple(a.function.iface_class): [a.sha256] for a in self.addons}
+    assert provision.addons_missing(self.addons, {'addons': {'ready': ready, 'serving': mine}}) == []
+    assert provision.addons_missing(self.addons, {'addons': {'ready': ready}}) == [], 'an older server: ready is enough'
+    other = {'addons': {'ready': ready, 'serving': {'ff/00/01': ready}}}
+    assert provision.addons_missing(self.addons, other) == list(self.addons)
 
 
 class TestFetching(OpenpilotTest):

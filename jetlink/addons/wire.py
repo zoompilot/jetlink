@@ -42,6 +42,11 @@ MAX_REQUEST = 4 << 20
 MAX_ANSWER = 4 << 20
 
 
+def interface_triple(iface_class) -> str:
+  """An interface class as the server names it: (0xFF, 0x56, 0x41) is 'ff/56/41'."""
+  return '/'.join(f'{b:02x}' for b in iface_class)
+
+
 def tag(sha256: str) -> int:
   return int(sha256[:8], 16)
 

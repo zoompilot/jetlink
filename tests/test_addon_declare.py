@@ -90,11 +90,16 @@ def test_the_panel_state_is_the_worst_of_its_models(vasm, tmp_path):
   stop = tmp_path / 'stop.onnx'
   stop.write_bytes(b'stop')
   signs = A.Addon('signs', (0xFF, 0x53, 0x4C), models=(('Sign', vasm.models[0][1], 'a' * 64), ('Stop', stop, 'b' * 64)))
-  assert signs.state(None, None) == {'jetson': None, 'preparing': ''}
-  assert signs.state({'device': 'orin'}, None)['jetson'] == 'unsupported'
-  assert signs.state({'addons': {'ready': ['a' * 64, 'b' * 64]}}, None)['jetson'] == 'ready'
-  assert signs.state({'addons': {'ready': ['a' * 64]}}, None)['jetson'] == 'missing'
-  assert signs.state({'addons': {'ready': ['a' * 64], 'failed': ['b' * 64]}}, None)['jetson'] == 'failed'
+  assert signs.state(None, None) == {'host': None, 'preparing': ''}
+  assert signs.state({'device': 'orin'}, None)['host'] == 'unsupported'
+  assert signs.state({'addons': {'ready': ['a' * 64, 'b' * 64]}}, None)['host'] == 'ready'
+  assert signs.state({'addons': {'ready': ['a' * 64]}}, None)['host'] == 'missing'
+  assert signs.state({'addons': {'ready': ['a' * 64], 'failed': ['b' * 64]}}, None)['host'] == 'failed'
+  # a server that says per interface: ready only on this add-on's own
+  both = {'addons': {'ready': ['a' * 64, 'b' * 64], 'serving': {'ff/53/4c': ['a' * 64], 'ff/56/41': ['b' * 64]}}}
+  assert signs.state(both, None)['host'] == 'missing'
+  both['addons']['serving']['ff/53/4c'].append('b' * 64)
+  assert signs.state(both, None)['host'] == 'ready'
   progress = {'msg': 'Stop: build 40%', 'code': 'addon_build', 'args': {'name': 'Stop'}}
   assert signs.state(None, progress)['preparing'] == 'Stop: build 40%'
   assert vasm.state(None, progress)['preparing'] == ''

@@ -80,12 +80,13 @@ server's hello and the fork's progress param:
 ```python
 from jetlink.comma import gadget
 state = vasm().state(gadget.read_record(gadget.SERVER), params.get('JetlinkProgress'))
-# {'jetson': 'ready' | 'missing' | 'failed' | 'unsupported' | None, 'preparing': 'V-ASM: build 40%' or ''}
+# {'host': 'ready' | 'missing' | 'failed' | 'unsupported' | None, 'preparing': 'V-ASM: build 40%' or ''}
 ```
 
-`missing` prepares the next time the car is parked, `failed` is a model this
-Jetson cannot build or run, and `unsupported` a Jetson whose JetLink is too
-old for add-ons.
+`host` is the server, whichever platform serves it. `ready` means it serves
+every model on this add-on's own interface, `missing` prepares the next time
+the car is parked, `failed` is a model this server cannot build or run, and
+`unsupported` a server whose JetLink is too old for add-ons.
 
 **Then check it**: turn the setting on while parked. The progress shows the
 upload and the build, the Jetson sleeps after, and on the next drive the
@@ -162,8 +163,13 @@ FunctionFS allocates one contiguous kernel buffer per call.
 
 ## Provisioning
 
-A server that serves add-ons says so in its hello: `addons`, `{ready, failed}`
-by sha256. A parked run sends it each add-on model in neither, once the
+A server that serves add-ons says so in its hello: `addons`, `{serving, ready,
+failed}`. `serving` maps each interface class (`"ff/56/41"`) to the sha256s
+answered there; `ready` is every one of them, for a comma too old to read
+`serving`; `failed` is by sha256, as a model's limits are its own. A model
+built once is served on each interface that asks for it, from the one engine,
+and ready on an interface only once it is asked for there.
+A parked run sends it each add-on model neither served on its interface nor failed, once the
 driving model is ready: an `ENGINE_REQ` with `addon: {interface, name, port}`, then
 the usual upload, `PROGRESS` (progress codes `addon_upload` and `addon_build`)
 and `ENGINE_RESP`, whose `ready` carries no spec. The driving engine stays
@@ -174,6 +180,9 @@ Then the run says hello again, so the owner's record (`gadget.SERVER`) lists
 them, and the Jetson sleeps as after any run. A model the server cannot build
 or run is listed `failed` until its backend changes, so it is not sent on
 every park; deleting `<cache>/addons/failed.json` on the Jetson tries again.
+That includes a model whose request (its input as u8) or answer (every output
+as f32) would not fit the wire's 4 MiB, which is refused when it is built.
+`<cache>/addons/serving.json` keeps which interface serves what, for a restart.
 `Addon.state` reads it for a panel.
 
 ## Platforms

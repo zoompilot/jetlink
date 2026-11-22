@@ -17,7 +17,11 @@ public enum AddonWire {
   public static let version: UInt8 = 1
   public static let headerBytes = 24
   public static let packet = 512
+  /// Every request and answer is under these, header included, as the comma's
+  /// jetlink/addons/wire.py MAX_REQUEST and MAX_ANSWER: a model whose input or
+  /// outputs cannot fit is refused when it is built, not on every frame.
   public static let maxRequest = 4 << 20
+  public static let maxAnswer = 4 << 20
   public static let helloSeq: UInt32 = 0xFFFF_FFFF
   static let requestMagic = Array("JAQ1".utf8)
   static let answerMagic = Array("JAR1".utf8)

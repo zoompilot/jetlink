@@ -65,6 +65,13 @@ public final class AddonService: @unchecked Sendable {
   /// Add-on artifacts kept for this backend.
   static let keepArtifacts = 8
 
+  /// A model served on one interface: the artifact is the sha256's, shared by
+  /// every interface that serves it, but each interface is ready on its own.
+  struct Key: Hashable {
+    let kind: [UInt8]
+    let sha256: String
+  }
+
   struct Job {
     let kind: [UInt8]
     let port: UInt16?
@@ -82,10 +89,13 @@ public final class AddonService: @unchecked Sendable {
   private var stopped = false
   private var open: [AddonPipes] = []
   private var served: [[UInt8]: Served] = [:]
-  /// Queued or building, by sha256, with the session waiting on each, if any.
-  private var pending: [String: Session?] = [:]
+  /// Queued or building, by interface and sha256, with the session waiting on each, if any.
+  private var pending: [Key: Session?] = [:]
   /// What this backend could not build or run, by sha256: kept, so a comma is not asked for it on every park.
   private var failed: [String: String] = [:]
+  /// Interfaces and models serving.json holds or is about to.
+  private var remembered = Set<Key>()
+  private let servingLock = NSLock()
   private let jobs = NSCondition()
   private var queue: [Job] = []
 
@@ -105,6 +115,9 @@ public final class AddonService: @unchecked Sendable {
 
   private var store: EngineCache { AddonModel.store(root: cacheRoot, backend: backend) }
   private var failedURL: URL { store.layout.root.appending(path: "failed.json") }
+  /// What each interface serves, by backend tag: an artifact's sidecar names one
+  /// interface only, and a model two add-ons share is served on both.
+  private var servingURL: URL { store.layout.root.appending(path: "serving.json") }
 
   /// Takes add-on requests from now on: before the server starts, so its first hello says add-ons are served.
   public func attach() {
@@ -118,6 +131,7 @@ public final class AddonService: @unchecked Sendable {
     if host.addons !== self { attach() }
     Thread.detachNewThread { [self] in builder() }
     for (sha256, kind, port, name) in stored() {
+      _ = lock.withLock { remembered.insert(Key(kind: kind, sha256: sha256)) }
       enqueue(Job(kind: kind, port: port, name: name, file: (try? host.cache.modelPath(sha256)) ?? cacheRoot, sha256: sha256), session: nil)
     }
   }
@@ -136,10 +150,14 @@ public final class AddonService: @unchecked Sendable {
 
   // MARK: provisioning
 
-  /// For the hello: the models ready here, and those this backend cannot build or run.
+  /// For the hello: the models ready on each interface (`serving`, by class
+  /// triple), all of them (`ready`, for a comma too old to read `serving`),
+  /// and those this backend cannot build or run.
   func helloState() -> [String: Any] {
     lock.withLock {
-      ["ready": served.values.flatMap { $0.models.values.map(\.sha256) }.sorted(), "failed": failed.keys.sorted()]
+      var serving: [String: [String]] = [:]
+      for (kind, addon) in served { serving[AddonWire.triple(kind)] = Set(addon.models.values.map(\.sha256)).sorted() }
+      return ["ready": Set(serving.values.joined()).sorted(), "serving": serving, "failed": failed.keys.sorted()]
     }
   }
 
@@ -150,15 +168,21 @@ public final class AddonService: @unchecked Sendable {
     func state(_ state: String, _ detail: String = "") -> [String: Any] {
       ["state": state, "detail": detail, "sha256": sha256, "chunk": ModelConstants.chunk, "addon": true]
     }
-    let (ready, why, queued) = lock.withLock { () -> (Bool, String?, Bool) in
-      let queued = pending[sha256] != nil
-      if queued, let session { pending[sha256] = session }
+    let key = Key(kind: kind, sha256: sha256)
+    let (ready, why, queued, elsewhere) = lock.withLock { () -> (Bool, String?, Bool, Bool) in
+      let queued = pending[key] != nil
+      if queued, let session { pending[key] = session }
       if let port { served[kind]?.interface.learn(port: port) }
-      return (served.values.contains { $0.has(sha256) }, failed[sha256], queued)
+      return (served[kind]?.has(sha256) == true, failed[sha256], queued, served.values.contains { $0.has(sha256) })
     }
     if ready { return state("ready") }
     if let why { return state("failed", why) }
     if queued { return state("building", "queued behind another build") }
+    // loaded for another interface: served here too, without its bytes again
+    if elsewhere {
+      enqueue(Job(kind: kind, port: port, name: name ?? String(sha256.prefix(16)), file: cacheRoot, sha256: sha256), session: session)
+      return state("building", "serving it on this interface too")
+    }
     guard let file = try? host.cache.modelPath(sha256) else { return state("failed", "not a model identity") }
     let have = Files.size(of: file)
     guard have == nbytes else { return state("need_upload", "have \(have) of the model") }
@@ -168,12 +192,13 @@ public final class AddonService: @unchecked Sendable {
   }
 
   private func enqueue(_ job: Job, session: Session?) {
+    let key = Key(kind: job.kind, sha256: job.sha256)
     let queued = lock.withLock { () -> Bool in
-      if let waiting = pending[job.sha256] {
-        pending[job.sha256] = .some(session ?? waiting)
+      if let waiting = pending[key] {
+        pending[key] = .some(session ?? waiting)
         return true
       }
-      pending[job.sha256] = .some(session)
+      pending[key] = .some(session)
       return false
     }
     if queued { return }
@@ -183,8 +208,8 @@ public final class AddonService: @unchecked Sendable {
     }
   }
 
-  private func waiting(_ sha256: String) -> Session? {
-    lock.withLock { pending[sha256] ?? nil }
+  private func waiting(_ key: Key) -> Session? {
+    lock.withLock { pending[key] ?? nil }
   }
 
   private func builder() {
@@ -195,9 +220,17 @@ public final class AddonService: @unchecked Sendable {
       }
       guard let job = next else { return }
       let sha256 = job.sha256
+      let key = Key(kind: job.kind, sha256: sha256)
       do {
-        if lock.withLock({ served.values.contains { $0.has(sha256) } }) {
-          finish(sha256, ["state": "ready", "detail": ""])
+        if lock.withLock({ served[job.kind]?.has(sha256) == true }) {
+          finish(key, ["state": "ready", "detail": ""])
+          continue
+        }
+        // the one engine serves every interface that asks for it: passes take the host's lock
+        if let loaded = lock.withLock({ served.values.lazy.compactMap { $0.model(sha256) }.first }) {
+          serve(job.kind, port: job.port).add(loaded)
+          remember(key, name: job.name, port: job.port)
+          finish(key, ["state": "ready", "detail": ""])
           continue
         }
         let entry = try store.entry(sha256)
@@ -208,32 +241,69 @@ public final class AddonService: @unchecked Sendable {
         let model = try AddonModel.prepare(
           job.file, backend: backend, root: cacheRoot, log: log, host: host, sha256: sha256, name: job.name, interface: job.kind,
           port: job.port
-        ) { [self] stage, frac, message in waiting(sha256)?.progress(stage, frac, message) }
+        ) { [self] stage, frac, message in waiting(key)?.progress(stage, frac, message) }
         serve(job.kind, port: job.port).add(model)
+        remember(key, name: job.name, port: job.port)
         store.prune(keep: Self.keepArtifacts, protect: entry.path)
-        finish(sha256, ["state": "ready", "detail": ""])
+        finish(key, ["state": "ready", "detail": ""])
       } catch {
         log.error("\(job.name): cannot serve it: \(error)")
         lock.withLock { failed[sha256] = "\(error)" }
         saveFailed()
-        finish(sha256, ["state": "failed", "detail": "\(error)"])
+        finish(key, ["state": "failed", "detail": "\(error)"])
       }
     }
   }
 
-  private func finish(_ sha256: String, _ state: [String: Any]) {
-    let session = lock.withLock { pending.removeValue(forKey: sha256) ?? nil }
-    session?.addonUpdate(state.merging(["sha256": sha256, "chunk": ModelConstants.chunk, "addon": true]) { a, _ in a })
+  private func finish(_ key: Key, _ state: [String: Any]) {
+    let session = lock.withLock { pending.removeValue(forKey: key) ?? nil }
+    session?.addonUpdate(state.merging(["sha256": key.sha256, "chunk": ModelConstants.chunk, "addon": true]) { a, _ in a })
   }
 
-  /// The artifacts built here before, with the interface and name each was built for.
+  /// The artifacts built here before, on every interface each was served on:
+  /// serving.json's, then the interface an older server wrote in the sidecar.
   private func stored() -> [(String, [UInt8], UInt16?, String)] {
-    store.inventory().compactMap { sha256 in
-      guard let entry = try? store.entry(sha256) else { return nil }
+    let built = Set(store.inventory())
+    var out: [(String, [UInt8], UInt16?, String)] = []
+    var seen = Set<Key>()
+    for (triple, models) in loadServing() {
+      guard let kind = AddonWire.interfaceClass(triple) else { continue }
+      for (sha256, meta) in models where built.contains(sha256) && seen.insert(Key(kind: kind, sha256: sha256)).inserted {
+        let port = (meta["port"] as? NSNumber).flatMap { UInt16(exactly: $0.intValue) }
+        out.append((sha256, kind, port, meta["name"] as? String ?? String(sha256.prefix(16))))
+      }
+    }
+    for sha256 in built.sorted() {
+      guard let entry = try? store.entry(sha256) else { continue }
       let meta = Artifact.sidecar(entry.path)
-      guard let kind = (meta["interface"] as? String).flatMap(AddonWire.interfaceClass) else { return nil }
+      guard let kind = (meta["interface"] as? String).flatMap(AddonWire.interfaceClass),
+        seen.insert(Key(kind: kind, sha256: sha256)).inserted
+      else { continue }
       let port = (meta["port"] as? NSNumber).flatMap { UInt16(exactly: $0.intValue) }
-      return (sha256, kind, port, meta["addon"] as? String ?? String(sha256.prefix(16)))
+      out.append((sha256, kind, port, meta["addon"] as? String ?? String(sha256.prefix(16))))
+    }
+    return out
+  }
+
+  /// This backend's serving.json: interface triple, then sha256, then its name and port.
+  private func loadServing() -> [String: [String: [String: Any]]] {
+    let all = (try? JSONSerialization.jsonObject(with: Data(contentsOf: servingURL))) as? [String: Any]
+    return all?[backend.tag()] as? [String: [String: [String: Any]]] ?? [:]
+  }
+
+  /// Notes that `key` is served, so a restart serves it on that interface again.
+  private func remember(_ key: Key, name: String, port: UInt16?) {
+    let new = lock.withLock { remembered.insert(key).inserted }
+    guard new else { return }
+    servingLock.withLock {
+      var all = (try? JSONSerialization.jsonObject(with: Data(contentsOf: servingURL))) as? [String: Any] ?? [:]
+      var mine = all[backend.tag()] as? [String: [String: [String: Any]]] ?? [:]
+      var meta: [String: Any] = ["name": name]
+      if let port { meta["port"] = Int(port) }
+      mine[AddonWire.triple(key.kind), default: [:]][key.sha256] = meta
+      all[backend.tag()] = mine
+      try? FileManager.default.createDirectory(at: store.layout.root, withIntermediateDirectories: true)
+      if let data = try? JSONSerialization.data(withJSONObject: all, options: [.sortedKeys]) { try? data.write(to: servingURL, options: .atomic) }
     }
   }
 
@@ -295,7 +365,11 @@ public final class AddonService: @unchecked Sendable {
     }
 
     func has(_ sha256: String) -> Bool {
-      lock.withLock { ready.values.contains { $0.sha256 == sha256 } }
+      model(sha256) != nil
+    }
+
+    func model(_ sha256: String) -> AddonModel? {
+      lock.withLock { ready.values.first { $0.sha256 == sha256 } }
     }
   }
 
@@ -353,8 +427,10 @@ public final class AddonService: @unchecked Sendable {
     while !isStopped {
       let first = try header.withUnsafeMutableBytes { try pipes.pipes.read(into: $0.baseAddress!, count: $0.count, timeout: Self.readTimeout) }
       if first == 0 || Date().timeIntervalSince(lastHello) >= Self.helloEvery {
+        // a hello the comma is not reading is skipped, but one begun is finished or the link ends: the stream has no other framing
         let hello = AddonWire.hello(tags: Array(addon.models.keys), yielding: gate.yielding)
-        _ = try hello.withUnsafeBytes { try pipes.pipes.write(from: $0.baseAddress!, count: $0.count, timeout: Self.helloTimeout) }
+        let sent = try hello.withUnsafeBytes { try pipes.pipes.write(from: $0.baseAddress!, count: $0.count, timeout: Self.helloTimeout) }
+        if sent > 0 && sent < hello.count { try writeFully(pipes, Array(hello[sent...])) }
         lastHello = Date()
         report(addon)
         if first == 0 { continue }
@@ -373,10 +449,12 @@ public final class AddonService: @unchecked Sendable {
     guard let model = addon.models[request.tag], model.shape == request.shape else {
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .unknownModel)
     }
-    guard gate.gap(cost: model.costNs, wait: max(0, Self.answerBudget - Double(model.costNs) / 1e9)) else {
+    // admitted, the gap is this pass's until it ends: no other add-on spends it too
+    guard gate.admit(cost: model.costNs, wait: max(0, Self.answerBudget - Double(model.costNs) / 1e9)) else {
       addon.yields += 1
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .yield)
     }
+    defer { gate.passEnded() }
     host.lock.lock()
     defer { host.lock.unlock() }
     do {

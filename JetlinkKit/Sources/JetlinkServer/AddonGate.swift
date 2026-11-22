@@ -9,6 +9,9 @@ import Foundation
 /// one started. With no frame for `idleAfter`, nothing is driving and a pass
 /// may run at once. The pass holds the host's lock as a frame does, so the two
 /// never share the GPU; a frame that comes early waits at most one pass.
+/// Admission and the engine are one decision: a pass admitted holds the gap
+/// until `passEnded()`, so a second add-on never runs on a gap the first
+/// already spent, and decides again from the clock once the first is done.
 public final class AddonGate: @unchecked Sendable {
   static let margin: UInt64 = 3_000_000
   static let idleAfter: UInt64 = 1_000_000_000
@@ -21,6 +24,8 @@ public final class AddonGate: @unchecked Sendable {
   private var lastStart: UInt64 = 0
   private var period: UInt64 = 50_000_000
   private var inFrame = false
+  /// An add-on's pass was admitted and has not ended.
+  private var passing = false
   private var misses: [UInt64] = []
 
   public init(clock: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
@@ -47,20 +52,36 @@ public final class AddonGate: @unchecked Sendable {
     }
   }
 
-  /// Is there a gap of `cost` before the next frame? Waits up to `wait` for
-  /// one, the end of the frame in flight most likely.
-  public func gap(cost: UInt64, wait: TimeInterval) -> Bool {
+  /// Is there a gap of `cost` before the next frame, with no other add-on's
+  /// pass in it? Waits up to `wait` for one: the end of the frame or the pass
+  /// in flight, most likely. True admits the pass, which holds the gap until
+  /// the caller's `passEnded()`.
+  public func admit(cost: UInt64, wait: TimeInterval) -> Bool {
     condition.withLock {
       let deadline = Date().addingTimeInterval(wait)
       while true {
-        if fits(cost) { return true }
+        if !passing && fits(cost) {
+          passing = true
+          return true
+        }
         if Date() >= deadline || !condition.wait(until: deadline) {
-          if fits(cost) { return true }
+          if !passing && fits(cost) {
+            passing = true
+            return true
+          }
           let now = clock()
           misses = misses.filter { now - $0 < Self.yieldFor } + [now]
           return false
         }
       }
+    }
+  }
+
+  /// The admitted pass is over, run or failed: the next add-on decides from now.
+  public func passEnded() {
+    condition.withLock {
+      passing = false
+      condition.broadcast()
     }
   }
 

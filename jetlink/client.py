@@ -348,7 +348,8 @@ class JetlinkClient:
     the cable is a network. Only for a server whose hello lists `addons`:
     an older one would take it for a driving model. LinkError when the server
     cannot build or run it."""
-    addon = {'interface': '/'.join(f'{b:02x}' for b in interface), 'name': name}
+    from jetlink.addons.wire import interface_triple
+    addon = {'interface': interface_triple(interface), 'name': name}
     if port is not None:
       addon['port'] = port
     try:

@@ -378,27 +378,40 @@ def addon_models(parts) -> tuple:
     return ()
 
 
+def _serves(addons: dict, sha256: str, iface_class) -> bool:
+  """Does the server serve sha256 on iface_class's interface? Its hello's
+  `serving` says per interface: a model built for one add-on is not served on
+  another's until it is asked for there. A server too old to say has only
+  `ready`, and served each model on one interface."""
+  serving = addons.get('serving')
+  if isinstance(serving, dict) and iface_class is not None:
+    from jetlink.addons.wire import interface_triple
+    return sha256 in (serving.get(interface_triple(iface_class)) or ())
+  return sha256 in (addons.get('ready') or ())
+
+
 def addons_missing(models, server: dict | None) -> list:
-  """The add-on models a server that serves add-ons has neither ready nor
-  failed. None for one whose hello lists no `addons`: an older server would
-  take an add-on for its driving model."""
+  """The add-on models a server that serves add-ons has neither ready on
+  their own interface nor failed. None for one whose hello lists no
+  `addons`: an older server would take an add-on for its driving model."""
   addons = (server or {}).get('addons')
   if not isinstance(addons, dict):
     return []
-  done = set(addons.get('ready') or ()) | set(addons.get('failed') or ())
-  return [m for m in models if m.sha256 not in done]
+  failed = set(addons.get('failed') or ())
+  return [m for m in models if m.sha256 not in failed and not _serves(addons, m.sha256, m.function.iface_class)]
 
 
-def addon_state(sha256: str, server: dict | None) -> str | None:
+def addon_state(sha256: str, server: dict | None, iface_class=None) -> str | None:
   """An add-on model on the server the comma last spoke to, as the owner
-  keeps its hello: ready, failed, missing, or unsupported for a server too old
-  to serve add-ons. None before any hello."""
+  keeps its hello: ready (on iface_class's interface, given one), failed,
+  missing, or unsupported for a server too old to serve add-ons. None before
+  any hello."""
   if not server:
     return None
   addons = server.get('addons')
   if not isinstance(addons, dict):
     return 'unsupported'
-  if sha256 in (addons.get('ready') or ()):
+  if _serves(addons, sha256, iface_class):
     return 'ready'
   if sha256 in (addons.get('failed') or ()):
     return 'failed'

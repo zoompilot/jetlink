@@ -17,17 +17,27 @@ private func hex(_ s: String) -> [UInt8] {
 }
 
 /// A byte stream each way: what the comma wrote, then a closed link.
+/// `idleFirst`: the first read finds nothing, as a second with no request does.
+/// `chunk`: at most that many bytes a write, as a socket may take.
 final class FakeAddonPipes: BulkPipes, @unchecked Sendable {
   private let lock = NSLock()
   private var inbound: [UInt8]
+  private var idle: Bool
+  private let chunk: Int
   private(set) var written: [UInt8] = []
 
-  init(_ inbound: [UInt8]) {
+  init(_ inbound: [UInt8], idleFirst: Bool = false, chunk: Int = .max) {
     self.inbound = inbound
+    idle = idleFirst
+    self.chunk = chunk
   }
 
   func read(into buffer: UnsafeMutableRawPointer, count: Int, timeout: TimeInterval) throws -> Int {
     try lock.withLock {
+      if idle {
+        idle = false
+        return 0
+      }
       guard !inbound.isEmpty else { throw LinkError.closed("unplugged") }
       let n = min(count, inbound.count)
       inbound.withUnsafeBytes { buffer.copyMemory(from: $0.baseAddress!, byteCount: n) }
@@ -37,8 +47,9 @@ final class FakeAddonPipes: BulkPipes, @unchecked Sendable {
   }
 
   func write(from buffer: UnsafeRawPointer, count: Int, timeout: TimeInterval) throws -> Int {
-    lock.withLock { written += UnsafeRawBufferPointer(start: buffer, count: count) }
-    return count
+    let n = min(count, chunk)
+    lock.withLock { written += UnsafeRawBufferPointer(start: buffer, count: n) }
+    return n
   }
 
   func abort() {}
@@ -49,6 +60,13 @@ final class FakeAddonPipes: BulkPipes, @unchecked Sendable {
 struct AbsentAddon: AddonSource {
   func present() -> Bool { false }
   func open() throws -> AddonPipes { throw LinkError.closed("absent") }
+}
+
+final class Flag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value = false
+  func set(_ new: Bool) { lock.withLock { value = new } }
+  func get() -> Bool { lock.withLock { value } }
 }
 
 final class Ticks: @unchecked Sendable {
@@ -96,25 +114,71 @@ struct AddonTests {
   func gate() {
     let ticks = Ticks()
     let gate = AddonGate(clock: { ticks.now })
-    #expect(gate.gap(cost: 5_000_000, wait: 0))
+    #expect(gate.admit(cost: 5_000_000, wait: 0))
+    gate.passEnded()
     for _ in 0..<10 {
       gate.frameStarted()
       ticks.advance(ms: 50)
     }
     gate.frameStarted()
-    #expect(!gate.gap(cost: 5_000_000, wait: 0), "in a frame")
+    #expect(!gate.admit(cost: 5_000_000, wait: 0), "in a frame")
     #expect(!gate.yielding, "one miss is not yielding")
-    #expect(!gate.gap(cost: 5_000_000, wait: 0) && !gate.gap(cost: 5_000_000, wait: 0))
+    #expect(!gate.admit(cost: 5_000_000, wait: 0) && !gate.admit(cost: 5_000_000, wait: 0))
     #expect(gate.yielding)
     ticks.advance(ms: 10)
     gate.frameEnded()
-    #expect(gate.gap(cost: 5_000_000, wait: 0), "the gap after it")
-    #expect(!gate.gap(cost: 40_000_000, wait: 0), "too long for the gap")
+    #expect(gate.admit(cost: 5_000_000, wait: 0), "the gap after it")
+    gate.passEnded()
+    #expect(!gate.admit(cost: 40_000_000, wait: 0), "too long for the gap")
     ticks.advance(ms: 40)
-    #expect(!gate.gap(cost: 5_000_000, wait: 0), "the next frame is due")
+    #expect(!gate.admit(cost: 5_000_000, wait: 0), "the next frame is due")
     ticks.advance(ms: 2_000)
-    #expect(gate.gap(cost: 5_000_000, wait: 0), "nothing driving")
+    #expect(gate.admit(cost: 5_000_000, wait: 0), "nothing driving")
     #expect(!gate.yielding)
+  }
+
+  @Test("Two add-ons never share a gap: the second decides again once the first is done")
+  func gateTwoAddons() {
+    let ticks = Ticks()
+    let gate = AddonGate(clock: { ticks.now })
+    for _ in 0..<10 {
+      gate.frameStarted()
+      ticks.advance(ms: 50)
+    }
+    gate.frameStarted()
+    ticks.advance(ms: 10)
+    gate.frameEnded()
+    // 40 ms to the next frame, room for either 20 ms pass but not both
+    #expect(gate.admit(cost: 20_000_000, wait: 0), "the first add-on")
+    #expect(!gate.admit(cost: 20_000_000, wait: 0), "the second, while the first holds the gap")
+    let second = DispatchSemaphore(value: 0)
+    let admitted = Flag()
+    DispatchQueue.global().async {
+      admitted.set(gate.admit(cost: 20_000_000, wait: 1))
+      second.signal()
+    }
+    Thread.sleep(forTimeInterval: 0.05)
+    // the first pass took 25 ms: the next frame is now 15 ms away
+    ticks.advance(ms: 25)
+    gate.passEnded()
+    #expect(second.wait(timeout: .now() + 5) == .success)
+    #expect(!admitted.get(), "a frame is due: the second yields rather than run on the spent gap")
+    ticks.advance(ms: 2_000)
+    #expect(gate.admit(cost: 20_000_000, wait: 0), "nothing driving")
+    gate.passEnded()
+  }
+
+  @Test("A model whose request or answer cannot cross the wire is refused when built, saying why")
+  func wireLimits() throws {
+    try AddonModel.fitsWire("ok", input: 3 * 640 * 640, outputs: 1000)
+    #expect(AddonWire.maxAnswer == 4 << 20 && AddonWire.maxRequest == 4 << 20, "jetlink/addons/wire.py's MAX_ANSWER and MAX_REQUEST")
+    try AddonModel.fitsWire("edge", input: 1, outputs: (AddonWire.maxAnswer - AddonWire.headerBytes) / 4)
+    #expect {
+      try AddonModel.fitsWire("dense", input: 1, outputs: (AddonWire.maxAnswer - AddonWire.headerBytes) / 4 + 1)
+    } throws: { "\($0)".contains("answer") }
+    #expect {
+      try AddonModel.fitsWire("huge", input: AddonWire.maxRequest, outputs: 1)
+    } throws: { "\($0)".contains("request") }
   }
 
   @Test("At 20 Hz with 15 ms frames, a request at any point in the period gets a gap within the comma's budget")
@@ -137,7 +201,10 @@ struct AddonTests {
       }
       Thread.sleep(forTimeInterval: 0.100 + Double(offset) / 1000)
       let started = Date()
-      if gate.gap(cost: cost, wait: wait), Date().timeIntervalSince(started) + Double(cost) / 1e9 < 0.050 { served += 1 }
+      if gate.admit(cost: cost, wait: wait) {
+        gate.passEnded()
+        if Date().timeIntervalSince(started) + Double(cost) / 1e9 < 0.050 { served += 1 }
+      }
       done.wait()
     }
     // real sleeps: a loaded runner misses a few; a gate that never waits serves about half
@@ -196,6 +263,39 @@ struct AddonTests {
     let unknown = Array(pipes.written.dropFirst(24 + 51 * 4))
     #expect(unknown.count == 24 && unknown[4] == 2 && unknown[12] == UInt8(AddonWire.Status.unknownModel.rawValue))
     #expect(served.passes == 1)
+  }
+
+  @Test("A hello the link takes only part of is finished before the next answer, so the stream stays framed")
+  func shortHello() throws {
+    let cache = try TemporaryDirectory()
+    let backend = cpuBackend()
+    let host = EngineHost(cache: try ServerCache(root: cache.url, backend: backend), hooks: ServerHooks())
+    defer { host.close() }
+    let model = try AddonModel.prepare(Self.addon, backend: backend, root: cache.url, log: ServerLog(category: "test"), host: host)
+    defer { model.engine.close() }
+    let service = AddonService(host: host, cacheRoot: cache.url) { _ in fatalError("unused") }
+    let served = AddonService.Served(kind: [0xFF, 0x54, 0x59], name: "tiny", models: [model.tag: model])
+    var request = Array("JAQ1".utf8)
+    for v: UInt32 in [1, model.tag] { withUnsafeBytes(of: v.littleEndian) { request += $0 } }
+    for v: UInt16 in [3, 4, 4] { withUnsafeBytes(of: v.littleEndian) { request += $0 } }
+    request += [0, 1]
+    withUnsafeBytes(of: UInt32(48).littleEndian) { request += $0 }
+    request += [UInt8](repeating: 255, count: 48)
+    let pipes = FakeAddonPipes(request, idleFirst: true, chunk: 5)
+    #expect(throws: LinkError.self) { try service.serve(served, pipes: AddonPipes(pipes)) }
+    // a whole hello, then a whole answer, read as the comma reads a stream: by each header's count
+    var stream = pipes.written[...]
+    var messages: [(seq: UInt32, count: Int)] = []
+    while stream.count >= 24 {
+      let header = Array(stream.prefix(24))
+      #expect(header.prefix(4) == ArraySlice("JAR1".utf8))
+      let seq = header[4..<8].withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }
+      let count = Int(header[20..<24].withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
+      messages.append((seq, count))
+      stream = stream.dropFirst(AddonWire.padded(24 + count * 4))
+    }
+    #expect(stream.isEmpty)
+    #expect(messages.map(\.seq) == [AddonWire.helloSeq, 1] && messages.map(\.count) == [1, 51])
   }
 
   @Test("Over a phone's cable the server dials the comma at the add-on's port and answers there")
@@ -298,7 +398,12 @@ struct AddonTests {
       #expect(server.host.loadedSHA() == golden.sha256)
       let again = try client.hello()
       #expect((again["addons"] as? [String: Any])?["ready"] as? [String] == [Self.addonSHA])
+      #expect((again["addons"] as? [String: Any])?["serving"] as? [String: [String]] == ["ff/54/59": [Self.addonSHA]])
       #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA)["state"] as? String == "ready")
+      // the same model for another add-on: ready there only once that interface serves it, from the same engine
+      #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA, interface: "ff/56/41")["state"] as? String == "ready")
+      let both = ["ff/54/59": [Self.addonSHA], "ff/56/41": [Self.addonSHA]]
+      #expect((try client.hello()["addons"] as? [String: Any])?["serving"] as? [String: [String]] == both)
       // the driving model's frames still find their engine: the add-on never became the session's request
       _ = try client.ensureEngine(model: golden.model, sha256: golden.sha256)
       service.stop()
@@ -306,7 +411,8 @@ struct AddonTests {
       let restarted = AddonService(host: server.host, cacheRoot: root) { _ in AbsentAddon() }
       restarted.start()
       defer { restarted.stop() }
-      #expect(eventually { restarted.helloState()["ready"] as? [String] == [Self.addonSHA] })
+      #expect(eventually { restarted.helloState()["serving"] as? [String: [String]] == both })
+      #expect(restarted.helloState()["ready"] as? [String] == [Self.addonSHA])
     }
   }
 

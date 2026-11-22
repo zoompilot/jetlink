@@ -17,7 +17,9 @@ final class AddonModel: @unchecked Sendable {
   let shape: [Int]
   let outputs: [TensorSpec]
   let outputCount: Int
-  /// A pass's recent time, for fitting it between driving frames.
+  /// How long a pass holds the engine, staging its input and copying its
+  /// outputs included, for fitting it between driving frames: measured once
+  /// when it is loaded, then up at once with a slower pass, down slowly.
   private(set) var costNs: UInt64 = 5_000_000
 
   init(file: String, sha256: String, engine: any Engine) throws {
@@ -31,6 +33,8 @@ final class AddonModel: @unchecked Sendable {
     guard !outputs.isEmpty, outputs.allSatisfy({ [.float, .float16].contains($0.type) }) else {
       throw HostError.failed("\(file): an add-on model's outputs are float, not \(outputs.map(\.type.name))")
     }
+    let outputCount = outputs.reduce(0) { $0 + $1.count }
+    try Self.fitsWire(file, input: input.shape.dropFirst().reduce(1, *), outputs: outputCount)
     self.file = file
     self.sha256 = sha256
     self.tag = tag
@@ -38,12 +42,24 @@ final class AddonModel: @unchecked Sendable {
     self.input = input
     shape = Array(input.shape.dropFirst())
     self.outputs = outputs
-    outputCount = outputs.reduce(0) { $0 + $1.count }
+    self.outputCount = outputCount
+  }
+
+  /// Throws unless a request (its u8 image, the smallest the comma sends) and
+  /// an answer (every output as f32) fit the wire's limits, saying which does not.
+  static func fitsWire(_ file: String, input elements: Int, outputs floats: Int) throws {
+    if AddonWire.headerBytes + elements >= AddonWire.maxRequest {
+      throw HostError.failed("\(file): its input is \(elements) bytes even as u8, over the add-on wire's \(AddonWire.maxRequest >> 20) MiB request")
+    }
+    if AddonWire.headerBytes + 4 * floats > AddonWire.maxAnswer {
+      throw HostError.failed("\(file): its outputs are \(floats) floats, \(4 * floats) bytes, over the add-on wire's \(AddonWire.maxAnswer >> 20) MiB answer")
+    }
   }
 
   /// Stages `image` (the request's body, its pad byte not counted), runs,
   /// and returns every output. The caller holds the GPU.
   func run(_ request: AddonWire.Request, image: UnsafeRawBufferPointer) throws -> [Float] {
+    let started = DispatchTime.now().uptimeNanoseconds
     guard let target = engine.hostInput(input.name) else { throw HostError.failed("\(file): no host input") }
     let count = input.count
     switch (request.encoding, input.type) {
@@ -63,7 +79,6 @@ final class AddonModel: @unchecked Sendable {
     default:
       throw HostError.failed("\(file) takes \(input.type.name), not \(request.encoding)")
     }
-    let started = DispatchTime.now().uptimeNanoseconds
     try engine.run()
     var floats: [Float] = []
     floats.reserveCapacity(outputCount)
@@ -76,8 +91,19 @@ final class AddonModel: @unchecked Sendable {
       }
     }
     let took = DispatchTime.now().uptimeNanoseconds - started
-    costNs = (costNs * 7 + took) / 8
+    costNs = took > costNs ? took : (costNs * 7 + took) / 8
     return floats
+  }
+
+  /// One pass of a blank u8 image, the dearer staging, to measure what a pass
+  /// costs before the first request. The caller holds the GPU.
+  func calibrate() throws {
+    let count = shape.reduce(1, *)
+    let blank = [UInt8](repeating: 0, count: count)
+    let request = AddonWire.Request(seq: 0, tag: tag, shape: shape, encoding: .u8, nbytes: count)
+    let started = DispatchTime.now().uptimeNanoseconds
+    _ = try blank.withUnsafeBytes { try run(request, image: $0) }
+    costNs = DispatchTime.now().uptimeNanoseconds - started
   }
 
   /// The add-on artifacts for `backend`: `root`/addons, a cache of its own, so
@@ -128,8 +154,14 @@ final class AddonModel: @unchecked Sendable {
     do {
       let model = try AddonModel(file: name, sha256: sha256, engine: engine)
       progress?("warm", 0, "warming up")
-      let warmed = try underLock(host) { try engine.warm() }
-      log.info("\(warmed); \(name) takes \(model.shape), gives \(model.outputs.map { "\($0.name)\($0.shape)" })")
+      let warmed = try underLock(host) { () throws -> String in
+        let warmed = try engine.warm()
+        try model.calibrate()
+        return "\(warmed)"
+      }
+      log.info(
+        "\(warmed); \(name) takes \(model.shape), gives \(model.outputs.map { "\($0.name)\($0.shape)" }), a pass \(String(format: "%.1f", Double(model.costNs) / 1e6)) ms"
+      )
       return model
     } catch {
       engine.close()

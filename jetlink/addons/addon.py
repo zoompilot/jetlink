@@ -132,15 +132,15 @@ class Addon:
     return report if isinstance(report, dict) else None
 
   def state(self, server: dict | None, progress: dict | None) -> dict:
-    """Its models on the Jetson the comma last spoke to, as the owner keeps its
-    hello (jetlink.comma.gadget.SERVER): `jetson` the worst of ready, missing,
-    failed and unsupported (None before any hello), and `preparing`, the
-    provisioning run's progress text (the fork's progress param) while it
-    sends or builds one of them."""
+    """Its models on the server the comma last spoke to (a Jetson, a Mac, a
+    phone), as the owner keeps its hello (jetlink.comma.gadget.SERVER): `host`
+    the worst of ready on its interface, missing, failed and unsupported (None
+    before any hello), and `preparing`, the provisioning run's progress text
+    (the fork's progress param) while it sends or builds one of them."""
     from jetlink.openpilot.provision import addon_state
-    states = {addon_state(sha256, server) for _, _, sha256 in self.models}
-    jetson = next((s for s in WORST_FIRST if s in states), 'ready') if states else None
+    states = {addon_state(sha256, server, self.iface_class) for _, _, sha256 in self.models}
+    host = next((s for s in WORST_FIRST if s in states), 'ready') if states else None
     progress = progress if isinstance(progress, dict) else {}
     args = progress.get('args') if isinstance(progress.get('args'), dict) else {}
     mine = progress.get('code') in PREPARING_CODES and args.get('name') in {name for name, _, _ in self.models}
-    return {'jetson': jetson, 'preparing': str(progress.get('msg', '')) if mine else ''}
+    return {'host': host, 'preparing': str(progress.get('msg', '')) if mine else ''}
