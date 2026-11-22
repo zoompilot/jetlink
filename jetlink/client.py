@@ -98,6 +98,10 @@ class JetlinkClient:
     self.seq = 0
     self.spec: ModelSpec | None = None
     self.progress_cb: ProgressFn | None = None
+    # the model _provide waits on: an add-on's progress (marked `addon`) for
+    # another is not ours. The server sends it to whoever holds the session,
+    # which a parked run hands to modeld when a drive starts mid-build
+    self._providing: str | None = None
     self._engine_state: dict | None = None
     self._should_stop: StopFn = lambda: False
     self.dead = False
@@ -178,6 +182,8 @@ class JetlinkClient:
     """Handle the messages the server may send at any time."""
     if msg.msg_type == P.Msg.PROGRESS:
       p = json.loads(bytes(msg.payload))
+      if p.get('addon') and p.get('sha256') != self._providing:
+        return
       if self.progress_cb:
         self.progress_cb(p.get('stage', ''), float(p.get('frac', 0.0)), p.get('msg', ''))
     elif msg.msg_type == P.Msg.ENGINE_RESP:
@@ -364,6 +370,7 @@ class JetlinkClient:
     self._should_stop = should_stop or (lambda: False)
     self._engine_state = None
     sha256 = request['sha256']
+    self._providing = sha256
 
     seq = self._next_seq()
     self.t.send_json(P.Msg.ENGINE_REQ, seq, request)

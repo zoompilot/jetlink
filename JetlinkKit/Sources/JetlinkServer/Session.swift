@@ -89,8 +89,10 @@ final class Session: @unchecked Sendable {
 
   /// Sent from the job thread. The comma may have given up and fallen back;
   /// the build continues either way.
-  func progress(_ stage: String, _ frac: Double, _ msg: String) {
-    try? sendJSON(.progress, seq: 0, ["stage": stage, "frac": pythonRound(frac, 4), "msg": msg])
+  /// `extra` marks an add-on's progress (`addon`, `sha256`): the session may
+  /// have been handed to a client that is not waiting on it, modeld most often.
+  func progress(_ stage: String, _ frac: Double, _ msg: String, extra: [String: Any] = [:]) {
+    try? sendJSON(.progress, seq: 0, ["stage": stage, "frac": pythonRound(frac, 4), "msg": msg].merging(extra) { a, _ in a })
   }
 
   /// The worker finished. Tell the client that is here now, whoever it is.

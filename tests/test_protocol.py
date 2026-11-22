@@ -20,7 +20,7 @@ import pytest
 from jetlink import protocol as P
 from jetlink.client import JetlinkClient
 from jetlink.spec import ModelSpec
-from jetlink.transport.base import LinkError, LinkTimeout, StreamTransport
+from jetlink.transport.base import LinkError, LinkTimeout, Message, StreamTransport
 from jetlink.transport.tcp import TcpTransport
 
 
@@ -579,3 +579,21 @@ def test_messages_are_cut_into_as_few_equal_datagrams_as_fit(total):
   assert max(sizes) <= P.DATAGRAM_PAYLOAD and max(sizes) - min(sizes) <= 1
   assert len(pieces) == -(-total // P.DATAGRAM_PAYLOAD)
   assert P.DATAGRAM_HEADER_SIZE + max(sizes) <= 65507   # what UDP carries
+
+
+def test_an_addons_progress_reaches_only_the_client_waiting_on_it():
+  """The server sends an add-on build's progress to whoever holds the session:
+  modeld, when a drive starts mid-build. Its driving model's line is not it."""
+  heard = []
+  client = JetlinkClient(SimpleNamespace(recv=None))
+  client.progress_cb = lambda stage, frac, msg: heard.append((stage, frac))
+
+  def progress(**fields):
+    client._dispatch(Message(P.Msg.PROGRESS, 0, 0, memoryview(json.dumps({'stage': 'build', 'frac': 0.5, 'msg': '', **fields}).encode())))
+
+  client._providing = 'd' * 64           # the driving model
+  progress(addon=True, sha256='a' * 64)
+  progress()                             # the driving model's own, or an older server's
+  client._providing = 'a' * 64
+  progress(addon=True, sha256='a' * 64)
+  assert heard == [('build', 0.5), ('build', 0.5)]

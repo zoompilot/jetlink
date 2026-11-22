@@ -241,7 +241,9 @@ public final class AddonService: @unchecked Sendable {
         let model = try AddonModel.prepare(
           job.file, backend: backend, root: cacheRoot, log: log, host: host, sha256: sha256, name: job.name, interface: job.kind,
           port: job.port
-        ) { [self] stage, frac, message in waiting(key)?.progress(stage, frac, message) }
+        ) { [self] stage, frac, message in
+          waiting(key)?.progress(stage, frac, message, extra: ["addon": true, "sha256": sha256])
+        }
         serve(job.kind, port: job.port).add(model)
         remember(key, name: job.name, port: job.port)
         store.prune(keep: Self.keepArtifacts, protect: entry.path)
