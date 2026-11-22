@@ -266,6 +266,7 @@ public final class AddonService: @unchecked Sendable {
         }
         // turned off while it built: kept for nothing
         if unwanted(key) {
+          close([model])
           finish(key, ["state": "failed", "detail": "the comma no longer wants it"])
           deleteIfUnused([sha256])
           continue
@@ -300,17 +301,24 @@ public final class AddonService: @unchecked Sendable {
     }
     guard !wanted.isEmpty else { return }
     let union = Set(wanted.values.joined())
-    let (dropped, unfailed) = lock.withLock { () -> ([Key], [String]) in
+    let (dropped, unloaded, unfailed) = lock.withLock { () -> ([Key], [AddonModel], [String]) in
       var dropped: [Key] = []
+      var models: [AddonModel] = []
       for (kind, shas) in wanted {
         keeping[kind] = shas
-        for sha256 in served[kind]?.drop(keeping: shas) ?? [] { dropped.append(Key(kind: kind, sha256: sha256)) }
+        for model in served[kind]?.drop(keeping: shas) ?? [] {
+          dropped.append(Key(kind: kind, sha256: model.sha256))
+          models.append(model)
+        }
       }
       for key in dropped { remembered.remove(key) }
       let unfailed = failed.keys.filter { !union.contains($0) }
       for sha256 in unfailed { failed[sha256] = nil }
-      return (dropped, unfailed)
+      // an engine another interface still serves stays open
+      let unused = models.filter { model in !served.values.contains { $0.model(model.sha256) === model } }
+      return (dropped, unused, unfailed)
     }
+    close(unloaded)
     // queued and not started: never built
     func notWanted(_ job: Job) -> Bool { wanted[job.kind].map { !$0.contains(job.sha256) } ?? false }
     let unqueued = jobs.withLock { () -> [Job] in
@@ -322,8 +330,19 @@ public final class AddonService: @unchecked Sendable {
     for key in dropped { log.info("\(AddonWire.triple(key.kind)): the comma turned \(name(key.sha256)) off, no longer serving it") }
     if !unfailed.isEmpty { saveFailed() }
     let unserved = forgetServing(wanted)
-    let unloaded: Set<String> = Set(dropped.map { $0.sha256 })
-    deleteIfUnused(unloaded.union(unserved).union(unqueued.map { $0.sha256 }))
+    let droppedShas: Set<String> = Set(dropped.map { $0.sha256 })
+    deleteIfUnused(droppedShas.union(unserved).union(unqueued.map { $0.sha256 }))
+  }
+
+  /// Closes engines nothing serves any more. A TensorRT engine frees its
+  /// memory only on close; under the host's lock, as no pass runs then, and
+  /// one waiting for the lock finds its model gone (handle).
+  private func close(_ models: [AddonModel]) {
+    guard !models.isEmpty else { return }
+    host.lock.lock()
+    defer { host.lock.unlock() }
+    var closed = Set<ObjectIdentifier>()
+    for model in models where closed.insert(ObjectIdentifier(model)).inserted { model.engine.close() }
   }
 
   private func name(_ sha256: String) -> String {
@@ -530,11 +549,11 @@ public final class AddonService: @unchecked Sendable {
 
     /// Unloads every model but `shas`; the sha256s unloaded. A pass in
     /// flight holds its own: its engine goes when the pass ends.
-    func drop(keeping shas: Set<String>) -> [String] {
+    func drop(keeping shas: Set<String>) -> [AddonModel] {
       lock.withLock {
         let gone = ready.filter { !shas.contains($0.value.sha256) }
         for tag in gone.keys { ready[tag] = nil }
-        return gone.values.map(\.sha256)
+        return Array(gone.values)
       }
     }
 
@@ -633,6 +652,10 @@ public final class AddonService: @unchecked Sendable {
     defer { gate.passEnded() }
     host.lock.lock()
     defer { host.lock.unlock() }
+    // turned off while this pass waited: its engine is closed
+    guard addon.models[request.tag] === model else {
+      return AddonWire.answer(seq: request.seq, tag: request.tag, status: .unknownModel)
+    }
     do {
       let floats = try model.run(request, image: image)
       addon.passes += 1

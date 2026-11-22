@@ -443,7 +443,8 @@ struct AddonTests {
       #expect(artifact.exists && FileManager.default.fileExists(atPath: bytes.path))
 
       // no word: nothing changes; an interface not named is left alone
-      _ = try client.hello()
+      let both = ["ff/54/59": [Self.addonSHA], "ff/56/41": [Self.addonSHA]]
+      #expect((try client.hello()["addons"] as? [String: Any])?["serving"] as? [String: [String]] == both)
       let off = try client.hello(addonsKeep: ["ff/54/59": []])
       #expect((off["addons"] as? [String: Any])?["serving"] as? [String: [String]] == ["ff/56/41": [Self.addonSHA]])
       // still served on the other interface: kept on disk
