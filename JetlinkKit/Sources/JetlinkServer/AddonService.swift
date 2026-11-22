@@ -284,6 +284,19 @@ public final class AddonService: @unchecked Sendable {
     }
   }
 
+  /// Every model this service serves, builds, cannot run or means to serve
+  /// after a restart: their files share the driving models' cache, and the
+  /// inventory leaves them out (ServerController).
+  public func modelSHAs() -> Set<String> {
+    lock.withLock {
+      var shas = Set(served.values.flatMap { $0.models.values.map(\.sha256) })
+      shas.formUnion(pending.keys.map(\.sha256))
+      shas.formUnion(failed.keys)
+      shas.formUnion(remembered.map(\.sha256))
+      return shas
+    }
+  }
+
   private func unwanted(_ key: Key) -> Bool {
     lock.withLock { keeping[key.kind].map { !$0.contains(key.sha256) } ?? false }
   }

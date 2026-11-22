@@ -226,6 +226,11 @@ after a restart too: `<cache>/addons`, a cache of its own beside the driving
 models', which keeps the newest 8 artifacts per backend and the interface each
 serves. `--no-addons` leaves the comma's add-on interfaces to another program.
 
+An add-on's uploaded model sits in the driving models' cache, but the
+inventory leaves out every model the add-on service serves, builds or cannot
+run, so the web page's **On this computer** and the apps' model lists show
+driving models only.
+
 A model takes one `[1, C, H, W]` input, float, fp16 or uint8, and gives any
 number of float outputs. Its tag on the wire is the first four bytes of the
 ONNX's sha256, so the comma and the server need the same file.

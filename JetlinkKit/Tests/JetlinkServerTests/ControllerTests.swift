@@ -126,6 +126,35 @@ struct ControllerTests {
     try await body(controller, registry, log)
   }
 
+  @Test("An add-on's model shares the cache and is left out of the inventory")
+  func addonModelsHidden() async throws {
+    try await withController { controller, registry, log in
+      let file = registry.cache.appending(path: "models/\(registry.sha256.prefix(16)).onnx")
+      try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try FileManager.default.copyItem(at: registry.model, to: file)
+      func models() async throws -> [String] {
+        // past the controller's inventory cache
+        try await Task.sleep(for: .seconds(ServerController.inventoryTTL + 0.1))
+        let seen = log.all.count
+        _ = await controller.handle(.inventory)
+        try await Task.sleep(for: .milliseconds(200))
+        return log.all.dropFirst(seen).compactMap { if case .inventory(let inv) = $0 { inv.models.map(\.sha256) } else { nil } }.last ?? ["none published"]
+      }
+      let before = try await models()
+      #expect(before == [registry.sha256])
+      // the add-on service knows it: one this backend could not build, kept in failed.json
+      let service = AddonService(host: controller.server.host, cacheRoot: registry.cache) { _ in AbsentAddon() }
+      let store = AddonModel.store(root: registry.cache, backend: controller.server.host.backend)
+      try FileManager.default.createDirectory(at: store.layout.root, withIntermediateDirectories: true)
+      try JSONSerialization.data(withJSONObject: [controller.server.host.backend.tag(): [registry.sha256: "no"]])
+        .write(to: store.layout.root.appending(path: "failed.json"))
+      service.attach()
+      defer { controller.server.host.addons = nil }
+      let after = try await models()
+      #expect(after == [])
+    }
+  }
+
   @Test("A client's first screen needs no command")
   func initialState() async throws {
     try await withController { _, _, log in

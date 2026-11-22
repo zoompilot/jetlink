@@ -200,7 +200,13 @@ public final class ServerController: @unchecked Sendable {
       return payload
     }
     lock.unlock()
-    let payload = registry.inventory(artifactTag: server.backend.tag(), artifactSuffix: server.backend.suffix, loaded: server.host.loadedSHA())
+    var payload = registry.inventory(artifactTag: server.backend.tag(), artifactSuffix: server.backend.suffix, loaded: server.host.loadedSHA())
+    // an add-on's model is uploaded into the same cache; it is no driving model to prepare
+    if let addons = server.host.addons?.modelSHAs(), !addons.isEmpty {
+      payload = InventoryEvent(
+        loaded: payload.loaded, lastLoaded: payload.lastLoaded, models: payload.models.filter { !addons.contains($0.sha256) },
+        artifacts: payload.artifacts.filter { !addons.contains($0.sha256) }, disk: payload.disk)
+    }
     lock.lock()
     inventoryPayload = payload
     inventoryAt = now
