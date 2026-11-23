@@ -26,7 +26,6 @@ The standard library only: the owner reads ADDONS off the adapter.
 from __future__ import annotations
 
 import json
-import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,14 +55,9 @@ def live_setting(params, key: str | None, refresh_s: float = SETTING_REFRESH_S):
     nonlocal read_at, value
     now = time.monotonic()
     if read_at is None or now - read_at >= refresh_s:
-      read_at, value = now, setting_on(params, key)
+      read_at, value = now, bool(params.get_bool(key))
     return value
   return on
-
-
-def setting_on(params, key: str | None) -> bool:
-  """Is the BOOL param on? Always without a key."""
-  return key is None or params.get_bool(key) is True
 
 
 @dataclass(frozen=True)
@@ -86,7 +80,7 @@ class Addon:
     return self.report_path or REPORT_DIR / f'jetlink-addon-{self.name}.json'
 
   def enabled(self, params) -> bool:
-    return setting_on(params, self.setting)
+    return self.setting is None or params.get_bool(self.setting) is True
 
   def addon_models(self, params) -> tuple[AddonModel, ...]:
     """Its models while it is on, for the provisioning run (Stock.addon_models)."""
@@ -96,17 +90,7 @@ class Addon:
 
   def present(self) -> bool:
     """Does the gadget carry its interface, or the cable network that stands for it on an iPhone?"""
-    function = self.checked_function()
-    return function is not None and (present(function) or cable_network())
-
-  def checked_function(self) -> GadgetFunction | None:
-    """Its interface, or None for a name or class GadgetFunction refuses: the
-    model process then runs the model on the comma, as on any other doubt."""
-    try:
-      return self.function
-    except ValueError:
-      logging.getLogger(__name__).exception("jetlink: add-on %s runs on the comma alone", self.name)
-      return None
+    return present(self.function) or cable_network()
 
   # -- the comma's model process ------------------------------------------
 
@@ -115,10 +99,7 @@ class Addon:
     to report_file; net itself if the wrapper cannot be made
     (jetlink.addons.link.with_host)."""
     from jetlink.addons.link import with_host
-    function = self.checked_function()
-    if function is None:
-      return net
-    return with_host(net, function, sha256, outputs, scaled_u8=scaled_u8, report=self.write_report,
+    return with_host(net, self.function, sha256, outputs, scaled_u8=scaled_u8, report=self.write_report,
                      enabled=live_setting(params, self.setting))
 
   def model(self, local, sha256: str, outputs, *, params, scaled_u8: bool = False):
@@ -126,10 +107,7 @@ class Addon:
     order, as a call asking the Jetson first while the setting is on; local
     itself if the wrapper cannot be made (jetlink.addons.link.host_model)."""
     from jetlink.addons.link import host_model
-    function = self.checked_function()
-    if function is None:
-      return local
-    return host_model(local, function, sha256, outputs, scaled_u8=scaled_u8, report=self.write_report,
+    return host_model(local, self.function, sha256, outputs, scaled_u8=scaled_u8, report=self.write_report,
                       enabled=live_setting(params, self.setting))
 
   def write_report(self, report: dict) -> None:

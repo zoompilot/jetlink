@@ -193,9 +193,8 @@ class ProvisioningRun:
     entry = parts.models.selected_model()
     self.picked = entry is not None
     if entry is None:
-      # no catalog yet; not an error
+      # no catalog yet; not an error. provision() clears the progress after the add-ons
       parts.spec.clear_ready()
-      parts.progress.clear()
       return False
     sha256, nbytes = link.identity(parts, entry)
 
@@ -267,15 +266,10 @@ class ProvisioningRun:
     next run may fix."""
     parts = self.parts
     path = Path(addon.path)
-    try:
-      nbytes = path.stat().st_size
-    except OSError:
-      self.log.warning("jetlink: add-on %s has no model at %s", addon.name, path)
-      self.addon_results[addon.sha256] = {'state': 'failed', 'detail': 'the comma has no copy of the model'}
-      return True
+    nbytes = path.stat().st_size if path.exists() else 0
     upload = link.verified_upload(self.log, path, addon.sha256, nbytes)
     if upload is None:
-      self.addon_results[addon.sha256] = {'state': 'failed', 'detail': "the comma's copy is not the file it names"}
+      self.addon_results[addon.sha256] = {'state': 'failed', 'detail': "the comma's copy is missing or not the file it names"}
       return True
 
     def progress(stage: str, frac: float, msg: str) -> None:
@@ -447,18 +441,18 @@ class ProvisioningRun:
 
 def addon_models(parts) -> tuple:
   """The fork's add-on models turned on now (Stock.addon_models); none on any doubt."""
-  return _addon_models(parts) or ()
+  return _hook(parts, 'addon_models') or ()
 
 
-def _addon_models(parts) -> tuple | None:
-  """addon_models, or None when the fork has no hook or it failed."""
-  hook = getattr(parts.op, 'addon_models', None)
+def _hook(parts, name: str) -> tuple | None:
+  """A fork's add-on hook (Stock.addon_models, Stock.gadget_functions); None when it has none or it failed."""
+  hook = getattr(parts.op, name, None)
   if not callable(hook):
     return None
   try:
     return tuple(hook(parts.settings.params))
   except Exception:
-    parts.log.exception("jetlink: addon_models failed, sending the jetson no add-ons")
+    parts.log.exception("jetlink: %s failed, the jetson is sent and told nothing of add-ons", name)
     return None
 
 
@@ -469,14 +463,8 @@ def addon_keep(parts) -> dict | None:
   there. None on any doubt, a hook missing or failing, or no add-on
   declared: the server then deletes nothing."""
   from jetlink.addons.wire import interface_triple
-  models = _addon_models(parts)
-  hook = getattr(parts.op, 'gadget_functions', None)
-  if models is None or not callable(hook):
-    return None
-  try:
-    functions = tuple(hook(parts.settings.params))
-  except Exception:
-    parts.log.exception("jetlink: gadget_functions failed, the jetson keeps every add-on")
+  models, functions = _hook(parts, 'addon_models'), _hook(parts, 'gadget_functions')
+  if models is None or functions is None:
     return None
   keep = {interface_triple(f.iface_class): [] for f in functions}
   for m in models:
@@ -513,11 +501,7 @@ def addons_missing(models, server: dict | None) -> list:
   """The add-on models a server that serves add-ons has neither ready on
   their own interface nor failed. None for one whose hello lists no
   `addons`: an older server would take an add-on for its driving model."""
-  addons = (server or {}).get('addons')
-  if not isinstance(addons, dict):
-    return []
-  failed = set(addons.get('failed') or ())
-  return [m for m in models if m.sha256 not in failed and not _serves(addons, m.sha256, m.function.iface_class)]
+  return [m for m in models if addon_state(m.sha256, server, m.function.iface_class) == 'missing']
 
 
 def addon_state(sha256: str, server: dict | None, iface_class=None) -> str | None:

@@ -59,21 +59,15 @@ public final class AddonGate: @unchecked Sendable {
   public func admit(cost: UInt64, wait: TimeInterval) -> Bool {
     condition.withLock {
       let deadline = Date().addingTimeInterval(wait)
-      while true {
-        if !passing && fits(cost) {
-          passing = true
-          return true
-        }
-        if Date() >= deadline || !condition.wait(until: deadline) {
-          if !passing && fits(cost) {
-            passing = true
-            return true
-          }
+      while passing || !fits(cost) {
+        if !condition.wait(until: deadline), passing || !fits(cost) {
           let now = clock()
           misses = misses.filter { now - $0 < Self.yieldFor } + [now]
           return false
         }
       }
+      passing = true
+      return true
     }
   }
 

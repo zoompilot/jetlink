@@ -303,16 +303,6 @@ net_remove() {
   done
 }
 
-# Is $1 among the rest?
-has_function() {
-  local want=$1 name
-  shift
-  for name in "$@"; do
-    [[ "$name" == "$want" ]] && return 0
-  done
-  return 1
-}
-
 # -- subcommands ----------------------------------------------------------------
 
 cmd_gadget() {
@@ -426,7 +416,7 @@ cmd_gadget() {
       [[ -L "$f" ]] || continue
       name=${f##*/ffs.}
       [[ "$name" != "$FFS_NAME" ]] || continue
-      if [[ $ios -eq 1 ]] || ! has_function "$name" ${functions[@]+"${functions[@]}"}; then
+      if [[ $ios -eq 1 || " ${functions[*]-} " != *" $name "* ]]; then
         rm -f "$f"
         umount -l "/dev/ffs-$name" 2>/dev/null || true
         rmdir "/dev/ffs-$name" 2>/dev/null || true

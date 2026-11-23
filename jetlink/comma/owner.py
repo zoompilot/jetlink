@@ -293,19 +293,16 @@ class Owner:
       except OSError as e:
         self.close_functions()
         now = time.monotonic()
-        if e.errno == errno.EBUSY and now - self.function_busy.setdefault(fn.name, now) < FUNCTION_BUSY_LIMIT:
-          if self.function_busy[fn.name] == now:
+        since = self.function_busy.setdefault(fn.name, now)
+        if e.errno == errno.EBUSY and now - since < FUNCTION_BUSY_LIMIT:
+          if since == now:
             gadget.log.warning("jetlink: %s's ep0 is busy, an add-on from before still has its endpoint files open; "
                                "presenting the gadget once they are closed", fn.name)
           self.next_attempt = now + EP0_BUSY_RETRY
-        elif e.errno == errno.EBUSY:
-          gadget.log.warning("jetlink: %s's ep0 stayed busy for %.0f s, leaving it out of the gadget", fn.name,
-                             FUNCTION_BUSY_LIMIT)
-          self.function_busy.pop(fn.name, None)
-          self.left_out.add(fn.name)
-        else:
-          gadget.log.exception("jetlink: could not describe %s, leaving it out of the gadget", fn.name)
-          self.left_out.add(fn.name)
+          return False
+        gadget.log.warning("jetlink: could not describe %s (%s), leaving it out of the gadget", fn.name, e)
+        self.function_busy.pop(fn.name, None)
+        self.left_out.add(fn.name)
         return False
     return True
 

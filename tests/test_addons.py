@@ -91,7 +91,7 @@ def test_absent_interface_is_never_opened(tmp_path, monkeypatch, no_threads):
   monkeypatch.setattr(link_mod.os, "open", lambda *a: opened.append(a) or 99)
   fn = SimpleNamespace(ep0=tmp_path / "missing", ep_out=tmp_path / "ep1", ep_in=tmp_path / "ep2")
   link = AddonLink(fn, host_ready=lambda: True, clock=Clock())
-  assert not link.available()
+  assert not link_mod.functions.present(fn)
   link.infer(TAG, np.zeros((3, 2, 2), np.uint8), 3)
   assert opened == []
 
@@ -165,7 +165,7 @@ def test_reads_go_in_pieces_and_a_message_ends_at_a_short_one(tmp_path, monkeypa
   slot = [link_mod.threading.Event(), None]
   link._waiting[9] = slot
   with pytest.raises(SystemExit):
-    link._read_loop()
+    link._read_forever()
   assert set(sizes) == {link_mod.READ_CHUNK}
   assert link.tags == {TAG} and slot[0].is_set() and np.array_equal(slot[1][2], big)
 
@@ -307,6 +307,9 @@ class FakeLink:
   def poll(self, tag):
     return True
 
+  def want(self, tag):
+    pass
+
 
 def test_jetson_net_splits_outputs_by_name_and_falls_back():
   outputs = (("output0", (1, 2)), ("stop/output0", (1, 3)))
@@ -383,16 +386,16 @@ def test_the_reader_lives_through_an_error_in_a_message(tmp_path, monkeypatch):
   link._rx = link_mod._Endpoint(1000)
   calls = []
 
-  def read_once(buf, message):
+  def read_forever():
     calls.append(1)
     if len(calls) == 1:
       raise RuntimeError("deque mutated during iteration")
     raise SystemExit   # ends the test's loop
-  monkeypatch.setattr(link, "_read_once", read_once)
+  monkeypatch.setattr(link, "_read_forever", read_forever)
   monkeypatch.setattr(link, "_close", lambda *a: calls.append("closed"))
   monkeypatch.setattr(link_mod, "_mask_signals", lambda: None)
   with pytest.raises(SystemExit):
-    link._read_loop()
+    link._forever(link._read_forever, "reader")
   assert calls == [1, "closed", 1]
 
 

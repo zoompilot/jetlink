@@ -342,7 +342,7 @@ final class Session: @unchecked Sendable {
 
   /// An add-on model, for its interface: never the driving model's request, nor its engine.
   private func onAddonReq(_ message: Message, sha: String, nbytes: Int64, addon: [String: Any]) throws {
-    guard let service = host.addons else {
+    guard host.addons != nil else {
       try error(message.seq, "no_addons", "this server serves no add-ons")
       return
     }
@@ -354,7 +354,19 @@ final class Session: @unchecked Sendable {
     let name = addon["name"] as? String
     let port = (addon["port"] as? NSNumber).flatMap { UInt16(exactly: $0.intValue) }
     addonRequest = (request, kind, port, name)
-    try sendJSON(.engineResp, seq: message.seq, service.request(sha256: sha, nbytes: nbytes, kind: kind, port: port, name: name, session: self))
+    try requestAddon(message.seq)
+  }
+
+  /// The add-on asked for last, as the add-on server answers for it.
+  private func requestAddon(_ seq: UInt32) throws {
+    guard let service = host.addons, let addon = addonRequest else {
+      try error(seq, "no_addons", "this server serves no add-ons")
+      return
+    }
+    let request = addon.request
+    try sendJSON(
+      .engineResp, seq: seq,
+      service.request(sha256: request.sha256, nbytes: request.nbytes, kind: addon.kind, port: addon.port, name: addon.name, session: self))
   }
 
   /// Where an upload goes: the add-on asked for last, else the driving model.
@@ -411,14 +423,8 @@ final class Session: @unchecked Sendable {
       return
     }
     progress("upload", 1, "verified")
-    if let addon = addonRequest {
-      guard let service = host.addons else {
-        try error(message.seq, "no_addons", "this server serves no add-ons")
-        return
-      }
-      try sendJSON(
-        .engineResp, seq: message.seq,
-        service.request(sha256: request.sha256, nbytes: request.nbytes, kind: addon.kind, port: addon.port, name: addon.name, session: self))
+    if addonRequest != nil {
+      try requestAddon(message.seq)
       return
     }
     try sendJSON(.engineResp, seq: message.seq, host.request(request, session: self))

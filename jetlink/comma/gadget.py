@@ -396,10 +396,7 @@ def setup_gadget(ios: bool, functions=()) -> bool:
 
 def linked_functions() -> frozenset[str]:
   """The extra functions the gadget's config links (jetlink.comma.functions), by name."""
-  try:
-    names = {p.name[len('ffs.'):] for p in (GADGET_PATH / 'configs' / 'c.1').glob('ffs.*')}
-  except OSError:
-    return frozenset()
+  names = {p.name[len('ffs.'):] for p in (GADGET_PATH / 'configs' / 'c.1').glob('ffs.*')}
   from jetlink.comma.functions import JETLINK_FUNCTION
   return frozenset(names - {JETLINK_FUNCTION})
 

@@ -61,7 +61,7 @@
     private let auth: WebAuth?
     private let system: (any PageSystem)?
     /// The add-on server's state for the Models tab, where there is one.
-    private let addons: (@Sendable () -> [String: Any])?
+    private let addons: AddonService?
     private let log = ServerLog(category: "page")
     private let listener: TCPListener
     private let condition = NSCondition()
@@ -77,7 +77,7 @@
     /// why it cannot listen.
     public static func start(
       port: Int, controller: ServerController, version: String, hardware: (any PageHardwareSource)?, auth: WebAuth? = nil,
-      system: (any PageSystem)? = nil, addons: (@Sendable () -> [String: Any])? = nil
+      system: (any PageSystem)? = nil, addons: AddonService? = nil
     ) throws -> PageServer {
       let server = try PageServer(
         port: port, page: StatusPage.page(), feed: PageFeed(hardware: hardware), auth: auth, system: system, addons: addons
@@ -90,7 +90,7 @@
 
     init(
       port: Int, page: Data, feed: PageFeed, auth: WebAuth? = nil, system: (any PageSystem)? = nil,
-      addons: (@Sendable () -> [String: Any])? = nil, headerTimeout: TimeInterval = 30,
+      addons: AddonService? = nil, headerTimeout: TimeInterval = 30,
       keepalive: TimeInterval = 15, logs: @escaping @Sendable () -> [String]
     ) throws {
       guard let port = UInt16(exactly: port) else { throw HostError.invalid("\(port) is not a port") }
@@ -234,7 +234,7 @@
         return PageResponse.text(200, lines.isEmpty ? "" : lines.joined(separator: "\n") + "\n", cache: "no-store")
       case ("GET", "/api/addons"):
         guard mayWatch else { return PageServer.signInFirst }
-        return PageResponse.json(200, addons?() ?? ["served": false])
+        return PageResponse.json(200, addons?.pageState() ?? ["served": false])
       case ("GET", "/api/system"):
         if let refusal = refusal(file, session) { return refusal }
         return PageResponse.json(200, system?.info() ?? ["installed": false])

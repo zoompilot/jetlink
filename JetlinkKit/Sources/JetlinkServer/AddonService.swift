@@ -225,10 +225,6 @@ public final class AddonService: @unchecked Sendable {
     }
   }
 
-  private func waiting(_ key: Key) -> Session? {
-    lock.withLock { pending[key] ?? nil }
-  }
-
   private func builder() {
     while !isStopped {
       let next = jobs.withLock { () -> Job? in
@@ -238,29 +234,19 @@ public final class AddonService: @unchecked Sendable {
       guard let job = next else { return }
       let sha256 = job.sha256
       let key = Key(kind: job.kind, sha256: sha256)
-      if unwanted(key) {
+      if lock.withLock({ unwantedLocked(key) }) {
         finish(key, ["state": "failed", "detail": "the comma no longer wants it"])
         continue
       }
       do {
-        if lock.withLock({ served[job.kind]?.has(sha256) == true }) {
-          finish(key, ["state": "ready", "detail": ""])
-          continue
-        }
         // the one engine serves every interface that asks for it: passes take
         // the host's lock. Found and added in one hold of the lock, so keep()
         // cannot close it in between for want of another interface serving it
-        switch lock.withLock({ () -> Shared in
-          guard let loaded = served.values.lazy.compactMap({ $0.model(sha256) }).first else { return .none }
-          if unwantedLocked(key) { return .unwanted }
-          return .added(addLocked(loaded, kind: job.kind, port: job.port))
-        }) {
-        case .none:
-          break
-        case .unwanted:
-          finish(key, ["state": "failed", "detail": "the comma no longer wants it"])
-          continue
-        case .added(let started):
+        let shared = lock.withLock { () -> Served?? in
+          guard !unwantedLocked(key), let loaded = served.values.lazy.compactMap({ $0.model(sha256) }).first else { return nil }
+          return .some(addLocked(loaded, kind: job.kind, port: job.port))
+        }
+        if let started = shared {
           if let started { startLoop(started) }
           remember(key, name: job.name, port: job.port)
           finish(key, ["state": "ready", "detail": ""])
@@ -275,7 +261,7 @@ public final class AddonService: @unchecked Sendable {
           job.file, backend: backend, root: cacheRoot, log: log, host: host, sha256: sha256, name: job.name, interface: job.kind,
           port: job.port
         ) { [self] stage, frac, message in
-          waiting(key)?.progress(stage, frac, message, extra: ["addon": true, "sha256": sha256])
+          lock.withLock { pending[key] ?? nil }?.progress(stage, frac, message, extra: ["addon": true, "sha256": sha256])
         }
         // turned off while it built: kept for nothing. Checked and added in
         // one hold of the lock, so a keep() in between cannot miss it
@@ -332,19 +318,9 @@ public final class AddonService: @unchecked Sendable {
     }
   }
 
-  private func unwanted(_ key: Key) -> Bool {
-    lock.withLock { unwantedLocked(key) }
-  }
-
   /// Under the lock.
   private func unwantedLocked(_ key: Key) -> Bool {
     keeping[key.kind].map { !$0.contains(key.sha256) } ?? false
-  }
-
-  private enum Shared {
-    case none, unwanted
-    /// The interface's add-on, when it is new and its loop is to be started.
-    case added(Served?)
   }
 
   /// A comma's word on what it wants, its hello's `addons_keep` (class
@@ -387,7 +363,10 @@ public final class AddonService: @unchecked Sendable {
       return gone
     }
     for job in unqueued { finish(Key(kind: job.kind, sha256: job.sha256), ["state": "failed", "detail": "the comma no longer wants it"]) }
-    for key in dropped { log.info("\(AddonWire.triple(key.kind)): the comma turned \(name(key.sha256)) off, no longer serving it") }
+    for key in dropped {
+      let name = lock.withLock { names[key.sha256] } ?? String(key.sha256.prefix(16))
+      log.info("\(AddonWire.triple(key.kind)): the comma turned \(name) off, no longer serving it")
+    }
     if !unfailed.isEmpty { saveFailed() }
     let unserved = forgetServing(wanted)
     let droppedShas: Set<String> = Set(dropped.map { $0.sha256 })
@@ -403,10 +382,6 @@ public final class AddonService: @unchecked Sendable {
     defer { host.lock.unlock() }
     var closed = Set<ObjectIdentifier>()
     for model in models where closed.insert(ObjectIdentifier(model)).inserted { model.engine.close() }
-  }
-
-  private func name(_ sha256: String) -> String {
-    lock.withLock { names[sha256] } ?? String(sha256.prefix(16))
   }
 
   /// Leaves only `wanted`'s models in serving.json on the interfaces it names; the sha256s taken out.
@@ -539,24 +514,20 @@ public final class AddonService: @unchecked Sendable {
         let ms: Double = (Double(model.costNs) / 1e5).rounded() / 10
         models.append(["name": model.file, "sha256": model.sha256, "pass_ms": ms])
       }
-      var row: [String: Any] = ["interface": addon.name, "models": models, "answers": addon.answered]
-      row["passes"] = addon.allPasses
-      row["yields"] = addon.allYields
-      row["failures"] = addon.allFailures
+      var row: [String: Any] = [
+        "interface": addon.name, "models": models, "answers": addon.answered, "passes": addon.passes, "yields": addon.yields,
+        "failures": addon.failures,
+      ]
       if let last = addon.lastAnswer {
         let ago: Double = (now.timeIntervalSince(last) * 10).rounded() / 10
         row["last_answer_s"] = ago
       }
       rows.append(row)
     }
-    var queued: [[String: Any]] = []
-    for key in building.sorted(by: { $0.sha256 < $1.sha256 }) {
-      queued.append(["interface": AddonWire.triple(key.kind), "sha256": key.sha256, "name": name(key.sha256)])
+    let queued = building.sorted(by: { $0.sha256 < $1.sha256 }).map {
+      ["interface": AddonWire.triple($0.kind), "sha256": $0.sha256, "name": name($0.sha256)]
     }
-    var refused: [[String: Any]] = []
-    for sha256 in refusals.keys.sorted() {
-      refused.append(["sha256": sha256, "name": name(sha256), "detail": refusals[sha256] ?? ""])
-    }
+    let refused = refusals.keys.sorted().map { ["sha256": $0, "name": name($0), "detail": refusals[$0] ?? ""] }
     return ["served": true, "addons": rows, "building": queued, "failed": refused]
   }
 
@@ -586,16 +557,14 @@ public final class AddonService: @unchecked Sendable {
     let name: String
     private let lock = NSLock()
     private var ready: [UInt32: AddonModel]
+    /// Since the server started; `reported` holds them as the last report left them.
     var passes = 0
     var yields = 0
+    var failures = 0
+    var reported = (0, 0, 0)
     /// Answers of any kind, ever: whether a link carried anything.
     var answered = 0
-    var failures = 0
     var lastReport = Date()
-    /// Since the server started, for the web page: the counts above are a report's.
-    var allPasses = 0
-    var allYields = 0
-    var allFailures = 0
     /// When the comma last had an answer here.
     var lastAnswer: Date?
     /// The one its source is made for, its port learned in place.
@@ -715,7 +684,6 @@ public final class AddonService: @unchecked Sendable {
     guard gate.admit(cost: cost, wait: max(0, Self.answerBudget - Double(cost) / 1e9)) else {
       model.relax()
       addon.yields += 1
-      addon.allYields += 1
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .yield)
     }
     defer { gate.passEnded() }
@@ -728,24 +696,22 @@ public final class AddonService: @unchecked Sendable {
     do {
       let floats = try model.run(request, image: image)
       addon.passes += 1
-      addon.allPasses += 1
       let us = UInt32(min(UInt64(UInt32.max), (DispatchTime.now().uptimeNanoseconds - started) / 1000))
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .ok, serverUs: us, floats: floats)
     } catch {
       addon.failures += 1
-      addon.allFailures += 1
-      if addon.failures == 1 || addon.failures % 100 == 0 { log.warning("\(addon.name): \(model.file) failed: \(error)") }
+      let since = addon.failures - addon.reported.2
+      if since == 1 || since % 100 == 0 { log.warning("\(addon.name): \(model.file) failed: \(error)") }
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .inferFailed)
     }
   }
 
   private func report(_ addon: Served) {
-    guard Date().timeIntervalSince(addon.lastReport) >= Self.reportEvery, addon.passes + addon.yields + addon.failures > 0 else { return }
+    let (passes, yields, failures) = (addon.passes - addon.reported.0, addon.yields - addon.reported.1, addon.failures - addon.reported.2)
+    guard Date().timeIntervalSince(addon.lastReport) >= Self.reportEvery, passes + yields + failures > 0 else { return }
     let costs = addon.models.values.map { "\($0.file) \(String(format: "%.1f", Double($0.costNs) / 1e6)) ms" }.joined(separator: ", ")
-    log.info("\(addon.name): \(addon.passes) passes, \(addon.yields) yielded, \(addon.failures) failed; \(costs)")
-    addon.passes = 0
-    addon.yields = 0
-    addon.failures = 0
+    log.info("\(addon.name): \(passes) passes, \(yields) yielded, \(failures) failed; \(costs)")
+    addon.reported = (addon.passes, addon.yields, addon.failures)
     addon.lastReport = Date()
   }
 

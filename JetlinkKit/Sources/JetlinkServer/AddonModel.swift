@@ -204,11 +204,13 @@ final class AddonModel: @unchecked Sendable {
     do {
       let model = try AddonModel(file: name, sha256: sha256, engine: engine)
       progress?("warm", 0, "warming up")
-      let warmed = try underLock(host) { () throws -> String in
+      let warmed = try { () throws -> String in
+        host?.lock.lock()
+        defer { host?.lock.unlock() }
         let warmed = try engine.warm()
         try model.calibrate()
         return "\(warmed)"
-      }
+      }()
       log.info(
         "\(warmed); \(name) takes \(model.shape), gives \(model.outputs.map { "\($0.name)\($0.shape)" }), a pass \(String(format: "%.1f", Double(model.costNs) / 1e6)) ms"
       )
@@ -217,12 +219,5 @@ final class AddonModel: @unchecked Sendable {
       engine.close()
       throw error
     }
-  }
-
-  private static func underLock<T>(_ host: EngineHost?, _ body: () throws -> T) rethrows -> T {
-    guard let host else { return try body() }
-    host.lock.lock()
-    defer { host.lock.unlock() }
-    return try body()
   }
 }

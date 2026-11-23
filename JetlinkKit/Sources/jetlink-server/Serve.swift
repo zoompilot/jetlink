@@ -189,12 +189,10 @@
       #if os(Linux)
         system = PageHost()
       #endif
-      var state: (@Sendable () -> [String: Any])?
-      if let addons { state = { @Sendable in addons.pageState() } }
       do {
         let page = try PageServer.start(
           port: statusPort, controller: controller, version: productVersion(), hardware: hardware, auth: auth, system: system,
-          addons: state)
+          addons: addons)
         let signIn = auth == nil ? "read-only" : auth!.isConfigured ? "with sign-in" : "read-only until \(auth!.url.path) is written"
         log.info("web page on port \(page.port), \(signIn)")
         return page

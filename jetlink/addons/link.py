@@ -51,8 +51,6 @@ from jetlink import protocol as P
 from jetlink.addons import wire as W
 from jetlink.comma import functions
 
-log = logging.getLogger(__name__)
-
 HELLO_FRESH_S = 2.5
 REPLY_TIMEOUT_S = 0.05
 MISS_HOLD_S = 3.0
@@ -65,10 +63,7 @@ REPORT_S = 30.0
 
 def _host_attached() -> bool:
   from jetlink.comma import gadget
-  try:
-    return gadget.host_attached()
-  except OSError:
-    return False
+  return gadget.host_attached()
 
 
 def _mask_signals():
@@ -115,13 +110,12 @@ class _Endpoint:
 
 
 class RoundTrips:
-  """Answered requests' round trips, and the Jetson's own share of each
-  (server_us). The caller adds and the reader thread takes, so both lock."""
+  """Answered requests' round trips, and the Jetson's own share of each (server_us)."""
 
   def __init__(self, keep: int = 4096):
     self.total_us: collections.deque = collections.deque(maxlen=keep)
     self.server_us: collections.deque = collections.deque(maxlen=keep)
-    self._lock = threading.Lock()
+    self._lock = threading.Lock()   # the caller adds, the reader takes
 
   def add(self, total_us: int, server_us: int):
     with self._lock:
@@ -168,19 +162,11 @@ class AddonLink:
     self._conn: socket.socket | None = None
     self._next_open = 0.0
     self._threads_started = False
-    # one opener at a time: a link shared by nets on several threads opens its endpoints once
-    self._open_lock = threading.Lock()
+    self._open_lock = threading.Lock()   # one opener, for nets on several threads
     self._report_lock = threading.Lock()
     self._next_report = clock() + REPORT_S
 
   # -- public ------------------------------------------------------------
-  def available(self) -> bool:
-    """The gadget carries this add-on's interface."""
-    try:
-      return self.function.ep0.exists()
-    except OSError:
-      return False
-
   def want(self, model_tag: int) -> None:
     """A model this comma will ask for, so the report can say the host lacks it."""
     if model_tag not in self.wanted:
@@ -266,7 +252,7 @@ class AddonLink:
       try:
         self.report_to(self.report())
       except Exception:
-        log.exception("jetlink: %s's report failed", self.addon)
+        logging.getLogger(__name__).exception("jetlink: %s's report failed", self.addon)
 
   def _drop(self, seq: int):
     with self._lock:
@@ -275,11 +261,10 @@ class AddonLink:
   def _ensure_open(self):
     if self._rx is not None or self.clock() < self._next_open:
       return
-    # another thread opening: this caller runs its own model meanwhile
     if not self._open_lock.acquire(blocking=False):
       return
     try:
-      if self._rx is not None or self.clock() < self._next_open:
+      if self._rx is not None:
         return
       self._next_open = self.clock() + REOPEN_S
       stream = self.cable_network()
@@ -292,15 +277,15 @@ class AddonLink:
       self.stats["reopens"] += 1
       if not self._threads_started:
         self._threads_started = True
-        threading.Thread(target=self._read_loop, name=f"{self.addon}-jetson-rx", daemon=True).start()
-        threading.Thread(target=self._write_loop, name=f"{self.addon}-jetson-tx", daemon=True).start()
+        threading.Thread(target=self._forever, args=(self._read_forever, 'reader'), name=f"{self.addon}-jetson-rx", daemon=True).start()
+        threading.Thread(target=self._forever, args=(self._write_forever, 'writer'), name=f"{self.addon}-jetson-tx", daemon=True).start()
     finally:
       self._open_lock.release()
 
   def _open_endpoints(self) -> tuple[int, int] | None:
     self._stop_listening()
     # never before a host has configured the gadget: that costs the gadget until a reboot
-    if not self.available() or not self.host_ready():
+    if not functions.present(self.function) or not self.host_ready():
       return None
     try:
       fd_in = os.open(self.function.ep_out, os.O_RDONLY)
@@ -385,91 +370,78 @@ class AddonLink:
       slot[1] = (status, server_us, np.frombuffer(payload, np.float32).copy())
       slot[0].set()
 
-  def _read_loop(self):
-    """The link's only reader, for the process's life: nothing that goes
-    wrong in a message ends it, or the link would never hear a hello again."""
+  def _forever(self, body, what: str):
+    # the only reader and writer: no error in a message may end either
+    while True:
+      try:
+        body()
+      except Exception:
+        logging.getLogger(__name__).exception("jetlink: %s's %s failed, reopening the link", self.addon, what)
+        self._close()
+
+  def _read_forever(self):
     _mask_signals()
     buf = bytearray(READ_CHUNK)
     message = bytearray()
     while True:
-      try:
-        self._read_once(buf, message)
-      except Exception:
-        log.exception("jetlink: %s's reader hit an error, reopening the link", self.addon)
+      endpoint, stream = self._rx, self._stream
+      fd = endpoint.acquire() if endpoint is not None else -1
+      if fd < 0:
         message.clear()
-        self._close()
-
-  def _read_once(self, buf: bytearray, message: bytearray) -> None:
-    """One read, and each message it ends handled; message carries a part over."""
-    endpoint, stream = self._rx, self._stream
-    fd = endpoint.acquire() if endpoint is not None else -1
-    if fd < 0:
-      message.clear()
-      time.sleep(0.2)
-      return
-    try:
-      got = os.readv(fd, [buf])
-    except OSError:
-      got = 0
-    finally:
-      endpoint.release()
-    if got == 0 or len(message) + got > W.MAX_ANSWER + 1:
-      # unbound, no longer configured, or no message ever ends: reopened once configured again
-      message.clear()
-      self._close(endpoint)
-      return
-    message += memoryview(buf)[:got]
-    if stream:
-      if not self._handle_stream(message):
+        time.sleep(0.2)
+        continue
+      try:
+        got = os.readv(fd, [buf])
+      except OSError:
+        got = 0
+      finally:
+        endpoint.release()
+      if got == 0 or len(message) + got > W.MAX_ANSWER + 1:
+        # unbound, no longer configured, or no message ever ends: reopened once configured again
         message.clear()
         self._close(endpoint)
-      return
-    # a transfer goes on through whole pieces and ends at a short one: the pad byte sees to that
-    if got < READ_CHUNK:
-      self.handle(bytes(message))
-      message.clear()
+        continue
+      message += memoryview(buf)[:got]
+      if stream:
+        # each whole answer at the front of a TCP stream; a bad header ends the link
+        try:
+          while len(message) >= W.RESP.size and len(message) >= (size := W.answer_length(message)):
+            self.handle(bytes(message[:size]))
+            del message[:size]
+        except ValueError:
+          message.clear()
+          self._close(endpoint)
+        continue
+      # a transfer goes on through whole pieces and ends at a short one: the pad byte sees to that
+      if got < READ_CHUNK:
+        self.handle(bytes(message))
+        message.clear()
 
-  def _handle_stream(self, message: bytearray) -> bool:
-    """Each whole answer at the front of a TCP stream; False for a bad header."""
-    try:
-      while len(message) >= W.RESP.size and len(message) >= (size := W.answer_length(message)):
-        self.handle(bytes(message[:size]))
-        del message[:size]
-    except ValueError:
-      return False
-    return True
-
-  def _write_loop(self):
-    """The link's only writer, for the process's life, as the reader is."""
+  def _write_forever(self):
     _mask_signals()
     while True:
+      msg = self._requests.get()
+      endpoint = self._tx
+      fd = endpoint.acquire() if endpoint is not None else -1
+      if fd < 0:
+        continue
+      failed = False
+      self._writing.set()
       try:
-        self._write_once(self._requests.get())
-      except Exception:
-        log.exception("jetlink: %s's writer hit an error, reopening the link", self.addon)
+        view = memoryview(msg)
+        for off in range(0, len(view), WRITE_CHUNK):
+          piece = view[off:off + WRITE_CHUNK]
+          while piece:
+            piece = piece[os.write(fd, piece):]
+      except OSError:
+        failed = True
+      finally:
+        endpoint.release()
         self._writing.clear()
-        self._close()
+      if failed:
+        self._close(endpoint)
 
-  def _write_once(self, msg) -> None:
-    endpoint = self._tx
-    fd = endpoint.acquire() if endpoint is not None else -1
-    if fd < 0:
-      return
-    failed = False
-    self._writing.set()
-    try:
-      view = memoryview(msg)
-      for off in range(0, len(view), WRITE_CHUNK):
-        piece = view[off:off + WRITE_CHUNK]
-        while piece:
-          piece = piece[os.write(fd, piece):]
-    except OSError:
-      failed = True
-    finally:
-      endpoint.release()
-      self._writing.clear()
-    if failed:
-      self._close(endpoint)
+
 
 
 def blob_to_u8(blob: np.ndarray) -> np.ndarray:
@@ -497,9 +469,7 @@ class HostModel:
     self.scaled_u8 = scaled_u8
     self.enabled = enabled
     self.stats = {"host": 0, "local": 0}
-    want = getattr(link, "want", None)
-    if callable(want):
-      want(self.tag)
+    link.want(self.tag)
 
   def on(self) -> bool:
     try:
