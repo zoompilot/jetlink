@@ -80,6 +80,14 @@ public final class TrtBackend: EngineBackend {
   /// Patch, parse and build, with Python's progress stages and messages;
   /// the plan is staged and moved into place, the sidecar beside it.
   public func build(model: URL, artifact: URL, report: @escaping ProgressFn, metaExtra: [String: Any]) throws {
+    try build(model: model, artifact: artifact, report: report, metaExtra: metaExtra, shouldStop: { false })
+  }
+
+  /// TensorRT asks its progress monitor at every step whether to go on, so
+  /// `shouldStop` ends a build within a step: an add-on's, for the driving model's.
+  public func build(
+    model: URL, artifact: URL, report: @escaping ProgressFn, metaExtra: [String: Any], shouldStop: @escaping @Sendable () -> Bool
+  ) throws {
     let started = Date()
     let free = available()
     let workspace = Self.workspaceBytes(available: free)
@@ -111,7 +119,7 @@ public final class TrtBackend: EngineBackend {
       log.info("tensorrt \(runtimeVersion): \(precision)")
       jl_trt_build_set_optimization_level(build, Int32(Self.optimizationLevel))
       jl_trt_build_set_workspace(build, workspace)
-      let monitor = BuildMonitor(report)
+      let monitor = BuildMonitor(report, shouldStop: shouldStop) { [build] in jl_trt_build_cancel(build) }
       let cached = attachTimingCache(build!, cacheURL)
 
       report("build", 0, "building engine")
@@ -120,6 +128,8 @@ public final class TrtBackend: EngineBackend {
         defer { jl_trt_build_set_progress(build, nil, nil) }
         do {
           try trt.check { jl_trt_build_write_plan(build, staged.path, $0, $1) }
+        } catch let error as TrtError where monitor.cancelled {
+          throw TrtError(code: error.code, "the build was stopped")
         } catch let error as TrtError where !error.isFatal && !error.description.hasPrefix("cannot write") {
           log.error("\(error.description)")
           throw TrtError(code: error.code, "TensorRT returned no engine; see the build log")
@@ -189,13 +199,23 @@ public final class TrtBackend: EngineBackend {
 /// again at every nested phase's start and step too. Never stops the build.
 final class BuildMonitor {
   private let report: ProgressFn
+  private let shouldStop: @Sendable () -> Bool
+  private let cancel: () -> Void
   private var root: (phase: String, step: Int, total: Int)?
+  /// The build was told to stop: TensorRT ends it at its next step.
+  private(set) var cancelled = false
 
-  init(_ report: @escaping ProgressFn) {
+  init(_ report: @escaping ProgressFn, shouldStop: @escaping @Sendable () -> Bool = { false }, cancel: @escaping () -> Void = {}) {
     self.report = report
+    self.shouldStop = shouldStop
+    self.cancel = cancel
   }
 
   func event(_ kind: Int32, phase: String, parent: String?, value: Int) {
+    if !cancelled && shouldStop() {
+      cancelled = true
+      cancel()
+    }
     switch kind {
     case Int32(JL_TRT_PHASE_START):
       if parent == nil { root = (phase, 0, value) }

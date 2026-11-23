@@ -127,6 +127,10 @@ final class UsbfsURBs: @unchecked Sendable {
   }
 
   var all: [UsbfsURB] { slots + [out] }
+
+  func matches(inEndpoint: UInt8, outEndpoint: UInt8) -> Bool {
+    slots[0].endpoint == inEndpoint && out.endpoint == outEndpoint
+  }
 }
 
 /// One bulk URB, made once per descriptor and submitted over and over. On
@@ -220,7 +224,7 @@ final class UsbfsDevice: @unchecked Sendable {
   /// Calls between their first and last touch of the kernel.
   private var active = 0
   /// The last pipes' URBs, which the kernel gave back, for the next pipes.
-  private var spare: UsbfsURBs?
+  private var spares: [UsbfsURBs] = []
   /// How long a discarded URB may take to come back before the wait for it
   /// polls again.
   static let discardPoll: TimeInterval = 0.05
@@ -236,20 +240,24 @@ final class UsbfsDevice: @unchecked Sendable {
   }
 
   /// URBs for new pipes on `inEndpoint` and `outEndpoint`: the last pipes'
-  /// when they match, else new ones.
+  /// on those endpoints, else new ones.
   func take(inEndpoint: UInt8, outEndpoint: UInt8) -> UsbfsURBs {
     condition.withLock {
-      let urbs =
-        spare.flatMap { $0.slots[0].endpoint == inEndpoint && $0.out.endpoint == outEndpoint ? $0 : nil }
-        ?? UsbfsURBs(inEndpoint: inEndpoint, outEndpoint: outEndpoint)
-      spare = nil
-      return urbs
+      guard let i = spares.firstIndex(where: { $0.matches(inEndpoint: inEndpoint, outEndpoint: outEndpoint) }) else {
+        return UsbfsURBs(inEndpoint: inEndpoint, outEndpoint: outEndpoint)
+      }
+      return spares.remove(at: i)
     }
   }
 
-  /// Keeps closed pipes' URBs, every one back from the kernel, for the next.
+  /// Keeps closed pipes' URBs, every one back from the kernel, for the next
+  /// on the same endpoints: one set per pair, as the driving link and an
+  /// add-on's interface can share a descriptor (Android) and close in turn.
   func keep(_ urbs: UsbfsURBs) {
-    condition.withLock { spare = urbs }
+    condition.withLock {
+      spares.removeAll { $0.matches(inEndpoint: urbs.slots[0].endpoint, outEndpoint: urbs.out.endpoint) }
+      spares.append(urbs)
+    }
   }
 
   func register(_ urbs: [UsbfsURB]) {

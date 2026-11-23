@@ -64,6 +64,8 @@ public final class AddonService: @unchecked Sendable {
   static let helloEvery: TimeInterval = 2
   /// Add-on artifacts kept for this backend.
   static let keepArtifacts = 8
+  /// Failures of a model, the kind that may not last, before it is kept as failed.
+  static let strikesToFail = 2
 
   /// A model served on one interface: the artifact is the sha256's, shared by
   /// every interface that serves it, but each interface is ready on its own.
@@ -93,6 +95,9 @@ public final class AddonService: @unchecked Sendable {
   private var pending: [Key: Session?] = [:]
   /// What this backend could not build or run, by sha256: kept, so a comma is not asked for it on every park.
   private var failed: [String: String] = [:]
+  /// Failures that may not last (out of memory, a read error), by sha256: the
+  /// comma tries again, and only a second is kept in `failed`.
+  private var strikes: [String: Int] = [:]
   /// Each model's name, by sha256, for the web page.
   private var names: [String: String] = [:]
   /// What a comma last said it wants on each interface it named (keep(_:)):
@@ -242,21 +247,29 @@ public final class AddonService: @unchecked Sendable {
           finish(key, ["state": "ready", "detail": ""])
           continue
         }
-        // the one engine serves every interface that asks for it: passes take the host's lock
-        if let loaded = lock.withLock({ served.values.lazy.compactMap { $0.model(sha256) }.first }) {
-          if unwanted(key) {
-            finish(key, ["state": "failed", "detail": "the comma no longer wants it"])
-            continue
-          }
-          serve(job.kind, port: job.port).add(loaded)
+        // the one engine serves every interface that asks for it: passes take
+        // the host's lock. Found and added in one hold of the lock, so keep()
+        // cannot close it in between for want of another interface serving it
+        switch lock.withLock({ () -> Shared in
+          guard let loaded = served.values.lazy.compactMap({ $0.model(sha256) }).first else { return .none }
+          if unwantedLocked(key) { return .unwanted }
+          return .added(addLocked(loaded, kind: job.kind, port: job.port))
+        }) {
+        case .none:
+          break
+        case .unwanted:
+          finish(key, ["state": "failed", "detail": "the comma no longer wants it"])
+          continue
+        case .added(let started):
+          if let started { startLoop(started) }
           remember(key, name: job.name, port: job.port)
           finish(key, ["state": "ready", "detail": ""])
           continue
         }
         let entry = try store.entry(sha256)
         // the bytes are checked once more before a build: a model named by a sha it does not have would lie forever
-        if !entry.exists, try Files.sha256(of: job.file) != sha256 {
-          throw HostError.failed("\(job.name) does not hash to \(sha256.prefix(16))")
+        if !entry.exists, (try Registry.hashFile(job.file)).0 != sha256 {
+          throw AddonRefused("\(job.name) does not hash to \(sha256.prefix(16))")
         }
         let model = try AddonModel.prepare(
           job.file, backend: backend, root: cacheRoot, log: log, host: host, sha256: sha256, name: job.name, interface: job.kind,
@@ -264,22 +277,44 @@ public final class AddonService: @unchecked Sendable {
         ) { [self] stage, frac, message in
           waiting(key)?.progress(stage, frac, message, extra: ["addon": true, "sha256": sha256])
         }
-        // turned off while it built: kept for nothing
-        if unwanted(key) {
+        // turned off while it built: kept for nothing. Checked and added in
+        // one hold of the lock, so a keep() in between cannot miss it
+        let added = lock.withLock { () -> Served?? in
+          unwantedLocked(key) ? nil : .some(addLocked(model, kind: job.kind, port: job.port))
+        }
+        guard let started = added else {
           close([model])
           finish(key, ["state": "failed", "detail": "the comma no longer wants it"])
           deleteIfUnused([sha256])
           continue
         }
-        serve(job.kind, port: job.port).add(model)
+        if let started { startLoop(started) }
+        lock.withLock { strikes[sha256] = nil }
         remember(key, name: job.name, port: job.port)
         store.prune(keep: Self.keepArtifacts, protect: entry.path)
         finish(key, ["state": "ready", "detail": ""])
+      } catch let deferred as AddonDeferred {
+        // the driving model went first: the comma sends it again next park
+        log.info("\(job.name): \(deferred.description)")
+        finish(key, ["state": "failed", "detail": deferred.description, "retry": true])
       } catch {
-        log.error("\(job.name): cannot serve it: \(error)")
-        lock.withLock { failed[sha256] = "\(error)" }
-        saveFailed()
-        finish(key, ["state": "failed", "detail": "\(error)"])
+        // a model this backend can never take is kept as failed at once;
+        // anything else only when it fails a second time
+        let lasting = lock.withLock { () -> Bool in
+          let strike = (strikes[sha256] ?? 0) + 1
+          strikes[sha256] = strike
+          let lasting = error is AddonRefused || strike >= Self.strikesToFail
+          if lasting { failed[sha256] = "\(error)" }
+          return lasting
+        }
+        if lasting {
+          log.error("\(job.name): cannot serve it: \(error)")
+          saveFailed()
+          finish(key, ["state": "failed", "detail": "\(error)"])
+        } else {
+          log.warning("\(job.name): could not serve it, the comma tries again: \(error)")
+          finish(key, ["state": "failed", "detail": "\(error)", "retry": true])
+        }
       }
     }
   }
@@ -298,7 +333,18 @@ public final class AddonService: @unchecked Sendable {
   }
 
   private func unwanted(_ key: Key) -> Bool {
-    lock.withLock { keeping[key.kind].map { !$0.contains(key.sha256) } ?? false }
+    lock.withLock { unwantedLocked(key) }
+  }
+
+  /// Under the lock.
+  private func unwantedLocked(_ key: Key) -> Bool {
+    keeping[key.kind].map { !$0.contains(key.sha256) } ?? false
+  }
+
+  private enum Shared {
+    case none, unwanted
+    /// The interface's add-on, when it is new and its loop is to be started.
+    case added(Served?)
   }
 
   /// A comma's word on what it wants, its hello's `addons_keep` (class
@@ -327,6 +373,7 @@ public final class AddonService: @unchecked Sendable {
       for key in dropped { remembered.remove(key) }
       let unfailed = failed.keys.filter { !union.contains($0) }
       for sha256 in unfailed { failed[sha256] = nil }
+      for sha256 in strikes.keys where !union.contains(sha256) { strikes[sha256] = nil }
       // an engine another interface still serves stays open
       let unused = models.filter { model in !served.values.contains { $0.model(model.sha256) === model } }
       return (dropped, unused, unfailed)
@@ -365,8 +412,7 @@ public final class AddonService: @unchecked Sendable {
   /// Leaves only `wanted`'s models in serving.json on the interfaces it names; the sha256s taken out.
   private func forgetServing(_ wanted: [[UInt8]: Set<String>]) -> Set<String> {
     servingLock.withLock {
-      var all = (try? JSONSerialization.jsonObject(with: Data(contentsOf: servingURL))) as? [String: Any] ?? [:]
-      var mine = all[backend.tag()] as? [String: [String: [String: Any]]] ?? [:]
+      var mine = loadServing()
       var gone = Set<String>()
       for (kind, shas) in wanted {
         let triple = AddonWire.triple(kind)
@@ -376,8 +422,7 @@ public final class AddonService: @unchecked Sendable {
         mine[triple] = kept.isEmpty ? nil : kept
       }
       guard !gone.isEmpty else { return gone }
-      all[backend.tag()] = mine
-      if let data = try? JSONSerialization.data(withJSONObject: all, options: [.sortedKeys]) { try? data.write(to: servingURL, options: .atomic) }
+      writeTagged(servingURL, mine)
       return gone
     }
   }
@@ -438,8 +483,20 @@ public final class AddonService: @unchecked Sendable {
 
   /// This backend's serving.json: interface triple, then sha256, then its name and port.
   private func loadServing() -> [String: [String: [String: Any]]] {
-    let all = (try? JSONSerialization.jsonObject(with: Data(contentsOf: servingURL))) as? [String: Any]
-    return all?[backend.tag()] as? [String: [String: [String: Any]]] ?? [:]
+    readTagged(servingURL) as? [String: [String: [String: Any]]] ?? [:]
+  }
+
+  /// This backend's entry in `url`, one of the store's files keyed by backend tag.
+  private func readTagged(_ url: URL) -> Any? {
+    ((try? JSONSerialization.jsonObject(with: Data(contentsOf: url))) as? [String: Any])?[backend.tag()]
+  }
+
+  /// Replaces this backend's entry in `url`, leaving the other backends'.
+  private func writeTagged(_ url: URL, _ value: Any) {
+    var all = (try? JSONSerialization.jsonObject(with: Data(contentsOf: url))) as? [String: Any] ?? [:]
+    all[backend.tag()] = value
+    try? FileManager.default.createDirectory(at: store.layout.root, withIntermediateDirectories: true)
+    if let data = try? JSONSerialization.data(withJSONObject: all, options: [.sortedKeys]) { try? data.write(to: url, options: .atomic) }
   }
 
   /// Notes that `key` is served, so a restart serves it on that interface again.
@@ -447,28 +504,21 @@ public final class AddonService: @unchecked Sendable {
     let new = lock.withLock { remembered.insert(key).inserted }
     guard new else { return }
     servingLock.withLock {
-      var all = (try? JSONSerialization.jsonObject(with: Data(contentsOf: servingURL))) as? [String: Any] ?? [:]
-      var mine = all[backend.tag()] as? [String: [String: [String: Any]]] ?? [:]
+      var mine = loadServing()
       var meta: [String: Any] = ["name": name]
       if let port { meta["port"] = Int(port) }
       mine[AddonWire.triple(key.kind), default: [:]][key.sha256] = meta
-      all[backend.tag()] = mine
-      try? FileManager.default.createDirectory(at: store.layout.root, withIntermediateDirectories: true)
-      if let data = try? JSONSerialization.data(withJSONObject: all, options: [.sortedKeys]) { try? data.write(to: servingURL, options: .atomic) }
+      writeTagged(servingURL, mine)
     }
   }
 
   private func loadFailed() {
-    let all = (try? JSONSerialization.jsonObject(with: Data(contentsOf: failedURL))) as? [String: Any]
-    let known = all?[backend.tag()] as? [String: String] ?? [:]
+    let known = readTagged(failedURL) as? [String: String] ?? [:]
     lock.withLock { failed = known }
   }
 
   private func saveFailed() {
-    var all = (try? JSONSerialization.jsonObject(with: Data(contentsOf: failedURL))) as? [String: Any] ?? [:]
-    all[backend.tag()] = lock.withLock { failed }
-    try? FileManager.default.createDirectory(at: store.layout.root, withIntermediateDirectories: true)
-    if let data = try? JSONSerialization.data(withJSONObject: all, options: [.sortedKeys]) { try? data.write(to: failedURL, options: .atomic) }
+    writeTagged(failedURL, lock.withLock { failed })
   }
 
   /// For the web page (`GET /api/addons`): each interface served, its models
@@ -512,19 +562,23 @@ public final class AddonService: @unchecked Sendable {
 
   // MARK: serving
 
-  /// The interface's add-on, its thread started the first time a model is ready for it.
-  private func serve(_ kind: [UInt8], port: UInt16?) -> Served {
-    let (addon, new) = lock.withLock { () -> (Served, Bool) in
-      if let addon = served[kind] {
-        if let port { addon.interface.learn(port: port) }
-        return (addon, false)
-      }
-      let addon = Served(kind: kind, name: AddonWire.triple(kind), port: port)
-      served[kind] = addon
-      return (addon, true)
+  /// Under the lock: `model` served on the interface's add-on, made the
+  /// first time a model is ready for it. That new add-on, whose thread the
+  /// caller starts once the lock is let go (`startLoop`), or nil.
+  private func addLocked(_ model: AddonModel, kind: [UInt8], port: UInt16?) -> Served? {
+    if let addon = served[kind] {
+      if let port { addon.interface.learn(port: port) }
+      addon.add(model)
+      return nil
     }
-    if new { Thread.detachNewThread { [self] in loop(addon) } }
+    let addon = Served(kind: kind, name: AddonWire.triple(kind), port: port)
+    served[kind] = addon
+    addon.add(model)
     return addon
+  }
+
+  private func startLoop(_ addon: Served) {
+    Thread.detachNewThread { [self] in loop(addon) }
   }
 
   final class Served: @unchecked Sendable {
@@ -657,7 +711,9 @@ public final class AddonService: @unchecked Sendable {
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .unknownModel)
     }
     // admitted, the gap is this pass's until it ends: no other add-on spends it too
-    guard gate.admit(cost: model.costNs, wait: max(0, Self.answerBudget - Double(model.costNs) / 1e9)) else {
+    let cost = model.costNs
+    guard gate.admit(cost: cost, wait: max(0, Self.answerBudget - Double(cost) / 1e9)) else {
+      model.relax()
       addon.yields += 1
       addon.allYields += 1
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .yield)

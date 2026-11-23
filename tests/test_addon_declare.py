@@ -56,6 +56,15 @@ def test_the_stock_adapter_takes_its_interface_models_and_setting(vasm, params):
   assert Stock().keys is Stock.KEYS
 
 
+def test_a_class_gadget_function_refuses_leaves_the_model_on_the_comma():
+  bad = A.Addon('odd', (0xDC, 0x01, 0x02))
+  net = object()
+  assert bad.wrap(net, 'a' * 64, [('output0', (1, 3))], params=None) is net
+  local = lambda blob: blob   # noqa: E731
+  assert bad.model(local, 'a' * 64, [('output0', (1, 3))], params=None) is local
+  assert bad.present() is False
+
+
 def test_the_setting_is_read_live_and_cheaply(params):
   on = A.live_setting(params, 'ForkVasm', refresh_s=0.05)
   assert on() is False

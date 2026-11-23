@@ -36,8 +36,9 @@ def vasm():
 ```
 
 - `name`: 1 to 16 of `a-z0-9`, the gadget function's name.
-- `iface_class`: a vendor class triple of your own, never Jetlink's
-  `(0xFF, 0xFF, 0xFF)` or another add-on's.
+- `iface_class`: a vendor-specific class triple of your own,
+  `(0xFF, subclass, protocol)`, never Jetlink's `(0xFF, 0xFF, 0xFF)` or
+  another add-on's. The Android app claims vendor-specific interfaces only.
 - `setting`: a BOOL param that turns it on, or None for always. Declare it in
   the fork's params keys. Its changes start a provisioning run, and the model
   process reads it live.
@@ -123,7 +124,10 @@ yielding until that passes, and the comma keeps to its own model until the
 next plain hello.
 
 Add-on models build after the driving model's own build or load, never beside
-one, and stay resident: they are small.
+one, and stay resident: they are small. A driving model's build or load that
+comes while an add-on builds stops that build where the backend can
+(TensorRT, within a step), and the comma sends the add-on again on the next
+park; elsewhere it waits for the add-on's build to end.
 
 ## The comma
 
@@ -169,19 +173,23 @@ answered there; `ready` is every one of them, for a comma too old to read
 `serving`; `failed` is by sha256, as a model's limits are its own. A model
 built once is served on each interface that asks for it, from the one engine,
 and ready on an interface only once it is asked for there.
-A parked run sends it each add-on model neither served on its interface nor failed, once the
-driving model is ready: an `ENGINE_REQ` with `addon: {interface, name, port}`, then
+A parked run sends it each add-on model neither served on its interface nor failed, after
+the driving model whatever came of that (none picked, its build failed, or no
+warp yet for the camera, when only the add-ons are sent): an `ENGINE_REQ` with `addon: {interface, name, port}`, then
 the usual upload, `PROGRESS` (progress codes `addon_upload` and `addon_build`)
 and `ENGINE_RESP`, whose `ready` carries no spec. The driving engine stays
 loaded. A server too old to list `addons` is never sent one, as it would take
 it for its driving model.
 
 Then the run says hello again, so the owner's record (`gadget.SERVER`) lists
-them, and the Jetson sleeps as after any run. A model the server cannot build
-or run is listed `failed` until its backend changes, so it is not sent on
-every park; deleting `<cache>/addons/failed.json` on the Jetson tries again.
-That includes a model whose request (its input as u8) or answer (every output
-as f32) would not fit the wire's 4 MiB, which is refused when it is built.
+them, and the Jetson sleeps as after any run. A model the server can never
+serve is listed `failed` at once: inputs or outputs it does not take, bytes
+that are not the model they name, or a request (its input as u8) or answer
+(every output as f32) that would not fit the wire's 4 MiB. Any other failure,
+out of memory or a read error, answers `failed` with `retry: true`, which
+the comma leaves for the next run, and only a second is listed. A listed one
+is not sent on every park until its backend changes; deleting
+`<cache>/addons/failed.json` on the Jetson tries again.
 `<cache>/addons/serving.json` keeps which interface serves what, for a restart.
 `Addon.state` reads it for a panel.
 

@@ -5,6 +5,21 @@ import Foundation
 import JetlinkKit
 import JetlinkRegistry
 
+/// A model this backend can never serve as an add-on (its inputs or outputs,
+/// the wire's limits, bytes that are not the model they name): kept as failed
+/// at once, where any other failure is tried again first.
+struct AddonRefused: Error, CustomStringConvertible {
+  let description: String
+  init(_ description: String) { self.description = description }
+}
+
+/// An add-on's build that gave the device up to the driving model's: sent
+/// again on the next park, never counted as a failure.
+struct AddonDeferred: Error, CustomStringConvertible {
+  let description: String
+  init(_ description: String) { self.description = description }
+}
+
 /// One add-on model, built and loaded on the server's backend: a single
 /// [1, C, H, W] image input and any outputs, answered as f32 in name order.
 final class AddonModel: @unchecked Sendable {
@@ -19,19 +34,27 @@ final class AddonModel: @unchecked Sendable {
   let outputCount: Int
   /// How long a pass holds the engine, staging its input and copying its
   /// outputs included, for fitting it between driving frames: measured once
-  /// when it is loaded, then up at once with a slower pass, down slowly.
-  private(set) var costNs: UInt64 = 5_000_000
+  /// when it is loaded (`baselineNs`), then half way up to a slower pass and
+  /// an eighth of the way down to a faster one. A pass refused for want of a
+  /// gap brings it a quarter of the way back to the baseline (`relax`): no
+  /// pass runs while the estimate is too high to fit, so one slow outlier
+  /// would otherwise keep every later request on the comma.
+  var costNs: UInt64 { costLock.withLock { cost } }
+  private(set) var baselineNs: UInt64 = 5_000_000
+  private var cost: UInt64 = 5_000_000
+  /// A model two interfaces share is run from both their threads.
+  private let costLock = NSLock()
 
   init(file: String, sha256: String, engine: any Engine) throws {
-    guard let tag = AddonWire.tag(sha256: sha256) else { throw HostError.failed("\(file): no sha256") }
+    guard let tag = AddonWire.tag(sha256: sha256) else { throw AddonRefused("\(file): no sha256") }
     guard engine.inputs.count == 1, let input = engine.inputs.values.first, input.shape.count == 4, input.shape[0] == 1,
       [.float, .float16, .uint8].contains(input.type)
     else {
-      throw HostError.failed("\(file): an add-on model takes one [1, C, H, W] float or uint8 input, not \(Array(engine.inputs.values))")
+      throw AddonRefused("\(file): an add-on model takes one [1, C, H, W] float or uint8 input, not \(Array(engine.inputs.values))")
     }
     let outputs = engine.outputs.values.sorted { $0.name < $1.name }
     guard !outputs.isEmpty, outputs.allSatisfy({ [.float, .float16].contains($0.type) }) else {
-      throw HostError.failed("\(file): an add-on model's outputs are float, not \(outputs.map(\.type.name))")
+      throw AddonRefused("\(file): an add-on model's outputs are float, not \(outputs.map(\.type.name))")
     }
     let outputCount = outputs.reduce(0) { $0 + $1.count }
     try Self.fitsWire(file, input: input.shape.dropFirst().reduce(1, *), outputs: outputCount)
@@ -49,10 +72,10 @@ final class AddonModel: @unchecked Sendable {
   /// an answer (every output as f32) fit the wire's limits, saying which does not.
   static func fitsWire(_ file: String, input elements: Int, outputs floats: Int) throws {
     if AddonWire.headerBytes + elements >= AddonWire.maxRequest {
-      throw HostError.failed("\(file): its input is \(elements) bytes even as u8, over the add-on wire's \(AddonWire.maxRequest >> 20) MiB request")
+      throw AddonRefused("\(file): its input is \(elements) bytes even as u8, over the add-on wire's \(AddonWire.maxRequest >> 20) MiB request")
     }
     if AddonWire.headerBytes + 4 * floats > AddonWire.maxAnswer {
-      throw HostError.failed("\(file): its outputs are \(floats) floats, \(4 * floats) bytes, over the add-on wire's \(AddonWire.maxAnswer >> 20) MiB answer")
+      throw AddonRefused("\(file): its outputs are \(floats) floats, \(4 * floats) bytes, over the add-on wire's \(AddonWire.maxAnswer >> 20) MiB answer")
     }
   }
 
@@ -90,8 +113,7 @@ final class AddonModel: @unchecked Sendable {
         floats.append(contentsOf: UnsafeBufferPointer(start: source.assumingMemoryBound(to: Float16.self), count: spec.count).map(Float.init))
       }
     }
-    let took = DispatchTime.now().uptimeNanoseconds - started
-    costNs = took > costNs ? took : (costNs * 7 + took) / 8
+    measured(DispatchTime.now().uptimeNanoseconds - started)
     return floats
   }
 
@@ -103,7 +125,25 @@ final class AddonModel: @unchecked Sendable {
     let request = AddonWire.Request(seq: 0, tag: tag, shape: shape, encoding: .u8, nbytes: count)
     let started = DispatchTime.now().uptimeNanoseconds
     _ = try blank.withUnsafeBytes { try run(request, image: $0) }
-    costNs = DispatchTime.now().uptimeNanoseconds - started
+    let took = DispatchTime.now().uptimeNanoseconds - started
+    costLock.withLock {
+      cost = took
+      baselineNs = took
+    }
+  }
+
+  /// A pass took `took`.
+  func measured(_ took: UInt64) {
+    costLock.withLock { cost = took > cost ? cost + (took - cost) / 2 : (cost * 7 + took) / 8 }
+  }
+
+  /// A pass found no gap at the current estimate: a quarter of the way back
+  /// to the cost measured at load, so a stale high estimate cannot keep it
+  /// from ever running again.
+  func relax() {
+    costLock.withLock {
+      if cost > baselineNs { cost -= (cost - baselineNs + 3) / 4 }
+    }
   }
 
   /// The add-on artifacts for `backend`: `root`/addons, a cache of its own, so
@@ -116,7 +156,9 @@ final class AddonModel: @unchecked Sendable {
 
   /// Builds `file`'s artifact for `backend` in the add-on store under `root`
   /// unless it is there, loads it, and warms it. With `host`, after the driving
-  /// model's own build or load and never beside one, and warms under its lock.
+  /// model's own build or load and never beside one, and warms under its lock;
+  /// a driving model's job that comes while it builds stops the build where
+  /// the backend can (TensorRT), and this throws `AddonDeferred`.
   /// `interface` goes in the sidecar, so the next start serves it there.
   static func prepare(
     _ file: URL, backend: any EngineBackend, root: URL, log: ServerLog, host: EngineHost? = nil, sha256 known: String? = nil,
@@ -127,7 +169,7 @@ final class AddonModel: @unchecked Sendable {
       host.buildSlot.lock()
     }
     defer { host?.buildSlot.unlock() }
-    let sha256 = try known ?? Files.sha256(of: file)
+    let sha256 = try known ?? Registry.hashFile(file).0
     let name = name ?? file.lastPathComponent
     let entry = try store(root: root, backend: backend).entry(sha256)
     let report: ProgressFn = { stage, frac, message in
@@ -137,9 +179,17 @@ final class AddonModel: @unchecked Sendable {
     var meta: [String: Any] = ["addon": name, "spec": ["sha256": sha256]]
     if let interface { meta["interface"] = AddonWire.triple(interface) }
     if let port { meta["port"] = Int(port) }
+    // the driving model's job is waiting for the device this build holds
+    let yielding: @Sendable () -> Bool = { host?.drivingBusy ?? false }
     func build() throws {
       log.info("building \(name) for \(backend.name)")
-      try backend.build(model: file, artifact: entry.path, report: report, metaExtra: meta)
+      do {
+        try backend.build(model: file, artifact: entry.path, report: report, metaExtra: meta, shouldStop: yielding)
+      } catch {
+        guard yielding() else { throw error }
+        entry.remove()
+        throw AddonDeferred("\(name): its build stopped for the driving model's; it is built on the next park")
+      }
     }
     if !entry.exists { try build() }
     let engine: any Engine

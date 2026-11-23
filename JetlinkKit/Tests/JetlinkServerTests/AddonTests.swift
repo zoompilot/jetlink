@@ -483,6 +483,93 @@ struct AddonTests {
     }
   }
 
+  @Test("One slow pass does not keep an add-on off the server: each refused pass brings its cost back toward the measured one")
+  func costRecovers() throws {
+    let cache = try TemporaryDirectory()
+    let model = try AddonModel.prepare(Self.addon, backend: cpuBackend(), root: cache.url, log: ServerLog(category: "test"))
+    defer { model.engine.close() }
+    let baseline = model.baselineNs
+    model.measured(48_000_000)
+    #expect(model.costNs < 48_000_000 && model.costNs > baseline, "half way up, not all the way")
+    model.measured(48_000_000)
+    let ticks = Ticks()
+    let gate = AddonGate(clock: { ticks.now })
+    for _ in 0..<10 {
+      gate.frameStarted()
+      ticks.advance(ms: 50)
+    }
+    gate.frameStarted()
+    ticks.advance(ms: 15)
+    gate.frameEnded()
+    #expect(!gate.admit(cost: model.costNs, wait: 0), "too dear for the gap after a 15 ms frame")
+    var refused = 1
+    model.relax()
+    while !gate.admit(cost: model.costNs, wait: 0) {
+      model.relax()
+      refused += 1
+      try #require(refused < 10, "the estimate never came back down")
+    }
+    gate.passEnded()
+    #expect(refused <= 3)
+    for _ in 0..<100 { model.relax() }
+    #expect(model.costNs == baseline, "never below what it measured")
+  }
+
+  @Test("A failure that may not last is tried again before it is kept as failed")
+  func transientFailure() throws {
+    try serve { server, client in
+      let root = server.configuration.cacheRoot
+      let flaky = FlakyBackend()
+      flaky.failLoads(with: HostError.failed("out of memory"), times: 1)
+      let service = AddonService(host: server.host, backend: flaky, cacheRoot: root) { _ in AbsentAddon() }
+      service.start()
+      defer { service.stop() }
+      _ = try client.hello()
+      let first = try provision(client, model: Self.addon, sha256: Self.addonSHA)
+      #expect(first["state"] as? String == "failed" && first["retry"] as? Bool == true)
+      #expect(service.helloState()["failed"] as? [String] == [], "not kept: the comma sends it again")
+      #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA)["state"] as? String == "ready")
+
+      flaky.failLoads(with: HostError.failed("out of memory"), times: 2)
+      service.keep(["ff/54/59": []] as [String: Any])
+      for retry in [true, false] {
+        let state = try provision(client, model: Self.addon, sha256: Self.addonSHA)
+        #expect(state["state"] as? String == "failed" && (state["retry"] as? Bool ?? false) == retry)
+      }
+      #expect(service.helloState()["failed"] as? [String] == [Self.addonSHA], "a second failure is kept")
+    }
+  }
+
+  @Test("A driving model asked for while an add-on builds stops that build, which is left for the next park, not failed")
+  func drivingFirst() throws {
+    let golden = try Golden("tiny_queued")
+    try serve { server, client in
+      let root = server.configuration.cacheRoot
+      let slow = StoppableBackend()
+      let outcome = Outcome()
+      let thread = Thread {
+        do {
+          let model = try AddonModel.prepare(Self.addon, backend: slow, root: root, log: ServerLog(category: "test"), host: server.host)
+          model.engine.close()
+          outcome.set("built")
+        } catch let deferred as AddonDeferred {
+          outcome.set("deferred: \(deferred.description)")
+        } catch {
+          outcome.set("failed: \(error)")
+        }
+      }
+      thread.start()
+      try #require(slow.started.wait(timeout: .now() + 5) == .success, "the add-on build never started")
+      _ = try client.hello()
+      _ = try client.ensureEngine(model: golden.model, sha256: golden.sha256)
+      #expect(server.host.loadedSHA() == golden.sha256, "the driving model is ready")
+      let deadline = Date().addingTimeInterval(5)
+      while outcome.get() == nil && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+      #expect(outcome.get()?.hasPrefix("deferred") == true, "\(outcome.get() ?? "still building")")
+      #expect(slow.stopped.get(), "the build was told to stop")
+    }
+  }
+
   @Test("A server without add-ons says nothing of them, and refuses an add-on request")
   func noService() throws {
     try serve { _, client in
@@ -493,4 +580,51 @@ struct AddonTests {
       #expect(try reply.json["error"] as? String == "no_addons")
     }
   }
+}
+
+/// The CPU backend, whose build runs until it is told to stop (as a TensorRT
+/// build is, through its progress monitor), or for 5 s at most.
+final class StoppableBackend: EngineBackend, @unchecked Sendable {
+  private let inner = cpuBackend()
+  let started = DispatchSemaphore(value: 0)
+  let stopped = Flag()
+
+  var name: String { inner.name }
+  var suffix: String { inner.suffix }
+  var runtimeVersion: String { inner.runtimeVersion }
+  func deviceTag() -> String { inner.deviceTag() }
+
+  func deriveSpec(model: URL, sha256: String, nbytes: Int64, frameSkip: Int) throws -> ModelSpec {
+    try inner.deriveSpec(model: model, sha256: sha256, nbytes: nbytes, frameSkip: frameSkip)
+  }
+
+  func build(model: URL, artifact: URL, report: @escaping ProgressFn, metaExtra: [String: Any]) throws {
+    try inner.build(model: model, artifact: artifact, report: report, metaExtra: metaExtra)
+  }
+
+  func build(
+    model: URL, artifact: URL, report: @escaping ProgressFn, metaExtra: [String: Any], shouldStop: @escaping @Sendable () -> Bool
+  ) throws {
+    started.signal()
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline {
+      if shouldStop() {
+        stopped.set(true)
+        throw HostError.failed("the build was stopped")
+      }
+      Thread.sleep(forTimeInterval: 0.01)
+    }
+    throw HostError.failed("never told to stop")
+  }
+
+  func load(artifact: URL, report: @escaping ProgressFn) throws -> any Engine {
+    try inner.load(artifact: artifact, report: report)
+  }
+}
+
+final class Outcome: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: String?
+  func set(_ new: String) { lock.withLock { value = new } }
+  func get() -> String? { lock.withLock { value } }
 }

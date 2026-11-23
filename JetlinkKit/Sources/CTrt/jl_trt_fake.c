@@ -124,6 +124,8 @@ struct jl_trt_build {
   void *progress_ctx;
   // -1: no timing cache attached; else the builds it holds
   int cache_builds;
+  // jl_trt_build_cancel: the build ends at its next step, as TensorRT's does
+  int cancelled;
 };
 
 static const char *const default_tensors = "input x float16 1 8\n"
@@ -987,6 +989,10 @@ void jl_trt_build_set_progress(jl_trt_build *b, jl_trt_progress_fn fn, void *ctx
   b->progress_ctx = ctx;
 }
 
+void jl_trt_build_cancel(jl_trt_build *b) {
+  __atomic_store_n(&b->cancelled, 1, __ATOMIC_SEQ_CST);
+}
+
 int jl_trt_build_set_timing_cache(jl_trt_build *b, const void *data, size_t size, char *err, size_t errlen) {
   jl_trt *t = b->trt;
   ENTER(t, "build_set_timing_cache");
@@ -1031,6 +1037,9 @@ int jl_trt_build_write_plan(jl_trt_build *b, const char *path, char *err, size_t
   for (int i = 0; i < layers; i++) {
     progress(b, JL_TRT_PHASE_START, "fake tactics", "fake build", 2);
     progress(b, JL_TRT_PHASE_STEP, "fake tactics", NULL, 0);
+    if (__atomic_load_n(&b->cancelled, __ATOMIC_SEQ_CST)) {
+      return leave(t, trt_log(t, JL_TRT_LOG_ERROR, err, errlen, "fake: the build was cancelled"));
+    }
     progress(b, JL_TRT_PHASE_STEP, "fake tactics", NULL, 1);
     progress(b, JL_TRT_PHASE_FINISH, "fake tactics", NULL, 0);
     progress(b, JL_TRT_PHASE_STEP, "fake build", NULL, i);

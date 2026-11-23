@@ -420,6 +420,34 @@ struct UsbfsPipesTests {
     #expect(kernel.urbs.count == ReadRing.depth)
   }
 
+  @Test("Pipes on two endpoint pairs of one descriptor each get their own last URBs back")
+  func sparesPerEndpoints() {
+    let device = device
+    let driving = device.take(inEndpoint: 0x81, outEndpoint: 0x01)
+    let addon = device.take(inEndpoint: 0x82, outEndpoint: 0x02)
+    device.keep(driving)
+    device.keep(addon)
+    #expect(device.take(inEndpoint: 0x81, outEndpoint: 0x01) === driving)
+    #expect(device.take(inEndpoint: 0x82, outEndpoint: 0x02) === addon)
+  }
+
+  @Test("An add-on port on the driving link's device ends only its own pipes when detached")
+  func addonPortSharesTheDevice() throws {
+    let device = device
+    let port = UsbfsAddonPort()
+    port.attach(sharing: device, inEndpoint: 0x82, outEndpoint: 0x02)
+    #expect(port.isAttached)
+    let addon = try port.open()
+    port.detach()
+    addon.close()
+    #expect(!port.isAttached && !device.isGone, "the driving link's device goes on")
+    let driving = pipes(device)
+    let buffer = UnsafeMutableRawPointer.allocate(byteCount: 1024, alignment: 16)
+    defer { buffer.deallocate() }
+    kernel.feed(pattern(slot))
+    #expect(try driving.read(into: buffer, count: 1024, timeout: 0) == 1024)
+  }
+
   @Test("Unplugging with a message half in the ring fails the read, and closing does not wait on the dead device")
   func unplugMidRing() throws {
     let device = device

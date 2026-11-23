@@ -356,8 +356,9 @@ class JetlinkClient:
     does the driving model: the same upload, progress and states, but the
     driving engine stays loaded. `port` is where the comma listens for it when
     the cable is a network. Only for a server whose hello lists `addons`:
-    an older one would take it for a driving model. LinkError when the server
-    cannot build or run it."""
+    an older one would take it for a driving model. AddonFailed when the server
+    cannot build or run it; LinkError for anything the next run may fix, a
+    failure the server says to retry included."""
     from jetlink.addons.wire import interface_triple
     addon = {'interface': interface_triple(interface), 'name': name}
     if port is not None:
@@ -365,7 +366,9 @@ class JetlinkClient:
     try:
       self._provide({'sha256': sha256, 'nbytes': nbytes, 'addon': addon}, onnx_path, nbytes, progress, build_timeout, should_stop)
     except LinkError as e:
-      if (self._engine_state or {}).get('state') == 'failed':
+      state = self._engine_state or {}
+      # retry: a failure that may not last, or a build that gave way to the driving model's
+      if state.get('state') == 'failed' and not state.get('retry'):
         raise AddonFailed(str(e)) from e
       raise
 

@@ -268,6 +268,10 @@ void jl_trt_build_set_optimization_level(jl_trt_build *build, int level);
 // allocation.
 void jl_trt_build_set_workspace(jl_trt_build *build, size_t bytes);
 void jl_trt_build_set_progress(jl_trt_build *build, jl_trt_progress_fn fn, void *ctx);
+// Ends a build in progress at its next step, from any thread (the progress
+// callback's included): jl_trt_build_write_plan then fails. Needs a progress
+// monitor set, as TensorRT asks only it whether to go on.
+void jl_trt_build_cancel(jl_trt_build *build);
 
 // A timing cache from an earlier build's bytes (NULL and 0 for an empty one),
 // attached with mismatches not ignored; TensorRT copies the bytes. On

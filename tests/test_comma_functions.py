@@ -48,9 +48,10 @@ def test_a_bad_name_is_refused(name):
     functions.GadgetFunction(name, (0xFF, 0x56, 0x41))
 
 
-@pytest.mark.parametrize('iface_class', [(0xFF, 0x56), (0xFF, 0x56, 0x100), (0xFF, -1, 0), P.USB_VENDOR_CLASS])
+@pytest.mark.parametrize('iface_class', [(0xFF, 0x56), (0xFF, 0x56, 0x100), (0xFF, -1, 0), P.USB_VENDOR_CLASS, (0xDC, 0x01, 0x02)])
 def test_a_bad_class_is_refused(iface_class):
-  # Jetlink's own triple too: a host finds each interface by it
+  # Jetlink's own triple too: a host finds each interface by it. And a class
+  # not vendor-specific: the Android app claims only those
   with pytest.raises(ValueError):
     functions.GadgetFunction('vasm', iface_class)
 

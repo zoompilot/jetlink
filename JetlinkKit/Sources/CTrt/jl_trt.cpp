@@ -141,7 +141,8 @@ public:
 
   bool stepComplete(const char *phase, int32_t step) noexcept override {
     emit(JL_TRT_PHASE_STEP, phase, nullptr, step);
-    return true;
+    // false ends the build (jl_trt_build_cancel)
+    return !cancelled.load();
   }
 
   void phaseFinish(const char *phase) noexcept override {
@@ -158,6 +159,7 @@ public:
   std::mutex lock;
   jl_trt_progress_fn fn = nullptr;
   void *ctx = nullptr;
+  std::atomic<bool> cancelled{false};
 };
 
 // The context each thread last made current, and for which open: a context
@@ -813,6 +815,10 @@ void jl_trt_build_set_optimization_level(jl_trt_build *b, int level) {
 
 void jl_trt_build_set_workspace(jl_trt_build *b, size_t bytes) {
   b->config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, bytes);
+}
+
+void jl_trt_build_cancel(jl_trt_build *b) {
+  b->monitor.cancelled.store(true);
 }
 
 void jl_trt_build_set_progress(jl_trt_build *b, jl_trt_progress_fn fn, void *ctx) {

@@ -367,6 +367,95 @@ def test_reports_go_to_the_callback(tmp_path, no_threads):
   assert heard and heard[0]["link"]["sent"] == 0 and "connected" in heard[0]
 
 
+def test_a_report_callback_that_raises_never_reaches_the_reader(tmp_path, no_threads):
+  def broken(report):
+    raise RuntimeError("the fork's panel")
+  clock = Clock()
+  link = AddonLink(function(tmp_path), host_ready=lambda: False, report=broken, clock=clock)
+  clock.t += link_mod.REPORT_S
+  link.handle(W.pack_hello([TAG]))   # the reader's call: it must come back
+  assert link.tags == frozenset({TAG})
+
+
+def test_the_reader_lives_through_an_error_in_a_message(tmp_path, monkeypatch):
+  link = AddonLink(function(tmp_path), host_ready=lambda: True, clock=Clock())
+  link._ensure_open = lambda: None
+  link._rx = link_mod._Endpoint(1000)
+  calls = []
+
+  def read_once(buf, message):
+    calls.append(1)
+    if len(calls) == 1:
+      raise RuntimeError("deque mutated during iteration")
+    raise SystemExit   # ends the test's loop
+  monkeypatch.setattr(link, "_read_once", read_once)
+  monkeypatch.setattr(link, "_close", lambda *a: calls.append("closed"))
+  monkeypatch.setattr(link_mod, "_mask_signals", lambda: None)
+  with pytest.raises(SystemExit):
+    link._read_loop()
+  assert calls == [1, "closed", 1]
+
+
+def test_round_trips_can_be_taken_while_added(tmp_path):
+  import threading
+  trips = link_mod.RoundTrips()
+  stop = threading.Event()
+
+  def add():
+    while not stop.is_set():
+      trips.add(1000, 500)
+  adder = threading.Thread(target=add)
+  adder.start()
+  try:
+    for _ in range(2000):
+      trips.take()
+  finally:
+    stop.set()
+    adder.join()
+
+
+def test_two_threads_open_a_shared_link_once(tmp_path, monkeypatch):
+  import threading
+  link = AddonLink(function(tmp_path), host_ready=lambda: True, clock=Clock())
+  link._threads_started = True   # no reader on these plain files
+  entered, release, opens = threading.Event(), threading.Event(), []
+  real = link._open_endpoints
+
+  def slow_open():
+    opens.append(1)
+    entered.set()
+    release.wait(5)
+    return real()
+  monkeypatch.setattr(link, "_open_endpoints", slow_open)
+  first = threading.Thread(target=link._ensure_open)
+  first.start()
+  entered.wait(5)
+  link._ensure_open()   # the other thread: does not open a second pair
+  release.set()
+  first.join()
+  assert len(opens) == 1 and link._rx is not None
+  link._close()
+
+
+def test_a_failure_the_server_says_to_retry_is_left_for_the_next_run():
+  from jetlink.client import AddonFailed, JetlinkClient
+  from jetlink.transport.base import LinkError
+  client = JetlinkClient.__new__(JetlinkClient)
+
+  def provide(state):
+    def run(*args, **kwargs):
+      client._engine_state = state
+      raise LinkError("engine failed")
+    return run
+  client._provide = provide({"state": "failed", "detail": "out of memory", "retry": True})
+  with pytest.raises(LinkError) as raised:
+    client.ensure_addon("a" * 64, 1, "model.onnx", (0xFF, 1, 2))
+  assert not isinstance(raised.value, AddonFailed)
+  client._provide = provide({"state": "failed", "detail": "outputs are not float"})
+  with pytest.raises(AddonFailed):
+    client.ensure_addon("a" * 64, 1, "model.onnx", (0xFF, 1, 2))
+
+
 def test_hello_tags_unpack_many():
   tags = list(range(10))
   payload = struct.pack("<10I", *tags)

@@ -51,6 +51,8 @@ from jetlink import protocol as P
 from jetlink.addons import wire as W
 from jetlink.comma import functions
 
+log = logging.getLogger(__name__)
+
 HELLO_FRESH_S = 2.5
 REPLY_TIMEOUT_S = 0.05
 MISS_HOLD_S = 3.0
@@ -113,21 +115,25 @@ class _Endpoint:
 
 
 class RoundTrips:
-  """Answered requests' round trips, and the Jetson's own share of each (server_us)."""
+  """Answered requests' round trips, and the Jetson's own share of each
+  (server_us). The caller adds and the reader thread takes, so both lock."""
 
   def __init__(self, keep: int = 4096):
     self.total_us: collections.deque = collections.deque(maxlen=keep)
     self.server_us: collections.deque = collections.deque(maxlen=keep)
+    self._lock = threading.Lock()
 
   def add(self, total_us: int, server_us: int):
-    self.total_us.append(total_us)
-    self.server_us.append(server_us)
+    with self._lock:
+      self.total_us.append(total_us)
+      self.server_us.append(server_us)
 
   def take(self) -> dict:
-    total = np.asarray(self.total_us, np.float64) / 1000.0
-    server = np.asarray(self.server_us, np.float64) / 1000.0
-    self.total_us.clear()
-    self.server_us.clear()
+    with self._lock:
+      total = np.asarray(self.total_us, np.float64) / 1000.0
+      server = np.asarray(self.server_us, np.float64) / 1000.0
+      self.total_us.clear()
+      self.server_us.clear()
     if total.size == 0:
       return {"n": 0}
     return {"n": int(total.size), "total_ms": round(float(np.percentile(total, 50)), 2),
@@ -162,6 +168,8 @@ class AddonLink:
     self._conn: socket.socket | None = None
     self._next_open = 0.0
     self._threads_started = False
+    # one opener at a time: a link shared by nets on several threads opens its endpoints once
+    self._open_lock = threading.Lock()
     self._report_lock = threading.Lock()
     self._next_report = clock() + REPORT_S
 
@@ -255,7 +263,10 @@ class AddonLink:
         return
       self._next_report = now + REPORT_S
     if self.report_to is not None:
-      self.report_to(self.report())
+      try:
+        self.report_to(self.report())
+      except Exception:
+        log.exception("jetlink: %s's report failed", self.addon)
 
   def _drop(self, seq: int):
     with self._lock:
@@ -264,19 +275,27 @@ class AddonLink:
   def _ensure_open(self):
     if self._rx is not None or self.clock() < self._next_open:
       return
-    self._next_open = self.clock() + REOPEN_S
-    stream = self.cable_network()
-    fds = self._accept() if stream else self._open_endpoints()
-    if fds is None:
+    # another thread opening: this caller runs its own model meanwhile
+    if not self._open_lock.acquire(blocking=False):
       return
-    with self._lock:
-      self._rx, self._tx = _Endpoint(fds[0]), _Endpoint(fds[1])
-      self._stream = stream
-    self.stats["reopens"] += 1
-    if not self._threads_started:
-      self._threads_started = True
-      threading.Thread(target=self._read_loop, name=f"{self.addon}-jetson-rx", daemon=True).start()
-      threading.Thread(target=self._write_loop, name=f"{self.addon}-jetson-tx", daemon=True).start()
+    try:
+      if self._rx is not None or self.clock() < self._next_open:
+        return
+      self._next_open = self.clock() + REOPEN_S
+      stream = self.cable_network()
+      fds = self._accept() if stream else self._open_endpoints()
+      if fds is None:
+        return
+      with self._lock:
+        self._rx, self._tx = _Endpoint(fds[0]), _Endpoint(fds[1])
+        self._stream = stream
+      self.stats["reopens"] += 1
+      if not self._threads_started:
+        self._threads_started = True
+        threading.Thread(target=self._read_loop, name=f"{self.addon}-jetson-rx", daemon=True).start()
+        threading.Thread(target=self._write_loop, name=f"{self.addon}-jetson-tx", daemon=True).start()
+    finally:
+      self._open_lock.release()
 
   def _open_endpoints(self) -> tuple[int, int] | None:
     self._stop_listening()
@@ -367,37 +386,48 @@ class AddonLink:
       slot[0].set()
 
   def _read_loop(self):
+    """The link's only reader, for the process's life: nothing that goes
+    wrong in a message ends it, or the link would never hear a hello again."""
     _mask_signals()
     buf = bytearray(READ_CHUNK)
     message = bytearray()
     while True:
-      endpoint, stream = self._rx, self._stream
-      fd = endpoint.acquire() if endpoint is not None else -1
-      if fd < 0:
-        message.clear()
-        time.sleep(0.2)
-        continue
       try:
-        got = os.readv(fd, [buf])
-      except OSError:
-        got = 0
-      finally:
-        endpoint.release()
-      if got == 0 or len(message) + got > W.MAX_ANSWER + 1:
-        # unbound, no longer configured, or no message ever ends: reopened once configured again
+        self._read_once(buf, message)
+      except Exception:
+        log.exception("jetlink: %s's reader hit an error, reopening the link", self.addon)
+        message.clear()
+        self._close()
+
+  def _read_once(self, buf: bytearray, message: bytearray) -> None:
+    """One read, and each message it ends handled; message carries a part over."""
+    endpoint, stream = self._rx, self._stream
+    fd = endpoint.acquire() if endpoint is not None else -1
+    if fd < 0:
+      message.clear()
+      time.sleep(0.2)
+      return
+    try:
+      got = os.readv(fd, [buf])
+    except OSError:
+      got = 0
+    finally:
+      endpoint.release()
+    if got == 0 or len(message) + got > W.MAX_ANSWER + 1:
+      # unbound, no longer configured, or no message ever ends: reopened once configured again
+      message.clear()
+      self._close(endpoint)
+      return
+    message += memoryview(buf)[:got]
+    if stream:
+      if not self._handle_stream(message):
         message.clear()
         self._close(endpoint)
-        continue
-      message += memoryview(buf)[:got]
-      if stream:
-        if not self._handle_stream(message):
-          message.clear()
-          self._close(endpoint)
-        continue
-      # a transfer goes on through whole pieces and ends at a short one: the pad byte sees to that
-      if got < READ_CHUNK:
-        self.handle(bytes(message))
-        message.clear()
+      return
+    # a transfer goes on through whole pieces and ends at a short one: the pad byte sees to that
+    if got < READ_CHUNK:
+      self.handle(bytes(message))
+      message.clear()
 
   def _handle_stream(self, message: bytearray) -> bool:
     """Each whole answer at the front of a TCP stream; False for a bad header."""
@@ -410,30 +440,36 @@ class AddonLink:
     return True
 
   def _write_loop(self):
+    """The link's only writer, for the process's life, as the reader is."""
     _mask_signals()
     while True:
-      msg = self._requests.get()
-      endpoint = self._tx
-      fd = endpoint.acquire() if endpoint is not None else -1
-      if fd < 0:
-        continue
-      failed = False
-      self._writing.set()
       try:
-        view = memoryview(msg)
-        for off in range(0, len(view), WRITE_CHUNK):
-          piece = view[off:off + WRITE_CHUNK]
-          while piece:
-            piece = piece[os.write(fd, piece):]
-      except OSError:
-        failed = True
-      finally:
-        endpoint.release()
+        self._write_once(self._requests.get())
+      except Exception:
+        log.exception("jetlink: %s's writer hit an error, reopening the link", self.addon)
         self._writing.clear()
-      if failed:
-        self._close(endpoint)
+        self._close()
 
-
+  def _write_once(self, msg) -> None:
+    endpoint = self._tx
+    fd = endpoint.acquire() if endpoint is not None else -1
+    if fd < 0:
+      return
+    failed = False
+    self._writing.set()
+    try:
+      view = memoryview(msg)
+      for off in range(0, len(view), WRITE_CHUNK):
+        piece = view[off:off + WRITE_CHUNK]
+        while piece:
+          piece = piece[os.write(fd, piece):]
+    except OSError:
+      failed = True
+    finally:
+      endpoint.release()
+      self._writing.clear()
+    if failed:
+      self._close(endpoint)
 
 
 def blob_to_u8(blob: np.ndarray) -> np.ndarray:

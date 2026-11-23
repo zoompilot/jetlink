@@ -190,7 +190,8 @@ one the import fails and every hook answers as the link off.
 
 Each is a vendor interface with one bulk OUT and one bulk IN endpoint. The
 name is 1 to 16 of `a-z0-9`; the class triple is how the host finds it, so it
-must not be Jetlink's `(0xFF, 0xFF, 0xFF)`. Jetlink links each one after its
+is vendor-specific, `(0xFF, subclass, protocol)`, and not Jetlink's
+`(0xFF, 0xFF, 0xFF)`. Jetlink links each one after its
 own interface, so Jetlink stays interface 0, mounts it at `/dev/ffs-<name>`,
 and the owner writes its descriptors and holds its `ep0`. The add-on opens
 only `ep1` (host to comma) and `ep2` (comma to host), and only once a host

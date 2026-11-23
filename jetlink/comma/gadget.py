@@ -400,7 +400,8 @@ def linked_functions() -> frozenset[str]:
     names = {p.name[len('ffs.'):] for p in (GADGET_PATH / 'configs' / 'c.1').glob('ffs.*')}
   except OSError:
     return frozenset()
-  return frozenset(names - {'jetlink'})   # ffs.jetlink is Jetlink's own
+  from jetlink.comma.functions import JETLINK_FUNCTION
+  return frozenset(names - {JETLINK_FUNCTION})
 
 
 def built_for_ios() -> bool:

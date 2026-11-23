@@ -123,7 +123,9 @@
   }
 
   /// An add-on's interface on the same descriptor, claimed by the app too: its
-  /// class triple and its bulk endpoints' addresses. Nil or an error.
+  /// class triple and its bulk endpoints' addresses. After usbAttach: it shares
+  /// the driving link's device, as usbfs has one completion queue per
+  /// descriptor and only one device may reap it. Nil or an error.
   @_cdecl("Java_io_zoompilot_jetlink_server_Native_usbAttachAddon")
   public func nativeUSBAttachAddon(
     _ env: Env, _ cls: jclass?, _ fd: jint, _ kind: jint, _ subclass: jint, _ proto: jint, _ inEndpoint: jint, _ outEndpoint: jint
@@ -131,7 +133,7 @@
     do {
       let triple = [kind, subclass, proto].map { UInt8(truncatingIfNeeded: $0) }
       try Host.shared.addonPort(triple).attach(
-        fd: fd, inEndpoint: UInt8(truncatingIfNeeded: inEndpoint), outEndpoint: UInt8(truncatingIfNeeded: outEndpoint))
+        sharing: Host.shared.gadget, inEndpoint: UInt8(truncatingIfNeeded: inEndpoint), outEndpoint: UInt8(truncatingIfNeeded: outEndpoint))
       return nil
     } catch {
       return jstring(env, String(describing: error))

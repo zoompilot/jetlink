@@ -59,6 +59,10 @@ class ProvisioningRun:
     self.fetch_failed = False
     # what came of each add-on model this run, by sha256 (note_addons)
     self.addon_results: dict[str, dict] = {}
+    # a warp is built for this camera: without one only the add-ons are provisioned
+    self.driving = True
+    # a driving model was picked, as provide_driving found
+    self.picked = True
 
   # -- lifecycle ------------------------------------------------------------
 
@@ -149,18 +153,45 @@ class ProvisioningRun:
     return parts.models.shipped_model_path() is None
 
   def provision(self) -> bool:
-    """Make the Jetson ready for the picked model; a host is attached. The
-    hello settles which pick that is, the comma's or a newer one made on the
-    server. A server without the model downloads it itself; only one that
-    cannot (no internet, or too old) gets the bytes from the comma, fetched
-    here then."""
-    from jetlink.client import EngineMissing
+    """Make the Jetson ready for the picked model, then send it the add-on
+    models it lacks; a host is attached. The add-ons go whatever came of the
+    driving model, none picked, its build failed or no warp to drive it with,
+    as they need none of it. False while either has work left."""
     parts = self.parts
     parts.progress.report('connect', 0.0, 'connecting', code='connecting')
     hello = self.hello()
     self.log.warning("jetlink: server %s trt %s", hello.get('device'), hello.get('trt_version'))
+    driving_error = None
+    try:
+      finished = self.provide_driving(hello) if self.driving else True
+    except Exception as e:
+      if self.stop:
+        raise
+      # said by run(), once the add-ons have had their turn
+      driving_error, finished = e, False
+    if self.stop:
+      self.note_addons('stopped: the car started')
+      return False
+    finished = self.provide_addons(hello) and finished
+    if driving_error is not None:
+      raise driving_error
+    if finished and self.driving:
+      parts.progress.report('ready', 1.0, 'engine ready', code='engine_ready')
+    elif not self.driving or not self.picked:
+      # nothing of the driving model's to show: the add-ons' last progress would stay up
+      parts.progress.clear()
+    return finished
+
+  def provide_driving(self, hello: dict) -> bool:
+    """The picked model, as the hello settles which pick that is, the comma's
+    or a newer one made on the server. A server without the model downloads
+    it itself; only one that cannot (no internet, or too old) gets the bytes
+    from the comma, fetched here then."""
+    from jetlink.client import EngineMissing
+    parts = self.parts
     parts.models.adopt()
     entry = parts.models.selected_model()
+    self.picked = entry is not None
     if entry is None:
       # no catalog yet; not an error
       parts.spec.clear_ready()
@@ -193,9 +224,7 @@ class ProvisioningRun:
       spec = ensure(model_path)
 
     self.log.warning("jetlink: engine ready for %s", spec.sha256[:16])
-    finished = self.provide_addons(hello)
-    parts.progress.report('ready', 1.0, 'engine ready', code='engine_ready')
-    return finished
+    return True
 
   def provide_addons(self, hello: dict) -> bool:
     """Send the server the add-on models it lacks, one at a time, then say
@@ -223,6 +252,7 @@ class ProvisioningRun:
     if not models:
       return
     names = {m.sha256: m.name for m in models}
+    # epoch seconds, for a panel to show
     record = {'at': time.time(), 'result': result,
               'models': {sha: {'name': names.get(sha, sha[:16]), **r} for sha, r in self.addon_results.items()}}
     self.log.warning("jetlink: add-ons: %s", result)
@@ -240,7 +270,7 @@ class ProvisioningRun:
     try:
       nbytes = path.stat().st_size
     except OSError:
-      self.log.error("jetlink: add-on %s has no model at %s", addon.name, path)
+      self.log.warning("jetlink: add-on %s has no model at %s", addon.name, path)
       self.addon_results[addon.sha256] = {'state': 'failed', 'detail': 'the comma has no copy of the model'}
       return True
     upload = link.verified_upload(self.log, path, addon.sha256, nbytes)
@@ -264,7 +294,7 @@ class ProvisioningRun:
       self.client.ensure_addon(addon.sha256, nbytes, upload, addon.function.iface_class, name=addon.name, progress=progress,
                                build_timeout=ADDON_BUILD_TIMEOUT, should_stop=lambda: self.stop, port=addon.function.port)
     except AddonFailed as e:
-      self.log.error("jetlink: the jetson cannot run add-on %s: %s", addon.name, e)
+      self.log.warning("jetlink: the jetson cannot run add-on %s: %s", addon.name, e)
       self.addon_results[addon.sha256] = {'state': 'failed', 'detail': str(e)}
       return True
     except LinkError as e:
@@ -298,7 +328,7 @@ class ProvisioningRun:
     that can download it gets it itself when it is on; the comma fetches it
     now only for a Jetson that cannot (no internet when it was last here, or
     too old to say), so the build can start the moment it is."""
-    if not self.has_work():
+    if not self.driving or not self.driving_work():
       return
     if self.needs_download():
       if server_fetches():
@@ -311,12 +341,18 @@ class ProvisioningRun:
 
   def has_work(self) -> bool:
     """Is there a reason to wake the Jetson? Only things the link can fix count."""
+    return (self.driving and self.driving_work()) or self.addon_work()
+
+  def driving_work(self) -> bool:
+    """The driving model is not known to be ready on the server, or the pick moved."""
     spec = self.parts.spec.load()
     if spec is None or not self.parts.spec.engine_ready_for(spec.sha256):
       return True
     selected = self.parts.models.selected_model()
-    if selected is not None and selected.get('oid') != spec.sha256:
-      return True
+    return selected is not None and selected.get('oid') != spec.sha256
+
+  def addon_work(self) -> bool:
+    """An add-on model turned on that the server lacks, or one turned off that it still keeps."""
     models, server = addon_models(self.parts), gadget.read_record(gadget.SERVER)
     # no hello since boot: whether the server has them is not known until one
     if models and not server:
@@ -373,10 +409,12 @@ class ProvisioningRun:
       return True
 
     # without a warp for this camera the engine would never run; the offroad
-    # alert says so, and waking the Jetson to build one would not change it
-    if not self.parts.warps.built():
+    # alert says so, and waking the Jetson to build one would not change it.
+    # The add-ons need no warp: they are still sent
+    self.driving = self.parts.warps.built()
+    if not self.driving and not self.addon_work():
       self.log.warning("jetlink: no warp built for this camera, nothing to provision for")
-      self.note_addons('waiting for the camera to be calibrated')
+      self.note_addons('JetLink has every add-on model')
       return True
 
     # Nothing to build, unless a model was picked on the server since: a

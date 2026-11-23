@@ -6,14 +6,15 @@ See the LICENSE file in the root directory for more details.
 
 A fork's add-on, declared once (docs/addons.md, "Offload a model"):
 
-    VASM = Addon('vasm', (0xFF, 0x56, 0x41), setting='MyForkVasmOnJetson',
-                 models=(('V-ASM', MODELS / 'v_asm.onnx', 'sha256 of that file'),))
+    def vasm():
+      return Addon('vasm', (0xFF, 0x56, 0x41), setting='MyForkVasmOnJetson',
+                   models=(('V-ASM', MODELS / 'v_asm.onnx', 'sha256 of that file'),))
 
     class Adapter(Stock):
-      ADDONS = (VASM,)                     # the gadget, the provisioning run and the setting's watch
+      ADDONS = (vasm(),)                   # the gadget, the provisioning run and the setting's watch
 
-    net = VASM.wrap(cv2.dnn.readNetFromONNX(path), sha256, [('output0', (1, 3))], params=Params(), scaled_u8=True)
-    run = VASM.model(lambda blob: session.run(None, {'images': blob}), sha256, [('output0', (1, 3))], params=Params())
+    net = vasm().wrap(cv2.dnn.readNetFromONNX(path), sha256, [('output0', (1, 3))], params=Params(), scaled_u8=True)
+    run = vasm().model(lambda blob: session.run(None, {'images': blob}), sha256, [('output0', (1, 3))], params=Params())
 
 From then on the setting turns it on and off live, a parked provisioning run
 sends the Jetson its models, the Jetson serves them, and the comma runs the
@@ -25,7 +26,7 @@ The standard library only: the owner reads ADDONS off the adapter.
 from __future__ import annotations
 
 import json
-import os
+import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,7 +37,8 @@ from jetlink.openpilot.interface import AddonModel
 SETTING_REFRESH_S = 2.0
 # the link reports every 30 s while it is used
 REPORT_FRESH_S = 75.0
-REPORT_DIR = Path('/tmp')
+# beside the owner's records (jetlink.comma.gadget)
+REPORT_DIR = Path('/dev/shm/jetlink')
 PREPARING_CODES = ('addon_upload', 'addon_build')
 # the worst of a model's states (provision.addon_state) names the add-on's
 WORST_FIRST = ('unsupported', 'failed', 'missing', None)
@@ -54,9 +56,14 @@ def live_setting(params, key: str | None, refresh_s: float = SETTING_REFRESH_S):
     nonlocal read_at, value
     now = time.monotonic()
     if read_at is None or now - read_at >= refresh_s:
-      read_at, value = now, bool(params.get_bool(key))
+      read_at, value = now, setting_on(params, key)
     return value
   return on
+
+
+def setting_on(params, key: str | None) -> bool:
+  """Is the BOOL param on? Always without a key."""
+  return key is None or params.get_bool(key) is True
 
 
 @dataclass(frozen=True)
@@ -79,7 +86,7 @@ class Addon:
     return self.report_path or REPORT_DIR / f'jetlink-addon-{self.name}.json'
 
   def enabled(self, params) -> bool:
-    return self.setting is None or params.get_bool(self.setting) is True
+    return setting_on(params, self.setting)
 
   def addon_models(self, params) -> tuple[AddonModel, ...]:
     """Its models while it is on, for the provisioning run (Stock.addon_models)."""
@@ -89,7 +96,17 @@ class Addon:
 
   def present(self) -> bool:
     """Does the gadget carry its interface, or the cable network that stands for it on an iPhone?"""
-    return present(self.function) or cable_network()
+    function = self.checked_function()
+    return function is not None and (present(function) or cable_network())
+
+  def checked_function(self) -> GadgetFunction | None:
+    """Its interface, or None for a name or class GadgetFunction refuses: the
+    model process then runs the model on the comma, as on any other doubt."""
+    try:
+      return self.function
+    except ValueError:
+      logging.getLogger(__name__).exception("jetlink: add-on %s runs on the comma alone", self.name)
+      return None
 
   # -- the comma's model process ------------------------------------------
 
@@ -98,7 +115,10 @@ class Addon:
     to report_file; net itself if the wrapper cannot be made
     (jetlink.addons.link.with_host)."""
     from jetlink.addons.link import with_host
-    return with_host(net, self.function, sha256, outputs, scaled_u8=scaled_u8, report=self.write_report,
+    function = self.checked_function()
+    if function is None:
+      return net
+    return with_host(net, function, sha256, outputs, scaled_u8=scaled_u8, report=self.write_report,
                      enabled=live_setting(params, self.setting))
 
   def model(self, local, sha256: str, outputs, *, params, scaled_u8: bool = False):
@@ -106,17 +126,18 @@ class Addon:
     order, as a call asking the Jetson first while the setting is on; local
     itself if the wrapper cannot be made (jetlink.addons.link.host_model)."""
     from jetlink.addons.link import host_model
-    return host_model(local, self.function, sha256, outputs, scaled_u8=scaled_u8, report=self.write_report,
+    function = self.checked_function()
+    if function is None:
+      return local
+    return host_model(local, function, sha256, outputs, scaled_u8=scaled_u8, report=self.write_report,
                       enabled=live_setting(params, self.setting))
 
   def write_report(self, report: dict) -> None:
-    path = self.report_file
-    tmp = path.with_name(f'.{path.name}.{os.getpid()}')
+    from jetlink.comma.gadget import write_record
     try:
-      tmp.write_text(json.dumps(report))
-      os.replace(tmp, path)
+      write_record(self.report_file, report)
     except OSError:
-      tmp.unlink(missing_ok=True)
+      pass
 
   # -- a fork's panel ---------------------------------------------------------
 
@@ -124,6 +145,7 @@ class Addon:
     """The link's last report while fresh: connected, yielding, missing, counts and round trips."""
     path = self.report_file
     try:
+      # wall clock, as st_mtime is
       if (time.time() if now is None else now) - path.stat().st_mtime > REPORT_FRESH_S:
         return None
       report = json.loads(path.read_text())

@@ -383,6 +383,41 @@ class TestAddons(OpenpilotTest):
     # once more after, so the owner's record lists them and the next park has nothing to wake the jetson for
     assert d.client.hello.call_count == 2
 
+  def test_addons_go_with_no_driving_model_picked(self):
+    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    with mock.patch.object(self.parts.models, 'selected_model', return_value=None):
+      assert d.provision() is False, 'the driving model is still work left'
+    assert [c.args[0] for c in d.client.ensure_addon.call_args_list] == [a.sha256 for a in self.addons]
+    # the add-ons' last progress does not stay up after them
+    self.assertEqual(self.parts.progress.method_calls[-1], mock.call.clear())
+
+  def test_addons_go_when_the_driving_model_fails_and_the_failure_still_reaches_the_run(self):
+    from jetlink.transport.base import LinkError
+    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d.client.ensure_engine.side_effect = LinkError('TensorRT returned no engine')
+    with self.assertRaises(LinkError):
+      d.provision()
+    assert [c.args[0] for c in d.client.ensure_addon.call_args_list] == [a.sha256 for a in self.addons]
+
+  def test_a_stop_during_the_driving_model_sends_no_addons(self):
+    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+
+    def stopped(*a, **k):
+      d.stop = True
+      raise RuntimeError('stopped while waiting for the engine')
+    d.client.ensure_engine.side_effect = stopped
+    with self.assertRaises(RuntimeError):
+      d.provision()
+    d.client.ensure_addon.assert_not_called()
+
+  def test_without_a_warp_only_the_addons_are_sent(self):
+    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d.driving = False
+    assert d.provision() is True
+    d.client.ensure_engine.assert_not_called()
+    assert d.client.ensure_addon.call_count == 2
+    self.assertEqual(self.parts.progress.method_calls[-1], mock.call.clear())
+
   def test_ready_and_failed_addons_are_not_sent_again(self):
     d = self.run_with(self.client_hearing({'ready': [self.addons[0].sha256], 'failed': [self.addons[1].sha256]}))
     assert d.provision() is True
@@ -567,6 +602,20 @@ class TestTheRun(OpenpilotTest):
     d = self.worker()
     d.open_link.return_value = False
     assert d.run() is False
+    d.provision.assert_not_called()
+
+  def test_no_warp_still_wakes_the_jetson_for_missing_addons_only(self):
+    d = self.worker()
+    self.parts.warps.built.return_value = False
+    self.patch(d, 'driving_work', mock.Mock(return_value=True))
+    addon_work = self.patch(d, 'addon_work', mock.Mock(return_value=True))
+    d.has_work = provision.ProvisioningRun.has_work.__get__(d)   # the real one, which goes by the warp
+    assert d.run() is True
+    d.provision.assert_called_once()
+    assert d.driving is False
+    addon_work.return_value = False
+    d.provision.reset_mock()
+    assert d.run() is True
     d.provision.assert_not_called()
 
   def test_no_jetson_is_left_for_the_next_run(self):

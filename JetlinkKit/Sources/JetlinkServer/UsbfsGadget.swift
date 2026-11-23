@@ -51,6 +51,13 @@
       defer { lock.unlock() }
       return attached.flatMap { $0.device.isGone ? nil : $0 }
     }
+
+    /// The descriptor's one `UsbfsDevice`, for an add-on interface the host
+    /// claimed on the same descriptor: usbfs has one completion queue per
+    /// descriptor, and only one device may reap it (UsbfsPipes.swift).
+    var device: UsbfsDevice? {
+      current?.device
+    }
   }
 
   extension UsbfsGadget: GadgetSource {

@@ -36,8 +36,11 @@ from pathlib import Path
 from jetlink import protocol as P
 
 NAME = re.compile(r'[a-z0-9]{1,16}\Z')
-# ffs.jetlink is Jetlink's own
-RESERVED = frozenset({'jetlink'})
+# ffs.jetlink is Jetlink's own (jetlink-root.sh's FFS_NAME)
+JETLINK_FUNCTION = 'jetlink'
+RESERVED = frozenset({JETLINK_FUNCTION})
+# every server finds an add-on by a vendor-specific class: the Android app claims only those
+VENDOR_CLASS = 0xFF
 MOUNT_PREFIX = '/dev/ffs-'
 # where the cable is a network (an iPhone) the add-on listens on the comma's
 # cable address instead, on a port its class picks, which the server is told
@@ -58,6 +61,9 @@ class GadgetFunction:
       raise ValueError(f"gadget function {self.name}: iface_class must be three bytes, not {self.iface_class!r}")
     if triple == P.USB_VENDOR_CLASS:
       raise ValueError(f"gadget function {self.name}: {triple} is Jetlink's own interface class")
+    if triple[0] != VENDOR_CLASS:
+      raise ValueError(f"gadget function {self.name}: its class must be vendor-specific, (0xFF, subclass, protocol), "
+                       f"not {self.iface_class!r}")
     object.__setattr__(self, 'iface_class', triple)
 
   @property
