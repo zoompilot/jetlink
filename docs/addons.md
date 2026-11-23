@@ -167,10 +167,9 @@ FunctionFS allocates one contiguous kernel buffer per call.
 
 ## Provisioning
 
-A server that serves add-ons says so in its hello: `addons`, `{serving, ready,
+A server that serves add-ons says so in its hello: `addons`, `{serving,
 failed}`. `serving` maps each interface class (`"ff/56/41"`) to the sha256s
-answered there; `ready` is every one of them, for a comma too old to read
-`serving`; `failed` is by sha256, as a model's limits are its own. A model
+answered there; `failed` is by sha256, as a model's limits are its own. A model
 built once is served on each interface that asks for it, from the one engine,
 and ready on an interface only once it is asked for there.
 A parked run sends it each add-on model neither served on its interface nor failed, after
@@ -196,11 +195,10 @@ is not sent on every park until its backend changes; deleting
 An add-on turned off is deleted from the server. The run's hellos carry
 `client.addons_keep`: each interface the fork puts on the gadget, then the
 sha256s turned on there, an empty list where all are off
-(`provision.addon_keep`). A server whose `addons` says `forgets` unloads
+(`provision.addon_keep`). The server unloads
 every other model on those interfaces and, once no interface serves or
 builds it, deletes its artifact and its uploaded bytes; an interface not
-named is left as it is. Turning one off starts a parked run, which wakes the
-Jetson only for a server that forgets; an older one ignores the field. A
+named is left as it is. Turning one off starts a parked run. A
 hook that fails sends no `addons_keep`, so nothing is deleted on a doubt.
 Turned on again, the model is sent and built again.
 

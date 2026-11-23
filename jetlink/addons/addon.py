@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from jetlink.comma.functions import GadgetFunction, cable_network, present
@@ -69,7 +69,6 @@ class Addon:
   iface_class: tuple[int, int, int]
   setting: str | None = None
   models: tuple[tuple[str, Path, str], ...] = ()
-  report_path: Path | None = field(default=None, compare=False)
 
   @property
   def function(self) -> GadgetFunction:
@@ -77,7 +76,7 @@ class Addon:
 
   @property
   def report_file(self) -> Path:
-    return self.report_path or REPORT_DIR / f'jetlink-addon-{self.name}.json'
+    return REPORT_DIR / f'jetlink-addon-{self.name}.json'
 
   def enabled(self, params) -> bool:
     return self.setting is None or params.get_bool(self.setting) is True

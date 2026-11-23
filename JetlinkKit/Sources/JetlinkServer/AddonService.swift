@@ -171,7 +171,7 @@ public final class AddonService: @unchecked Sendable {
         if !shas.isEmpty { serving[AddonWire.triple(kind)] = shas }
       }
       // forgets: a hello's addons_keep is heard, and what it leaves out is deleted
-      return ["ready": Set(serving.values.joined()).sorted(), "serving": serving, "failed": failed.keys.sorted(), "forgets": true]
+      return ["serving": serving, "failed": failed.keys.sorted()]
     }
   }
 
@@ -258,8 +258,7 @@ public final class AddonService: @unchecked Sendable {
           throw AddonRefused("\(job.name) does not hash to \(sha256.prefix(16))")
         }
         let model = try AddonModel.prepare(
-          job.file, backend: backend, root: cacheRoot, log: log, host: host, sha256: sha256, name: job.name, interface: job.kind,
-          port: job.port
+          job.file, backend: backend, root: cacheRoot, log: log, host: host, sha256: sha256, name: job.name
         ) { [self] stage, frac, message in
           lock.withLock { pending[key] ?? nil }?.progress(stage, frac, message, extra: ["addon": true, "sha256": sha256])
         }
@@ -433,25 +432,12 @@ public final class AddonService: @unchecked Sendable {
   private func stored() -> [(String, [UInt8], UInt16?, String)] {
     let built = Set(store.inventory())
     var out: [(String, [UInt8], UInt16?, String)] = []
-    var seen = Set<Key>()
-    let serving = loadServing()
-    // the sidecar's interface counts only for an artifact serving.json does not know
-    let listed = Set(serving.values.flatMap(\.keys))
-    for (triple, models) in serving {
+    for (triple, models) in loadServing() {
       guard let kind = AddonWire.interfaceClass(triple) else { continue }
-      for (sha256, meta) in models where built.contains(sha256) && seen.insert(Key(kind: kind, sha256: sha256)).inserted {
+      for (sha256, meta) in models where built.contains(sha256) {
         let port = (meta["port"] as? NSNumber).flatMap { UInt16(exactly: $0.intValue) }
         out.append((sha256, kind, port, meta["name"] as? String ?? String(sha256.prefix(16))))
       }
-    }
-    for sha256 in built.sorted() where !listed.contains(sha256) {
-      guard let entry = try? store.entry(sha256) else { continue }
-      let meta = Artifact.sidecar(entry.path)
-      guard let kind = (meta["interface"] as? String).flatMap(AddonWire.interfaceClass),
-        seen.insert(Key(kind: kind, sha256: sha256)).inserted
-      else { continue }
-      let port = (meta["port"] as? NSNumber).flatMap { UInt16(exactly: $0.intValue) }
-      out.append((sha256, kind, port, meta["addon"] as? String ?? String(sha256.prefix(16))))
     }
     return out
   }

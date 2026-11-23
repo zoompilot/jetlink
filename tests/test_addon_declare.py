@@ -29,11 +29,11 @@ def params(tmp_path):
 
 
 @pytest.fixture
-def vasm(tmp_path):
+def vasm(tmp_path, monkeypatch):
+  monkeypatch.setattr(A, 'REPORT_DIR', tmp_path)
   model = tmp_path / 'v_asm.onnx'
   model.write_bytes(b'onnx')
-  return A.Addon('vasm', (0xFF, 0x56, 0x41), setting='ForkVasm', models=(('V-ASM', model, hashlib.sha256(b'onnx').hexdigest()),),
-                 report_path=tmp_path / 'vasm.json')
+  return A.Addon('vasm', (0xFF, 0x56, 0x41), setting='ForkVasm', models=(('V-ASM', model, hashlib.sha256(b'onnx').hexdigest()),))
 
 
 def test_its_models_go_to_the_jetson_only_while_it_is_on(vasm, params):
@@ -92,11 +92,11 @@ def test_the_panel_state_is_the_worst_of_its_models(vasm, tmp_path):
   signs = A.Addon('signs', (0xFF, 0x53, 0x4C), models=(('Sign', vasm.models[0][1], 'a' * 64), ('Stop', stop, 'b' * 64)))
   assert signs.state(None, None) == {'host': None, 'preparing': '', 'last_check': '', 'last_check_at': None}
   assert signs.state({'device': 'orin'}, None)['host'] == 'unsupported'
-  assert signs.state({'addons': {'ready': ['a' * 64, 'b' * 64]}}, None)['host'] == 'ready'
-  assert signs.state({'addons': {'ready': ['a' * 64]}}, None)['host'] == 'missing'
-  assert signs.state({'addons': {'ready': ['a' * 64], 'failed': ['b' * 64]}}, None)['host'] == 'failed'
-  # a server that says per interface: ready only on this add-on's own
-  both = {'addons': {'ready': ['a' * 64, 'b' * 64], 'serving': {'ff/53/4c': ['a' * 64], 'ff/56/41': ['b' * 64]}}}
+  assert signs.state({'addons': {'serving': {'ff/53/4c': ['a' * 64, 'b' * 64]}}}, None)['host'] == 'ready'
+  assert signs.state({'addons': {'serving': {'ff/53/4c': ['a' * 64]}}}, None)['host'] == 'missing'
+  assert signs.state({'addons': {'serving': {'ff/53/4c': ['a' * 64]}, 'failed': ['b' * 64]}}, None)['host'] == 'failed'
+  # ready only on this add-on's own interface
+  both = {'addons': {'serving': {'ff/53/4c': ['a' * 64], 'ff/56/41': ['b' * 64]}}}
   assert signs.state(both, None)['host'] == 'missing'
   both['addons']['serving']['ff/53/4c'].append('b' * 64)
   assert signs.state(both, None)['host'] == 'ready'

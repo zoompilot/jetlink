@@ -159,10 +159,9 @@ final class AddonModel: @unchecked Sendable {
   /// model's own build or load and never beside one, and warms under its lock;
   /// a driving model's job that comes while it builds stops the build where
   /// the backend can (TensorRT), and this throws `AddonDeferred`.
-  /// `interface` goes in the sidecar, so the next start serves it there.
   static func prepare(
     _ file: URL, backend: any EngineBackend, root: URL, log: ServerLog, host: EngineHost? = nil, sha256 known: String? = nil,
-    name: String? = nil, interface: [UInt8]? = nil, port: UInt16? = nil, report progress: ProgressFn? = nil
+    name: String? = nil, report progress: ProgressFn? = nil
   ) throws -> AddonModel {
     if let host {
       while host.drivingBusy { Thread.sleep(forTimeInterval: 1) }
@@ -176,9 +175,7 @@ final class AddonModel: @unchecked Sendable {
       if !message.isEmpty { log.debug("\(name): \(stage) \(message)") }
       progress?(stage, frac, message)
     }
-    var meta: [String: Any] = ["addon": name, "spec": ["sha256": sha256]]
-    if let interface { meta["interface"] = AddonWire.triple(interface) }
-    if let port { meta["port"] = Int(port) }
+    let meta: [String: Any] = ["addon": name, "spec": ["sha256": sha256]]
     // the driving model's job is waiting for the device this build holds
     let yielding: @Sendable () -> Bool = { host?.drivingBusy ?? false }
     func build() throws {

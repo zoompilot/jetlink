@@ -475,11 +475,9 @@ def addon_keep(parts) -> dict | None:
 
 
 def addons_extra(keep: dict | None, server: dict | None) -> bool:
-  """Does the server serve a model on one of keep's interfaces that is not
-  in it, and delete one on a hello's word (`forgets`)? Never for an older
-  server: it would keep it, and the Jetson would be woken every park."""
+  """Does the server serve a model on one of keep's interfaces that is not in it?"""
   addons = (server or {}).get('addons')
-  if not keep or not isinstance(addons, dict) or addons.get('forgets') is not True:
+  if not keep or not isinstance(addons, dict):
     return False
   serving = addons.get('serving') if isinstance(addons.get('serving'), dict) else {}
   return any(set(serving.get(triple) or ()) - set(shas) for triple, shas in keep.items())
@@ -488,13 +486,10 @@ def addons_extra(keep: dict | None, server: dict | None) -> bool:
 def _serves(addons: dict, sha256: str, iface_class) -> bool:
   """Does the server serve sha256 on iface_class's interface? Its hello's
   `serving` says per interface: a model built for one add-on is not served on
-  another's until it is asked for there. A server too old to say has only
-  `ready`, and served each model on one interface."""
-  serving = addons.get('serving')
-  if isinstance(serving, dict) and iface_class is not None:
-    from jetlink.addons.wire import interface_triple
-    return sha256 in (serving.get(interface_triple(iface_class)) or ())
-  return sha256 in (addons.get('ready') or ())
+  another's until it is asked for there."""
+  from jetlink.addons.wire import interface_triple
+  serving = addons.get('serving') if isinstance(addons.get('serving'), dict) else {}
+  return sha256 in (serving.get(interface_triple(iface_class)) or ())
 
 
 def addons_missing(models, server: dict | None) -> list:
@@ -504,9 +499,9 @@ def addons_missing(models, server: dict | None) -> list:
   return [m for m in models if addon_state(m.sha256, server, m.function.iface_class) == 'missing']
 
 
-def addon_state(sha256: str, server: dict | None, iface_class=None) -> str | None:
+def addon_state(sha256: str, server: dict | None, iface_class) -> str | None:
   """An add-on model on the server the comma last spoke to, as the owner
-  keeps its hello: ready (on iface_class's interface, given one), failed,
+  keeps its hello: ready (on iface_class's interface), failed,
   missing, or unsupported for a server too old to serve add-ons. None before
   any hello."""
   if not server:

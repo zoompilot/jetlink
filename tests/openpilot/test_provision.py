@@ -346,32 +346,30 @@ class TestAddons(OpenpilotTest):
     self.keep_functions()
     vasm, signs = self.addons
     self.op.addon_models.return_value = (vasm,)
-    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d = self.run_with(self.client_hearing({'serving': {}, 'failed': []}))
     d.hello()
     self.assertEqual(d.client.hello.call_args.kwargs['addons_keep'], {'ff/56/41': [vasm.sha256], 'ff/53/4c': []})
 
   def test_a_failing_hook_keeps_everything(self):
     self.keep_functions()
     self.op.addon_models.side_effect = RuntimeError('boom')
-    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d = self.run_with(self.client_hearing({'serving': {}, 'failed': []}))
     d.hello()
     self.assertNotIn('addons_keep', d.client.hello.call_args.kwargs)
     self.assertIsNone(provision.addon_keep(self.parts))
 
-  def test_an_addon_turned_off_wakes_the_jetson_only_if_it_forgets(self):
+  def test_an_addon_turned_off_wakes_the_jetson(self):
     vasm, signs = self.addons
     keep = {'ff/56/41': [vasm.sha256], 'ff/53/4c': []}
     serving = {'ff/56/41': [vasm.sha256], 'ff/53/4c': [signs.sha256]}
-    self.assertTrue(provision.addons_extra(keep, {'addons': {'serving': serving, 'forgets': True}}))
-    # an older server keeps it whatever the hello says: waking it every park would change nothing
-    self.assertFalse(provision.addons_extra(keep, {'addons': {'serving': serving}}))
-    self.assertFalse(provision.addons_extra(keep, {'addons': {'serving': {'ff/56/41': [vasm.sha256]}, 'forgets': True}}))
+    self.assertTrue(provision.addons_extra(keep, {'addons': {'serving': serving}}))
+    self.assertFalse(provision.addons_extra(keep, {'addons': {'serving': {'ff/56/41': [vasm.sha256]}}}))
     # an interface the comma does not name is not its business
-    self.assertFalse(provision.addons_extra({'ff/56/41': [vasm.sha256]}, {'addons': {'serving': serving, 'forgets': True}}))
-    self.assertFalse(provision.addons_extra(None, {'addons': {'serving': serving, 'forgets': True}}))
+    self.assertFalse(provision.addons_extra({'ff/56/41': [vasm.sha256]}, {'addons': {'serving': serving}}))
+    self.assertFalse(provision.addons_extra(None, {'addons': {'serving': serving}}))
 
   def test_each_missing_addon_is_sent_after_the_driving_model(self):
-    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d = self.run_with(self.client_hearing({'serving': {}, 'failed': []}))
     order = []
     d.client.ensure_engine.side_effect = lambda *a, **k: order.append('driving') or FakeSpec()
     d.client.ensure_addon.side_effect = lambda sha, *a, **k: order.append(sha)
@@ -384,7 +382,7 @@ class TestAddons(OpenpilotTest):
     assert d.client.hello.call_count == 2
 
   def test_addons_go_with_no_driving_model_picked(self):
-    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d = self.run_with(self.client_hearing({'serving': {}, 'failed': []}))
     with mock.patch.object(self.parts.models, 'selected_model', return_value=None):
       assert d.provision() is False, 'the driving model is still work left'
     assert [c.args[0] for c in d.client.ensure_addon.call_args_list] == [a.sha256 for a in self.addons]
@@ -393,14 +391,14 @@ class TestAddons(OpenpilotTest):
 
   def test_addons_go_when_the_driving_model_fails_and_the_failure_still_reaches_the_run(self):
     from jetlink.transport.base import LinkError
-    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d = self.run_with(self.client_hearing({'serving': {}, 'failed': []}))
     d.client.ensure_engine.side_effect = LinkError('TensorRT returned no engine')
     with self.assertRaises(LinkError):
       d.provision()
     assert [c.args[0] for c in d.client.ensure_addon.call_args_list] == [a.sha256 for a in self.addons]
 
   def test_a_stop_during_the_driving_model_sends_no_addons(self):
-    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d = self.run_with(self.client_hearing({'serving': {}, 'failed': []}))
 
     def stopped(*a, **k):
       d.stop = True
@@ -411,7 +409,7 @@ class TestAddons(OpenpilotTest):
     d.client.ensure_addon.assert_not_called()
 
   def test_without_a_warp_only_the_addons_are_sent(self):
-    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d = self.run_with(self.client_hearing({'serving': {}, 'failed': []}))
     d.driving = False
     assert d.provision() is True
     d.client.ensure_engine.assert_not_called()
@@ -419,7 +417,9 @@ class TestAddons(OpenpilotTest):
     self.assertEqual(self.parts.progress.method_calls[-1], mock.call.clear())
 
   def test_ready_and_failed_addons_are_not_sent_again(self):
-    d = self.run_with(self.client_hearing({'ready': [self.addons[0].sha256], 'failed': [self.addons[1].sha256]}))
+    from jetlink.addons.wire import interface_triple
+    d = self.run_with(self.client_hearing({'serving': {interface_triple(self.addons[0].function.iface_class): [self.addons[0].sha256]},
+                                            'failed': [self.addons[1].sha256]}))
     assert d.provision() is True
     d.client.ensure_addon.assert_not_called()
     assert d.client.hello.call_count == 1
@@ -432,25 +432,26 @@ class TestAddons(OpenpilotTest):
   def test_an_addon_the_jetson_cannot_run_is_done_and_a_lost_link_is_not(self):
     from jetlink.client import AddonFailed
     from jetlink.transport.base import LinkError
-    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d = self.run_with(self.client_hearing({'serving': {}, 'failed': []}))
     d.client.ensure_addon.side_effect = [AddonFailed('no'), None]
     assert d.provision() is True
-    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d = self.run_with(self.client_hearing({'serving': {}, 'failed': []}))
     d.client.ensure_addon.side_effect = [LinkError('gone'), None]
     assert d.provision() is False
 
   def test_a_file_that_is_not_the_addon_is_never_sent(self):
     self.addons[0].path.write_bytes(b'something else')
-    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d = self.run_with(self.client_hearing({'serving': {}, 'failed': []}))
     assert d.provision() is True
     assert [c.args[0] for c in d.client.ensure_addon.call_args_list] == [self.addons[1].sha256]
 
   def test_missing_addons_are_work_only_for_a_server_that_serves_them(self):
+    from jetlink.addons.wire import interface_triple
     self.cache.store(FakeSpec())
     d = provision.ProvisioningRun(self.parts)
     # no hello since boot: a hello decides, so a parked run wakes the server for one
-    for record, work in ((None, True), ({'device': 'orin'}, False), ({'addons': {'ready': []}}, True),
-                         ({'addons': {'ready': [a.sha256 for a in self.addons]}}, False)):
+    for record, work in ((None, True), ({'device': 'orin'}, False), ({'addons': {'serving': {}}}, True),
+                         ({'addons': {'serving': {interface_triple(a.function.iface_class): [a.sha256] for a in self.addons}}}, False)):
       with self.subTest(record=record):
         if record is None:
           gadget.SERVER.unlink(missing_ok=True)
@@ -460,7 +461,7 @@ class TestAddons(OpenpilotTest):
 
   def test_each_run_says_what_came_of_the_addons_for_the_panel(self):
     from jetlink.client import AddonFailed
-    d = self.run_with(self.client_hearing({'ready': [], 'failed': []}))
+    d = self.run_with(self.client_hearing({'serving': {}, 'failed': []}))
     d.client.ensure_addon.side_effect = [None, AddonFailed('too big')]
     assert d.provision() is True
     run = gadget.read_record(gadget.ADDON_RUN)
@@ -472,24 +473,22 @@ class TestAddons(OpenpilotTest):
     assert gadget.read_record(gadget.ADDON_RUN)['result'] == 'JetLink is too old for add-ons'
 
   def test_the_panel_reads_each_addon_off_the_owner_s_record(self):
-    sha = self.addons[0].sha256
-    assert provision.addon_state(sha, None) is None
-    assert provision.addon_state(sha, {'device': 'orin'}) == 'unsupported'
-    assert provision.addon_state(sha, {'addons': {'ready': [sha]}}) == 'ready'
-    assert provision.addon_state(sha, {'addons': {'failed': [sha]}}) == 'failed'
-    assert provision.addon_state(sha, {'addons': {}}) == 'missing'
-    iface = self.addons[0].function.iface_class
-    elsewhere = {'addons': {'ready': [sha], 'serving': {'ff/00/01': [sha]}}}
+    from jetlink.addons.wire import interface_triple
+    sha, iface = self.addons[0].sha256, self.addons[0].function.iface_class
+    assert provision.addon_state(sha, None, iface) is None
+    assert provision.addon_state(sha, {'device': 'orin'}, iface) == 'unsupported'
+    assert provision.addon_state(sha, {'addons': {'serving': {interface_triple(iface): [sha]}}}, iface) == 'ready'
+    assert provision.addon_state(sha, {'addons': {'failed': [sha]}}, iface) == 'failed'
+    assert provision.addon_state(sha, {'addons': {}}, iface) == 'missing'
+    elsewhere = {'addons': {'serving': {'ff/00/01': [sha]}}}
     assert provision.addon_state(sha, elsewhere, iface) == 'missing', 'ready, but on another interface'
-    assert provision.addon_state(sha, elsewhere) == 'ready', 'no interface asked: any'
 
   def test_a_model_ready_on_another_interface_is_still_sent_for_its_own(self):
     from jetlink.addons.wire import interface_triple
     ready = [a.sha256 for a in self.addons]
     mine = {interface_triple(a.function.iface_class): [a.sha256] for a in self.addons}
-    assert provision.addons_missing(self.addons, {'addons': {'ready': ready, 'serving': mine}}) == []
-    assert provision.addons_missing(self.addons, {'addons': {'ready': ready}}) == [], 'an older server: ready is enough'
-    other = {'addons': {'ready': ready, 'serving': {'ff/00/01': ready}}}
+    assert provision.addons_missing(self.addons, {'addons': {'serving': mine}}) == []
+    other = {'addons': {'serving': {'ff/00/01': ready}}}
     assert provision.addons_missing(self.addons, other) == list(self.addons)
 
 

@@ -301,9 +301,6 @@ class FakeLink:
     self.images.append(image)
     return self.flat
 
-  def ready(self, tag):
-    return True
-
   def poll(self, tag):
     return True
 
@@ -326,7 +323,6 @@ def test_jetson_net_splits_outputs_by_name_and_falls_back():
   assert net.forward(["inner/layer"]) == ("cpu", ["inner/layer"])
   net.link.flat = None
   assert net.forward(["output0"]) == ("cpu", ["output0"])
-  assert net.stats == {"host": 3, "local": 2}
 
 
 def test_forward_with_no_names_is_the_first_output_given_not_the_first_by_name():
@@ -357,8 +353,7 @@ def test_any_runtime_asks_the_host_first_and_runs_its_own_model_otherwise():
   assert model(blob) == ("own", "model") and ran == [(1, 3, 4, 4)]
   model.enabled = lambda: False
   link.flat = np.arange(5, dtype=np.float32)
-  assert model(blob) == ("own", "model")
-  assert model.stats == {"host": 1, "local": 2}
+  assert model(blob) == ("own", "model") and ran == [(1, 3, 4, 4)] * 2
 
 
 def test_reports_go_to_the_callback(tmp_path, no_threads):
@@ -504,9 +499,9 @@ def test_a_switched_off_net_never_asks_and_switches_back_on(tmp_path, no_threads
   link = FakeLink(np.arange(3, dtype=np.float32))
   net = JetsonNet(CpuNet(), link, SHA, (("output0", (1, 3)),), enabled=lambda: on[0])
   net.setInput(np.zeros((1, 3, 4, 4), np.float32))
-  assert net.forward() == ("cpu", None) and link.sent == [] and not net.ready()
+  assert net.forward() == ("cpu", None) and link.sent == []
   on[0] = True
-  assert net.forward().tolist() == [[0, 1, 2]] and net.ready()
+  assert net.forward().tolist() == [[0, 1, 2]] and len(link.sent) == 1
 
 
 def test_a_broken_switch_is_off():

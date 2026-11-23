@@ -468,7 +468,6 @@ class HostModel:
     self.sizes = [int(np.prod(shape)) for _, shape in self.wire]
     self.scaled_u8 = scaled_u8
     self.enabled = enabled
-    self.stats = {"host": 0, "local": 0}
     link.want(self.tag)
 
   def on(self) -> bool:
@@ -476,9 +475,6 @@ class HostModel:
       return self.enabled is None or bool(self.enabled())
     except Exception:
       return False
-
-  def ready(self) -> bool:
-    return self.on() and self.link.ready(self.tag)
 
   def ask(self, blob) -> dict | None:
     """Every output by name from the host; None for the caller's own model."""
@@ -498,11 +494,7 @@ class HostModel:
 
   def __call__(self, blob):
     values = self.ask(blob)
-    if values is not None:
-      self.stats["host"] += 1
-      return tuple(values[name] for name, _ in self.outputs)
-    self.stats["local"] += 1
-    return self.local(blob)
+    return self.local(blob) if values is None else tuple(values[name] for name, _ in self.outputs)
 
 
 class JetsonNet(HostModel):
@@ -510,7 +502,7 @@ class JetsonNet(HostModel):
   of `outputs` is what forward() with no names returns, as cv2 returns the
   graph's first."""
 
-  _OWN = frozenset({"net", "link", "tag", "local", "outputs", "wire", "sizes", "scaled_u8", "enabled", "blob", "stats"})
+  _OWN = frozenset({"net", "link", "tag", "local", "outputs", "wire", "sizes", "scaled_u8", "enabled", "blob"})
 
   def __init__(self, net, link: AddonLink, sha256: str, outputs, scaled_u8: bool = False, enabled=None):
     self.net, self.blob = net, None
@@ -524,9 +516,7 @@ class JetsonNet(HostModel):
     wanted = [self.outputs[0][0]] if names is None else ([names] if isinstance(names, str) else list(names))
     values = self.ask(self.blob) if set(wanted) <= {name for name, _ in self.outputs} else None
     if values is not None:
-      self.stats["host"] += 1
       return values[wanted[0]] if names is None or isinstance(names, str) else tuple(values[name] for name in wanted)
-    self.stats["local"] += 1
     return self.net.forward() if names is None else self.net.forward(names)
 
   def __getattr__(self, name):

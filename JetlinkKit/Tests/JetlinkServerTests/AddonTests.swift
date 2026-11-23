@@ -390,14 +390,13 @@ struct AddonTests {
       service.start()
       let hello = try client.hello()
       let addons = try #require(hello["addons"] as? [String: Any])
-      #expect(addons["ready"] as? [String] == [] && addons["failed"] as? [String] == [])
+      #expect(addons["serving"] as? [String: [String]] == [:] && addons["failed"] as? [String] == [])
       _ = try client.ensureEngine(model: golden.model, sha256: golden.sha256)
 
       let state = try provision(client, model: Self.addon, sha256: Self.addonSHA)
       #expect(state["state"] as? String == "ready" && state["sha256"] as? String == Self.addonSHA && state["spec"] == nil)
       #expect(server.host.loadedSHA() == golden.sha256)
       let again = try client.hello()
-      #expect((again["addons"] as? [String: Any])?["ready"] as? [String] == [Self.addonSHA])
       #expect((again["addons"] as? [String: Any])?["serving"] as? [String: [String]] == ["ff/54/59": [Self.addonSHA]])
       #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA)["state"] as? String == "ready")
       // the same model for another add-on: ready there only once that interface serves it, from the same engine
@@ -420,7 +419,6 @@ struct AddonTests {
       restarted.start()
       defer { restarted.stop() }
       #expect(eventually { restarted.helloState()["serving"] as? [String: [String]] == both })
-      #expect(restarted.helloState()["ready"] as? [String] == [Self.addonSHA])
     }
   }
 
@@ -432,8 +430,6 @@ struct AddonTests {
       let service = AddonService(host: server.host, cacheRoot: root) { _ in AbsentAddon() }
       service.start()
       defer { service.stop() }
-      let hello = try client.hello()
-      #expect((hello["addons"] as? [String: Any])?["forgets"] as? Bool == true)
       _ = try client.ensureEngine(model: golden.model, sha256: golden.sha256)
       #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA)["state"] as? String == "ready")
       #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA, interface: "ff/56/41")["state"] as? String == "ready")
