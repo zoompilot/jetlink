@@ -324,6 +324,17 @@ struct UsbfsPipesTests {
     #expect(throws: LinkError.self) { try pipes.read(into: scratch.pointer, count: slot, timeout: 0) }
   }
 
+  @Test("An add-on's pipes take messages that end on a short packet, each whole")
+  func addonShortPackets() throws {
+    let pipes = UsbfsPipes(device: device, inEndpoint: 0x81, outEndpoint: 0x01, shortPackets: true)
+    let first = pattern(24 + slot + 5000, seed: 1)
+    let second = pattern(24 + 700, seed: 2)
+    kernel.feed(first)
+    kernel.feed(second)
+    #expect(try readAll(pipes, first.count) == first)
+    #expect(try readAll(pipes, second.count) == second)
+  }
+
   @Test("A zero-length packet keeps the ring on the grid")
   func zeroLengthPacket() throws {
     let pipes = pipes(device)

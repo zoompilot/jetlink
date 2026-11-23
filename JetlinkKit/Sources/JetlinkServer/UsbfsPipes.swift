@@ -36,10 +36,11 @@ final class UsbfsPipes: BulkPipes, ReadRingPipe, @unchecked Sendable {
   private var closed = false
   private var released = false
 
-  init(device: UsbfsDevice, inEndpoint: UInt8, outEndpoint: UInt8) {
+  /// `shortPackets`: an add-on's interface, whose messages end on a short packet (`ReadRing`).
+  init(device: UsbfsDevice, inEndpoint: UInt8, outEndpoint: UInt8, shortPackets: Bool = false) {
     self.device = device
     urbs = device.take(inEndpoint: inEndpoint, outEndpoint: outEndpoint)
-    ring = ReadRing(lock: device.condition, pipe: self)
+    ring = ReadRing(lock: device.condition, pipe: self, shortPackets: shortPackets)
     let owner = ObjectIdentifier(self)
     for urb in slots {
       urb.owner = owner

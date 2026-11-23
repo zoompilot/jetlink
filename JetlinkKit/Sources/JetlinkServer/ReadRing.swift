@@ -32,7 +32,9 @@ protocol ReadRingPipe: AnyObject {
 ///
 /// A short packet takes the stream off the grid, which only a broken stream
 /// does: the read fails, the session ends, and the comma reconnects. A
-/// zero-length packet carries nothing and leaves the grid alone.
+/// zero-length packet carries nothing and leaves the grid alone. An add-on's
+/// interface (`shortPackets`) has no grid: its messages end on a short
+/// packet, which ends the read there, so a read still never spans two.
 ///
 /// One reader at a time. Every call is made under `lock`, which the pipe also
 /// holds when it calls `complete`, and releases while it waits.
@@ -54,6 +56,7 @@ final class ReadRing: @unchecked Sendable {
 
   let lock: NSCondition
   private unowned let pipe: any ReadRingPipe
+  private let shortPackets: Bool
   private var state: [Slot]
   private var actual: [Int]
   private var failures: [LinkError?]
@@ -63,9 +66,10 @@ final class ReadRing: @unchecked Sendable {
   /// Slots from `head` on that are posted or done, in the order posted.
   private var used = 0
 
-  init(lock: NSCondition, pipe: any ReadRingPipe) {
+  init(lock: NSCondition, pipe: any ReadRingPipe, shortPackets: Bool = false) {
     self.lock = lock
     self.pipe = pipe
+    self.shortPackets = shortPackets
     state = Array(repeating: .idle, count: ReadRing.depth)
     actual = Array(repeating: 0, count: ReadRing.depth)
     failures = Array(repeating: nil, count: ReadRing.depth)
@@ -102,7 +106,7 @@ final class ReadRing: @unchecked Sendable {
     switch completion {
     case .failed(let error):
       failures[slot] = error
-    case .data where count > 0 && count < ReadRing.slotSize:
+    case .data where count > 0 && count < ReadRing.slotSize && !shortPackets:
       failures[slot] = .desynced("a short packet from the comma: the stream is off the 16 KB grid")
     case .data:
       actual[slot] = min(max(count, 0), ReadRing.slotSize)

@@ -50,7 +50,7 @@
 
     public func open() throws -> AddonPipes {
       guard let current = current() else { throw LinkError.closed("the add-on interface is not attached") }
-      return AddonPipes(UsbfsPipes(device: current.device, inEndpoint: current.inEndpoint, outEndpoint: current.outEndpoint))
+      return AddonPipes(UsbfsPipes(device: current.device, inEndpoint: current.inEndpoint, outEndpoint: current.outEndpoint, shortPackets: true))
     }
 
     private func swap(_ next: Attached?) -> Attached? {
