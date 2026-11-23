@@ -30,8 +30,10 @@ public enum AddonWire {
     /// u8, which the server divides by 255: a blobFromImage(1/255) image's own bytes
     case u8 = 0
     case f32 = 1
+    /// u8 the model is given as the same values, whatever its input type
+    case bytes = 2
 
-    public var itemBytes: Int { self == .u8 ? 1 : 4 }
+    public var itemBytes: Int { self == .f32 ? 4 : 1 }
   }
 
   public enum Status: Int32, Sendable {

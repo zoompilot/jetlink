@@ -190,15 +190,15 @@ class AddonLink:
       return False
     return True
 
-  def infer(self, model_tag: int, image: np.ndarray, out_size: int) -> np.ndarray | None:
+  def infer(self, model_tag: int, image: np.ndarray, out_size: int, encoding: int | None = None) -> np.ndarray | None:
     """The model's outputs, flat float32 in output-name order, from the host;
-    None for the caller's own model. image is [c, h, w]: uint8, which the host
-    gives a uint8 input as it is and a float one divided by 255, or float32 as
-    the model takes it."""
+    None for the caller's own model. image is [c, h, w], uint8 or float32,
+    whose values the host gives the model as they are; encoding W.ENC_U8
+    instead has it divide uint8 by 255."""
     if not self.poll(model_tag):
       return None
-    encoding = {np.dtype(np.uint8): W.ENC_U8, np.dtype(np.float32): W.ENC_F32}.get(image.dtype)
-    if encoding is None or image.ndim != 3 or image.nbytes + W.REQ.size >= W.MAX_REQUEST:
+    encoding = encoding if encoding is not None else {np.dtype(np.uint8): W.ENC_BYTES, np.dtype(np.float32): W.ENC_F32}.get(image.dtype)
+    if encoding is None or W.ITEM[encoding] != image.itemsize or image.ndim != 3 or image.nbytes + W.REQ.size >= W.MAX_REQUEST:
       return None
     with self._lock:
       self._seq = (self._seq + 1) % W.HELLO_SEQ
@@ -459,8 +459,8 @@ class HostModel:
   them in name order. scaled_u8: the caller promises the blob is a u8 image
   scaled by 1/255 (blobFromImage(img, 1/255)), so it goes as its u8 bytes, a
   quarter of the size and exact. Any other float blob must leave it False,
-  the default, and goes as f32; a uint8 blob, for a model that takes bytes,
-  goes as it is. A blob cv2's setInput would scale or shift runs on the
+  the default, and goes as f32; a uint8 blob goes as its bytes, which the
+  host gives the model as the same values. A blob cv2's setInput would scale or shift runs on the
   comma. enabled: a cheap callable read on every call, so a
   setting turns the host off and on without a reload."""
 
@@ -486,11 +486,13 @@ class HostModel:
       return None
     blob = np.asarray(blob)
     if blob.dtype == np.uint8:
-      # a model that takes bytes: they go as they are, which the host gives a uint8 input as they are
-      image = np.ascontiguousarray(blob[0])
+      # its values as they are, whatever the model's input type
+      image, encoding = np.ascontiguousarray(blob[0]), W.ENC_BYTES
+    elif self.scaled_u8:
+      image, encoding = blob_to_u8(blob), W.ENC_U8
     else:
-      image = blob_to_u8(blob) if self.scaled_u8 else np.ascontiguousarray(blob[0], np.float32)
-    flat = self.link.infer(self.tag, image, sum(self.sizes))
+      image, encoding = np.ascontiguousarray(blob[0], np.float32), W.ENC_F32
+    flat = self.link.infer(self.tag, image, sum(self.sizes), encoding)
     if flat is None:
       return None
     values, start = {}, 0

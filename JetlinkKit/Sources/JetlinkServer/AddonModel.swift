@@ -86,7 +86,7 @@ final class AddonModel: @unchecked Sendable {
     guard let target = engine.hostInput(input.name) else { throw HostError.failed("\(file): no host input") }
     let count = input.count
     switch (request.encoding, input.type) {
-    case (.u8, .uint8):
+    case (.u8, .uint8), (.bytes, .uint8):
       target.copyMemory(from: image.baseAddress!, byteCount: count)
     case (.u8, .float):
       let out = target.assumingMemoryBound(to: Float.self)
@@ -94,6 +94,12 @@ final class AddonModel: @unchecked Sendable {
     case (.u8, .float16):
       let out = target.assumingMemoryBound(to: Float16.self)
       for i in 0..<count { out[i] = Float16(Float(image[i]) / 255) }
+    case (.bytes, .float):
+      let out = target.assumingMemoryBound(to: Float.self)
+      for i in 0..<count { out[i] = Float(image[i]) }
+    case (.bytes, .float16):
+      let out = target.assumingMemoryBound(to: Float16.self)
+      for i in 0..<count { out[i] = Float16(Float(image[i])) }
     case (.f32, .float):
       target.copyMemory(from: image.baseAddress!, byteCount: count * 4)
     case (.f32, .float16):

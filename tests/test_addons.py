@@ -294,11 +294,12 @@ class CpuNet:
 
 class FakeLink:
   def __init__(self, flat):
-    self.flat, self.sent, self.images = flat, [], []
+    self.flat, self.sent, self.images, self.encodings = flat, [], [], []
 
-  def infer(self, tag, image, size):
+  def infer(self, tag, image, size, encoding=None):
     self.sent.append((tag, image.shape, size))
     self.images.append(image)
+    self.encodings.append(encoding)
     return self.flat
 
   def poll(self, tag):
@@ -340,6 +341,8 @@ def test_a_byte_blob_goes_as_its_bytes():
   net.setInput(blob)
   assert net.forward().tolist() == [[0, 1]]
   assert link.images[0].dtype == np.uint8 and np.array_equal(link.images[0], blob[0])
+  # the values as they are: a float-input model is given 128.0 for a byte of 128, never 128/255
+  assert link.encodings == [W.ENC_BYTES]
 
 
 def test_a_blob_cv2_would_scale_or_shift_runs_on_the_comma():

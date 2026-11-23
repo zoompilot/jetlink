@@ -10,7 +10,7 @@ the host's copy. Standard library only.
 
   request  JAQ1: <4sIIHHHBBI magic, seq, tag, c, h, w, encoding, version, nbytes>
            + the image, [c, h, w]: u8 for ENC_U8 (the server divides by 255),
-           f32 for ENC_F32
+           f32 for ENC_F32, u8 for ENC_BYTES (the values as they are)
   answer   JAR1: <4sIIiII magic, seq, tag, status, server_us, nfloats>
            + f32 [nfloats]: every graph output, flattened, in name order
   hello    JAR1 with seq HELLO_SEQ, tag VERSION, status STATUS_HELLO or
@@ -32,8 +32,8 @@ VERSION = 1
 REQ = struct.Struct('<4sIIHHHBBI')
 RESP = struct.Struct('<4sIIiII')
 REQ_MAGIC, RESP_MAGIC = b'JAQ1', b'JAR1'
-ENC_U8, ENC_F32 = 0, 1
-ITEM = {ENC_U8: 1, ENC_F32: 4}
+ENC_U8, ENC_F32, ENC_BYTES = 0, 1, 2
+ITEM = {ENC_U8: 1, ENC_F32: 4, ENC_BYTES: 1}
 STATUS_OK, STATUS_BAD_REQUEST, STATUS_INFER_FAILED, STATUS_UNKNOWN_MODEL = 0, 1, 2, 3
 STATUS_HELLO, STATUS_YIELD = 100, 101
 HELLO_SEQ = 0xFFFFFFFF

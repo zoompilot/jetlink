@@ -232,6 +232,10 @@ struct AddonTests {
     let f32 = AddonWire.Request(seq: 2, tag: model.tag, shape: [3, 4, 4], encoding: .f32, nbytes: 192)
     let again = try image.map { Float($0) / 255 }.withUnsafeBytes { try model.run(f32, image: $0) }
     #expect(zip(again, floats).allSatisfy { abs($0 - $1) < 1e-6 })
+    // bytes: a float input is given the same values, as a raw uint8 blob has them on the comma
+    let bytes = AddonWire.Request(seq: 3, tag: model.tag, shape: [3, 4, 4], encoding: .bytes, nbytes: 48)
+    let raw = try image.withUnsafeBytes { try model.run(bytes, image: $0) }
+    for i in 0..<48 { #expect(abs(raw[i] - Float(image[i]) * 2) < 1e-3) }
     let artifacts = try FileManager.default.contentsOfDirectory(atPath: cache.url.appending(path: "addons/engines").path)
     #expect(artifacts.contains { $0.hasPrefix(model.sha256.prefix(16)) })
   }

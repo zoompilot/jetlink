@@ -60,8 +60,8 @@ net = vasm().wrap(net, V_ASM_SHA256, [('output0', (1, 3))], params=Params(), sca
 
 `outputs` names every graph output with its shape, the one `forward()` returns
 first. `scaled_u8=True` promises a `blobFromImage(img, 1/255)` blob, sent as
-its u8 bytes; leave it off for any other blob. A uint8 blob, for a model with
-a uint8 input, goes as its bytes. A `setInput` with a `scalefactor` or `mean`
+its u8 bytes; leave it off for any other blob. A uint8 blob goes as its bytes,
+which the model is given as the same values, whatever its input type. A `setInput` with a `scalefactor` or `mean`
 runs on the comma: the Jetson is sent the blob as it is. The wrapper asks the Jetson
 while the setting is on and the Jetson has the model, and runs the net itself
 otherwise; it returns the net itself if it cannot be made.
@@ -272,7 +272,8 @@ interface, `jetlink/addons/wire.py` and `AddonWire.swift`.
 | answer | `"JAR1"` seq:u32 tag:u32 status:i32 server_us:u32 count:u32, then count f32 |
 | hello | an answer with seq `0xFFFFFFFF`, tag the version, status `HELLO` or `YIELD`, then count u32 model tags |
 
-Encoding 0 is u8, which the server divides by 255; 1 is f32. Statuses: `OK` 0,
+Encoding 0 is u8, which the server divides by 255; 1 is f32; 2 is u8 given to
+the model as the same values. Statuses: `OK` 0,
 `BAD_REQUEST` 1, `INFER_FAILED` 2, `UNKNOWN_MODEL` 3, `HELLO` 100, `YIELD` 101.
 `server_us` is the server's time from the request to its answer.
 
