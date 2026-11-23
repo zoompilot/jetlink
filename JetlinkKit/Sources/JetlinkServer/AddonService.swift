@@ -183,15 +183,23 @@ public final class AddonService: @unchecked Sendable {
       ["state": state, "detail": detail, "sha256": sha256, "chunk": ModelConstants.chunk, "addon": true]
     }
     let key = Key(kind: kind, sha256: sha256)
-    let (ready, why, queued, elsewhere) = lock.withLock { () -> (Bool, String?, Bool, Bool) in
+    let tag = AddonWire.tag(sha256: sha256)
+    let (ready, why, queued, elsewhere, clash) = lock.withLock { () -> (Bool, String?, Bool, Bool, String?) in
       let queued = pending[key] != nil
       if queued, let session { pending[key] = session }
       // asked for: wanted, whatever the last hello said
       keeping[kind]?.insert(sha256)
       if let port { served[kind]?.interface.learn(port: port) }
-      return (served[kind]?.has(sha256) == true, failed[sha256], queued, served.values.contains { $0.has(sha256) })
+      // requests name a model by its tag: two on one interface must not share one
+      let clash = tag.flatMap { tag in
+        served[kind]?.models[tag].flatMap { $0.sha256 == sha256 ? nil : $0.file }
+          ?? pending.keys.first { $0.kind == kind && $0.sha256 != sha256 && AddonWire.tag(sha256: $0.sha256) == tag }
+          .map { names[$0.sha256] ?? $0.sha256 }
+      }
+      return (served[kind]?.has(sha256) == true, failed[sha256], queued, served.values.contains { $0.has(sha256) }, clash)
     }
     if ready { return state("ready") }
+    if let clash { return state("failed", "it shares its tag, its sha256's first 8 digits, with \(clash) on this interface") }
     if let why { return state("failed", why) }
     if queued { return state("building", "queued behind another build") }
     // loaded for another interface: served here too, without its bytes again

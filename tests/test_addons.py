@@ -305,6 +305,9 @@ class FakeLink:
   def poll(self, tag):
     return True
 
+  def ready(self, tag):
+    return True
+
   def want(self, tag):
     pass
 
@@ -343,6 +346,25 @@ def test_a_byte_blob_goes_as_its_bytes():
   assert link.images[0].dtype == np.uint8 and np.array_equal(link.images[0], blob[0])
   # the values as they are: a float-input model is given 128.0 for a byte of 128, never 128/255
   assert link.encodings == [W.ENC_BYTES]
+
+
+def test_ready_says_whether_the_host_would_answer_whatever_the_net_has():
+  # a fork asks the wrapped net, whose own attributes are cv2's: ready is the wrapper's
+  link = FakeLink(np.arange(2, dtype=np.float32))
+  on = [True]
+  net = JetsonNet(SimpleNamespace(), link, SHA, (("output0", (1, 2)),), enabled=lambda: on[0])
+  assert net.ready() is True
+  on[0] = False
+  assert net.ready() is False
+
+
+def test_a_batch_runs_on_the_comma_whole():
+  link = FakeLink(np.arange(2, dtype=np.float32))
+  net = JetsonNet(CpuNet(), link, SHA, (("output0", (1, 2)),))
+  for shape in ((2, 3, 4, 4), (3, 4, 4)):
+    net.setInput(np.zeros(shape, np.float32))
+    assert net.forward() == ("cpu", None)
+  assert link.sent == []
 
 
 def test_a_blob_cv2_would_scale_or_shift_runs_on_the_comma():

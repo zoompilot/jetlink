@@ -61,10 +61,13 @@ net = vasm().wrap(net, V_ASM_SHA256, [('output0', (1, 3))], params=Params(), sca
 `outputs` names every graph output with its shape, the one `forward()` returns
 first. `scaled_u8=True` promises a `blobFromImage(img, 1/255)` blob, sent as
 its u8 bytes; leave it off for any other blob. A uint8 blob goes as its bytes,
-which the model is given as the same values, whatever its input type. A `setInput` with a `scalefactor` or `mean`
-runs on the comma: the Jetson is sent the blob as it is. The wrapper asks the Jetson
-while the setting is on and the Jetson has the model, and runs the net itself
-otherwise; it returns the net itself if it cannot be made.
+which the model is given as the same values, whatever its input type. The
+Jetson takes one image, `[1, C, H, W]`: a batch, or a `setInput` with a
+`scalefactor` or `mean`, runs on the comma. The wrapper asks the Jetson while
+the setting is on and the Jetson has the model, and runs the net itself
+otherwise; it returns the net itself if it cannot be made. `ready()` says
+whether the Jetson would answer now, for a fork that runs more often while it
+does.
 
 Any other runtime (onnxruntime, tinygrad) wraps its own run as a call that
 returns every output in `outputs` order:

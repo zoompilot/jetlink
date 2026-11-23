@@ -403,6 +403,10 @@ struct AddonTests {
       let again = try client.hello()
       #expect((again["addons"] as? [String: Any])?["serving"] as? [String: [String]] == ["ff/54/59": [Self.addonSHA]])
       #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA)["state"] as? String == "ready")
+      // another model whose tag, its sha256's first 8 digits, this interface already answers for: refused
+      let clashing = String(Self.addonSHA.prefix(8)) + String(repeating: Self.addonSHA.last == "0" ? "1" : "0", count: 56)
+      let clash = service.request(sha256: clashing, nbytes: 1, kind: [0xFF, 0x54, 0x59], port: nil, name: nil, session: nil)
+      #expect(clash["state"] as? String == "failed" && (clash["detail"] as? String)?.contains("tiny") == true)
       // the same model for another add-on: ready there only once that interface serves it, from the same engine
       #expect(try provision(client, model: Self.addon, sha256: Self.addonSHA, interface: "ff/56/41")["state"] as? String == "ready")
       let both = ["ff/54/59": [Self.addonSHA], "ff/56/41": [Self.addonSHA]]

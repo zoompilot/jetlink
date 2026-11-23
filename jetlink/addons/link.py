@@ -479,12 +479,20 @@ class HostModel:
     except Exception:
       return False
 
+  def ready(self) -> bool:
+    """Would the host answer now: the setting on, and the host serving this
+    model? For a fork that runs more often while it does."""
+    return self.on() and self.link.ready(self.tag)
+
   def ask(self, blob) -> dict | None:
     """Every output by name from the host; None for the caller's own model."""
     # the image is built only for a host that will take it: no cost on the comma without one
     if blob is None or not self.on() or not self.link.poll(self.tag):
       return None
     blob = np.asarray(blob)
+    # the host takes one image, [1, C, H, W]: a batch runs here, whole
+    if blob.ndim != 4 or blob.shape[0] != 1:
+      return None
     if blob.dtype == np.uint8:
       # its values as they are, whatever the model's input type
       image, encoding = np.ascontiguousarray(blob[0]), W.ENC_BYTES
