@@ -242,7 +242,9 @@ number of float outputs. Its tag on the wire is the first four bytes of the
 ONNX's sha256, so the comma and the server need the same file.
 
 `jetlink logs` shows each model built, then `serving interface class ff/56/41`
-and `claimed its interface` once the comma's gadget carries it.
+and, once a minute until the first answer, `no answer yet, N request bytes
+received so far` with the link's last error: 0 bytes means the comma's
+requests are not reaching the server.
 A minute's counts follow: passes, yields, failures and each model's cost.
 An add-on turned off logs `the comma turned V-ASM off, no longer serving it`,
 then `deleted <sha>: no add-on wants it` once nothing serves the model.

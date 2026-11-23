@@ -550,6 +550,8 @@ public final class AddonService: @unchecked Sendable {
     var reported = (0, 0, 0)
     /// Answers of any kind, ever: whether a link carried anything.
     var answered = 0
+    /// Request bytes read off the link, ever: whether the comma's requests arrive.
+    var received = 0
     var lastReport = Date()
     /// When the comma last had an answer here.
     var lastAnswer: Date?
@@ -595,6 +597,7 @@ public final class AddonService: @unchecked Sendable {
     log.info("\(name): serving interface class \(AddonWire.triple(addon.kind))")
     var lastError = ""
     var quiet = false
+    var nextQuietLog = Date.distantPast
     while !isStopped {
       guard source.present() else {
         Thread.sleep(forTimeInterval: 1)
@@ -620,9 +623,11 @@ public final class AddonService: @unchecked Sendable {
         if addon.answered > before {
           log.info("\(name): link ended after \(addon.answered - before) answers: \(error)")
           quiet = false
-        } else if !quiet {
-          log.info("\(name): claimed its interface; waiting for the comma to serve it (\(error))")
+        } else if !quiet || Date() >= nextQuietLog {
+          // once a minute while nothing is answered, with what got through, so a link that never answers says why
+          log.info("\(name): no answer yet, \(addon.received) request bytes received so far (\(error))")
           quiet = true
+          nextQuietLog = Date().addingTimeInterval(60)
         }
       }
       lock.withLock { open.removeAll { $0 === pipes } }
@@ -641,6 +646,7 @@ public final class AddonService: @unchecked Sendable {
     var lastHello = Date()
     while !isStopped {
       let first = try header.withUnsafeMutableBytes { try pipes.pipes.read(into: $0.baseAddress!, count: $0.count, timeout: Self.readTimeout) }
+      addon.received += first
       if first == 0 || Date().timeIntervalSince(lastHello) >= Self.helloEvery {
         // a hello the comma is not reading is skipped, but one begun is finished or the link ends: the stream has no other framing
         let hello = AddonWire.hello(tags: Array(addon.models.keys), yielding: gate.yielding)
@@ -651,8 +657,10 @@ public final class AddonService: @unchecked Sendable {
         if first == 0 { continue }
       }
       try readFully(pipes, &header, from: first, to: header.count)
+      addon.received += header.count - first
       let request = try header.withUnsafeBytes { try AddonWire.request(header: $0) }
       try readFully(pipes, &body, from: 0, to: request.bodyBytes)
+      addon.received += request.bodyBytes
       let answer = body.withUnsafeBytes { handle(addon, request, image: UnsafeRawBufferPointer(rebasing: $0[0..<request.nbytes])) }
       try writeFully(pipes, answer)
       addon.answered += 1
