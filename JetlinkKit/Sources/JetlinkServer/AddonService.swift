@@ -500,11 +500,12 @@ public final class AddonService: @unchecked Sendable {
         let ms: Double = (Double(model.costNs) / 1e5).rounded() / 10
         models.append(["name": model.file, "sha256": model.sha256, "pass_ms": ms])
       }
+      let counts = addon.counts
       var row: [String: Any] = [
-        "interface": addon.name, "models": models, "answers": addon.answered, "passes": addon.passes, "yields": addon.yields,
-        "failures": addon.failures,
+        "interface": addon.name, "models": models, "answers": counts.answered, "passes": counts.passes, "yields": counts.yields,
+        "failures": counts.failures,
       ]
-      if let last = addon.lastAnswer {
+      if let last = counts.lastAnswer {
         let ago: Double = (now.timeIntervalSince(last) * 10).rounded() / 10
         row["last_answer_s"] = ago
       }
@@ -543,18 +544,23 @@ public final class AddonService: @unchecked Sendable {
     let name: String
     private let lock = NSLock()
     private var ready: [UInt32: AddonModel]
-    /// Since the server started; `reported` holds them as the last report left them.
-    var passes = 0
-    var yields = 0
-    var failures = 0
+    /// Written by the interface's thread and read by the web page's, so under `lock`.
+    struct Counts {
+      /// Since the server started.
+      var passes = 0
+      var yields = 0
+      var failures = 0
+      /// Answers of any kind, ever: whether a link carried anything.
+      var answered = 0
+      /// Request bytes read off the link, ever: whether the comma's requests arrive.
+      var received = 0
+      /// When the comma last had an answer here.
+      var lastAnswer: Date?
+    }
+    private var tally = Counts()
+    /// The interface thread's own: passes, yields and failures as the last report left them.
     var reported = (0, 0, 0)
-    /// Answers of any kind, ever: whether a link carried anything.
-    var answered = 0
-    /// Request bytes read off the link, ever: whether the comma's requests arrive.
-    var received = 0
     var lastReport = Date()
-    /// When the comma last had an answer here.
-    var lastAnswer: Date?
     /// The one its source is made for, its port learned in place.
     let interface: AddonInterface
 
@@ -566,6 +572,11 @@ public final class AddonService: @unchecked Sendable {
     }
 
     var models: [UInt32: AddonModel] { lock.withLock { ready } }
+    var counts: Counts { lock.withLock { tally } }
+
+    func count(_ change: (inout Counts) -> Void) {
+      lock.withLock { change(&tally) }
+    }
 
     func add(_ model: AddonModel) {
       lock.withLock { ready[model.tag] = model }
@@ -615,17 +626,18 @@ public final class AddonService: @unchecked Sendable {
       }
       lastError = ""
       lock.withLock { open.append(pipes) }
-      let before = addon.answered
+      let before = addon.counts.answered
       do {
         try serve(addon, pipes: pipes)
       } catch {
         // before the comma opens its end, every read fails at once: said once
-        if addon.answered > before {
-          log.info("\(name): link ended after \(addon.answered - before) answers: \(error)")
+        let counts = addon.counts
+        if counts.answered > before {
+          log.info("\(name): link ended after \(counts.answered - before) answers: \(error)")
           quiet = false
         } else if !quiet || Date() >= nextQuietLog {
           // once a minute while nothing is answered, with what got through, so a link that never answers says why
-          log.info("\(name): no answer yet, \(addon.received) request bytes received so far (\(error))")
+          log.info("\(name): no answer yet, \(counts.received) request bytes received so far (\(error))")
           quiet = true
           nextQuietLog = Date().addingTimeInterval(60)
         }
@@ -646,7 +658,7 @@ public final class AddonService: @unchecked Sendable {
     var lastHello = Date()
     while !isStopped {
       let first = try header.withUnsafeMutableBytes { try pipes.pipes.read(into: $0.baseAddress!, count: $0.count, timeout: Self.readTimeout) }
-      addon.received += first
+      addon.count { $0.received += first }
       if first == 0 || Date().timeIntervalSince(lastHello) >= Self.helloEvery {
         // a hello the comma is not reading is skipped, but one begun is finished or the link ends: the stream has no other framing
         let hello = AddonWire.hello(tags: Array(addon.models.keys), yielding: gate.yielding)
@@ -657,14 +669,16 @@ public final class AddonService: @unchecked Sendable {
         if first == 0 { continue }
       }
       try readFully(pipes, &header, from: first, to: header.count)
-      addon.received += header.count - first
+      addon.count { $0.received += header.count - first }
       let request = try header.withUnsafeBytes { try AddonWire.request(header: $0) }
       try readFully(pipes, &body, from: 0, to: request.bodyBytes)
-      addon.received += request.bodyBytes
+      addon.count { $0.received += request.bodyBytes }
       let answer = body.withUnsafeBytes { handle(addon, request, image: UnsafeRawBufferPointer(rebasing: $0[0..<request.nbytes])) }
       try writeFully(pipes, answer)
-      addon.answered += 1
-      addon.lastAnswer = Date()
+      addon.count {
+        $0.answered += 1
+        $0.lastAnswer = Date()
+      }
     }
   }
 
@@ -677,35 +691,40 @@ public final class AddonService: @unchecked Sendable {
     let cost = model.costNs
     guard gate.admit(cost: cost, wait: max(0, Self.answerBudget - Double(cost) / 1e9)) else {
       model.relax()
-      addon.yields += 1
+      addon.count { $0.yields += 1 }
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .yield)
     }
     defer { gate.passEnded() }
-    host.lock.lock()
-    defer { host.lock.unlock() }
-    // turned off while this pass waited: its engine is closed
-    guard addon.models[request.tag] === model else {
+    // the driving model's lock covers the pass and no more: the answer is encoded after it is let go
+    let outcome = { () -> Result<[Float], Error>? in
+      host.lock.lock()
+      defer { host.lock.unlock() }
+      // turned off while this pass waited: its engine is closed
+      guard addon.models[request.tag] === model else { return nil }
+      return Result { try model.run(request, image: image) }
+    }()
+    switch outcome {
+    case nil:
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .unknownModel)
-    }
-    do {
-      let floats = try model.run(request, image: image)
-      addon.passes += 1
+    case .success(let floats):
+      addon.count { $0.passes += 1 }
       let us = UInt32(min(UInt64(UInt32.max), (DispatchTime.now().uptimeNanoseconds - started) / 1000))
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .ok, serverUs: us, floats: floats)
-    } catch {
-      addon.failures += 1
-      let since = addon.failures - addon.reported.2
+    case .failure(let error):
+      addon.count { $0.failures += 1 }
+      let since = addon.counts.failures - addon.reported.2
       if since == 1 || since % 100 == 0 { log.warning("\(addon.name): \(model.file) failed: \(error)") }
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .inferFailed)
     }
   }
 
   private func report(_ addon: Served) {
-    let (passes, yields, failures) = (addon.passes - addon.reported.0, addon.yields - addon.reported.1, addon.failures - addon.reported.2)
+    let counts = addon.counts
+    let (passes, yields, failures) = (counts.passes - addon.reported.0, counts.yields - addon.reported.1, counts.failures - addon.reported.2)
     guard Date().timeIntervalSince(addon.lastReport) >= Self.reportEvery, passes + yields + failures > 0 else { return }
     let costs = addon.models.values.map { "\($0.file) \(String(format: "%.1f", Double($0.costNs) / 1e6)) ms" }.joined(separator: ", ")
     log.info("\(addon.name): \(passes) passes, \(yields) yielded, \(failures) failed; \(costs)")
-    addon.reported = (addon.passes, addon.yields, addon.failures)
+    addon.reported = (counts.passes, counts.yields, counts.failures)
     addon.lastReport = Date()
   }
 

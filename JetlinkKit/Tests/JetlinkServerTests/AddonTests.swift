@@ -262,7 +262,7 @@ struct AddonTests {
     #expect(ok[12..<16] == [0, 0, 0, 0] && ok[20] == 51)
     let unknown = Array(pipes.written.dropFirst(24 + 51 * 4))
     #expect(unknown.count == 24 && unknown[4] == 2 && unknown[12] == UInt8(AddonWire.Status.unknownModel.rawValue))
-    #expect(served.passes == 1)
+    #expect(served.counts.passes == 1)
   }
 
   @Test("A hello the link takes only part of is finished before the next answer, so the stream stays framed")
@@ -360,7 +360,7 @@ struct AddonTests {
     #expect(answer.prefix(4) == ArraySlice("JAR1".utf8) && answer[4] == 7 && answer[20] == 51)
     pipes.pipes.abort()
     #expect(done.wait(timeout: .now() + 5) == .success)
-    #expect(served.passes == 1)
+    #expect(served.counts.passes == 1)
   }
 
   static let addonSHA = SHA256.hash(data: try! Data(contentsOf: addon)).map { String(format: "%02x", $0) }.joined()

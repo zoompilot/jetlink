@@ -284,7 +284,7 @@ class CpuNet:
   def __init__(self):
     self.calls = []
 
-  def setInput(self, blob):
+  def setInput(self, blob, *args, **kwargs):
     self.blob = blob
 
   def forward(self, names=None):
@@ -331,6 +331,27 @@ def test_forward_with_no_names_is_the_first_output_given_not_the_first_by_name()
   net.setInput(np.zeros((1, 3, 4, 4), np.float32))
   assert net.forward().tolist() == [[3, 4]]
   assert net.forward(["boxes"])[0].tolist() == [[0, 1, 2]]
+
+
+def test_a_byte_blob_goes_as_its_bytes():
+  link = FakeLink(np.arange(2, dtype=np.float32))
+  net = JetsonNet(CpuNet(), link, SHA, (("output0", (1, 2)),))
+  blob = np.arange(48, dtype=np.uint8).reshape(1, 3, 4, 4) * 5
+  net.setInput(blob)
+  assert net.forward().tolist() == [[0, 1]]
+  assert link.images[0].dtype == np.uint8 and np.array_equal(link.images[0], blob[0])
+
+
+def test_a_blob_cv2_would_scale_or_shift_runs_on_the_comma():
+  link = FakeLink(np.arange(2, dtype=np.float32))
+  net = JetsonNet(CpuNet(), link, SHA, (("output0", (1, 2)),))
+  blob = np.full((1, 3, 4, 4), 4.0, np.float32)
+  for args, kwargs in (((), {"scalefactor": 0.5}), (("", 1.0, (2, 2, 2)), {}), (("", 0.5), {})):
+    net.setInput(blob, *args, **kwargs)
+    assert net.forward() == ("cpu", None)
+  assert link.sent == []
+  net.setInput(blob, "", 1.0, (0, 0, 0))
+  assert net.forward().tolist() == [[0, 1]]
 
 
 def test_unscaled_blobs_go_as_f32_by_default():

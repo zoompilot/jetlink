@@ -193,7 +193,8 @@ class AddonLink:
   def infer(self, model_tag: int, image: np.ndarray, out_size: int) -> np.ndarray | None:
     """The model's outputs, flat float32 in output-name order, from the host;
     None for the caller's own model. image is [c, h, w]: uint8, which the host
-    divides by 255, or float32 as the model takes it."""
+    gives a uint8 input as it is and a float one divided by 255, or float32 as
+    the model takes it."""
     if not self.poll(model_tag):
       return None
     encoding = {np.dtype(np.uint8): W.ENC_U8, np.dtype(np.float32): W.ENC_F32}.get(image.dtype)
@@ -457,8 +458,10 @@ class HostModel:
   outputs: the model's (name, shape) for every graph output; the host sends
   them in name order. scaled_u8: the caller promises the blob is a u8 image
   scaled by 1/255 (blobFromImage(img, 1/255)), so it goes as its u8 bytes, a
-  quarter of the size and exact. Any other blob must leave it False, the
-  default, and goes as f32. enabled: a cheap callable read on every call, so a
+  quarter of the size and exact. Any other float blob must leave it False,
+  the default, and goes as f32; a uint8 blob, for a model that takes bytes,
+  goes as it is. A blob cv2's setInput would scale or shift runs on the
+  comma. enabled: a cheap callable read on every call, so a
   setting turns the host off and on without a reload."""
 
   def __init__(self, link: AddonLink, sha256: str, outputs, scaled_u8: bool = False, enabled=None, local=None):
@@ -482,7 +485,11 @@ class HostModel:
     if blob is None or not self.on() or not self.link.poll(self.tag):
       return None
     blob = np.asarray(blob)
-    image = blob_to_u8(blob) if self.scaled_u8 else np.ascontiguousarray(blob[0], np.float32)
+    if blob.dtype == np.uint8:
+      # a model that takes bytes: they go as they are, which the host gives a uint8 input as they are
+      image = np.ascontiguousarray(blob[0])
+    else:
+      image = blob_to_u8(blob) if self.scaled_u8 else np.ascontiguousarray(blob[0], np.float32)
     flat = self.link.infer(self.tag, image, sum(self.sizes))
     if flat is None:
       return None
@@ -509,7 +516,11 @@ class JetsonNet(HostModel):
     super().__init__(link, sha256, outputs, scaled_u8=scaled_u8, enabled=enabled)
 
   def setInput(self, blob, *args, **kwargs):
-    self.blob = blob
+    # setInput(blob, name, scalefactor, mean): the host is sent the blob as it is, so one
+    # that cv2 would scale or shift runs on the comma, where it is
+    scale = kwargs.get("scalefactor", args[1] if len(args) > 1 else 1.0)
+    mean = kwargs.get("mean", args[2] if len(args) > 2 else None)
+    self.blob = blob if scale == 1.0 and (mean is None or not np.any(mean)) else None
     self.net.setInput(blob, *args, **kwargs)
 
   def forward(self, names=None):
