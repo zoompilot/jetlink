@@ -57,8 +57,8 @@ class ProvisioningRun:
     self.loan = None
     self.stop = False
     self.fetch_failed = False
-    # what came of each add-on model this run, by sha256 (note_addons)
-    self.addon_results: dict[str, dict] = {}
+    # what came of each add-on model this run, by interface triple then sha256 (note_addons)
+    self.addon_results: dict[str, dict[str, dict]] = {}
     # a warp is built for this camera: without one only the add-ons are provisioned
     self.driving = True
     # a driving model was picked, as provide_driving found
@@ -246,14 +246,12 @@ class ProvisioningRun:
 
   def note_addons(self, result: str) -> None:
     """Say what this run made of the add-ons (gadget.ADDON_RUN), for a fork's
-    panel: the run's result and each model it sent. Only with an add-on on."""
-    models = addon_models(self.parts)
-    if not models:
+    panel: the run's result and each model it sent, by interface triple then
+    sha256. Only with an add-on on."""
+    if not addon_models(self.parts):
       return
-    names = {m.sha256: m.name for m in models}
     # epoch seconds, for a panel to show
-    record = {'at': time.time(), 'result': result,
-              'models': {sha: {'name': names.get(sha, sha[:16]), **r} for sha, r in self.addon_results.items()}}
+    record = {'at': time.time(), 'result': result, 'models': self.addon_results}
     self.log.warning("jetlink: add-ons: %s", result)
     try:
       gadget.write_record(gadget.ADDON_RUN, record)
@@ -264,16 +262,24 @@ class ProvisioningRun:
     """One add-on model: uploaded and built, or failed on the server, which
     then says so in its hello and is not asked again. False only for what the
     next run may fix."""
+    from jetlink.addons.wire import interface_triple
     parts = self.parts
+    triple = interface_triple(addon.function.iface_class)
+
+    def result(state: str, detail: str = '') -> None:
+      self.addon_results.setdefault(triple, {})[addon.sha256] = {'name': addon.name, 'state': state, 'detail': detail}
+
     path = Path(addon.path)
     nbytes = path.stat().st_size if path.exists() else 0
     upload = link.verified_upload(self.log, path, addon.sha256, nbytes)
     if upload is None:
-      self.addon_results[addon.sha256] = {'state': 'failed', 'detail': "the comma's copy is missing or not the file it names"}
+      result('failed', "the comma's copy is missing or not the file it names")
       return True
 
     def progress(stage: str, frac: float, msg: str) -> None:
-      text, args = f"{addon.name}: {stage} {frac:.0%}", {'name': addon.name, 'stage': stage}
+      # the model is its interface and sha256; the name is only for the text
+      text = f"{addon.name}: {stage} {frac:.0%}"
+      args = {'name': addon.name, 'stage': stage, 'interface': triple, 'sha256': addon.sha256}
       if stage == 'build':
         # TensorRT says little while it builds: a percentage would sit at one value for minutes
         text = f"{addon.name}: building on JetLink, several minutes"
@@ -289,14 +295,14 @@ class ProvisioningRun:
                                build_timeout=ADDON_BUILD_TIMEOUT, should_stop=lambda: self.stop, port=addon.function.port)
     except AddonFailed as e:
       self.log.warning("jetlink: the jetson cannot run add-on %s: %s", addon.name, e)
-      self.addon_results[addon.sha256] = {'state': 'failed', 'detail': str(e)}
+      result('failed', str(e))
       return True
     except LinkError as e:
       self.log.warning("jetlink: add-on %s is left for the next run: %s", addon.name, e)
-      self.addon_results[addon.sha256] = {'state': 'left', 'detail': str(e)}
+      result('left', str(e))
       return False
     self.log.warning("jetlink: add-on %s ready on the jetson", addon.name)
-    self.addon_results[addon.sha256] = {'state': 'ready', 'detail': ''}
+    result('ready')
     return True
 
   def hello(self) -> dict:

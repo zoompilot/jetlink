@@ -177,9 +177,9 @@ and ready on an interface only once it is asked for there.
 A parked run sends it each add-on model neither served on its interface nor failed, after
 the driving model whatever came of that (none picked, its build failed, or no
 warp yet for the camera, when only the add-ons are sent): an `ENGINE_REQ` with `addon: {interface, name, port}`, then
-the usual upload, `PROGRESS` (progress codes `addon_upload` and `addon_build`)
-and `ENGINE_RESP`, whose `ready` carries no spec. The driving engine stays
-loaded. A server too old to list `addons` is never sent one, as it would take
+the usual upload, `PROGRESS` (progress codes `addon_upload` and `addon_build`,
+with args `interface`, `sha256`, `name` and `stage`) and `ENGINE_RESP`, whose
+`ready` carries no spec. The driving engine stays loaded. A server too old to list `addons` is never sent one, as it would take
 it for its driving model.
 
 Then the run says hello again, so the owner's record (`gadget.SERVER`) lists

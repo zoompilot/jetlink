@@ -466,8 +466,11 @@ class TestAddons(OpenpilotTest):
     assert d.provision() is True
     run = gadget.read_record(gadget.ADDON_RUN)
     assert run['result'] == 'sent the add-on models' and isinstance(run['at'], float)
-    assert {r['name']: r['state'] for r in run['models'].values()} == {self.addons[0].name: 'ready', self.addons[1].name: 'failed'}
-    assert run['models'][self.addons[1].sha256]['detail'] == 'too big'
+    from jetlink.addons.wire import interface_triple
+    assert {r['name']: r['state'] for shas in run['models'].values() for r in shas.values()} == \
+        {self.addons[0].name: 'ready', self.addons[1].name: 'failed'}
+    failed = self.addons[1]
+    assert run['models'][interface_triple(failed.function.iface_class)][failed.sha256]['detail'] == 'too big'
     d = self.run_with(self.client_hearing(None))
     assert d.provision() is True
     assert gadget.read_record(gadget.ADDON_RUN)['result'] == 'JetLink is too old for add-ons'

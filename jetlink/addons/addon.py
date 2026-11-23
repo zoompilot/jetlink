@@ -135,24 +135,30 @@ class Addon:
     phone), as the owner keeps its hello (jetlink.comma.gadget.SERVER): `host`
     the worst of ready on its interface, missing, failed and unsupported (None
     before any hello), and `preparing`, the provisioning run's progress text
-    (the fork's progress param) while it sends or builds one of them. With
+    (the fork's progress param) while it sends or builds one of them, each
+    model known by its interface and sha256, never its name. With
     the last provisioning run's record (jetlink.comma.gadget.ADDON_RUN),
     `last_check` says what came of it for this add-on and `last_check_at` when,
     in epoch seconds; '' and None without one."""
+    from jetlink.addons.wire import interface_triple
     from jetlink.openpilot.provision import addon_state
     states = {addon_state(sha256, server, self.iface_class) for _, _, sha256 in self.models}
     host = next((s for s in WORST_FIRST if s in states), 'ready') if states else None
     progress = progress if isinstance(progress, dict) else {}
     args = progress.get('args') if isinstance(progress.get('args'), dict) else {}
-    mine = progress.get('code') in PREPARING_CODES and args.get('name') in {name for name, _, _ in self.models}
+    mine = (progress.get('code') in PREPARING_CODES and args.get('interface') == interface_triple(self.iface_class)
+            and args.get('sha256') in {sha256 for _, _, sha256 in self.models})
     return {'host': host, 'preparing': str(progress.get('msg', '')) if mine else '', **self.last_check(run)}
 
   def last_check(self, run: dict | None) -> dict:
     """What the last provisioning run made of this add-on's models: each it
-    sent, else the run's own result."""
+    sent on its interface, else the run's own result."""
+    from jetlink.addons.wire import interface_triple
     if not isinstance(run, dict) or not isinstance(run.get('at'), (int, float)):
       return {'last_check': '', 'last_check_at': None}
     models = run.get('models') if isinstance(run.get('models'), dict) else {}
+    models = models.get(interface_triple(self.iface_class))
+    models = models if isinstance(models, dict) else {}
     words = {'ready': 'sent and built', 'failed': "JetLink can't run it", 'left': 'left for the next park'}
     mine = []
     for name, _, sha256 in self.models:

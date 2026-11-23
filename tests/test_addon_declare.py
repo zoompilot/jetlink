@@ -104,14 +104,27 @@ def test_the_panel_state_is_the_worst_of_its_models(vasm, tmp_path):
   run = {'at': 1000.0, 'result': 'no JetLink computer answered within 20 s', 'models': {}}
   assert signs.state(None, None, run)['last_check'] == 'no JetLink computer answered within 20 s'
   assert signs.state(None, None, run)['last_check_at'] == 1000.0
-  run['models'] = {'b' * 64: {'name': 'Stop', 'state': 'failed', 'detail': 'too big'}, 'a' * 64: {'name': 'Sign', 'state': 'ready'}}
+  run['models'] = {'ff/53/4c': {'b' * 64: {'name': 'Stop', 'state': 'failed', 'detail': 'too big'}, 'a' * 64: {'name': 'Sign', 'state': 'ready'}}}
   assert signs.state(None, None, run)['last_check'] == "Sign sent and built; Stop JetLink can't run it: too big"
   assert vasm.state(None, None, run)['last_check'] == run['result']
   assert signs.state(None, None, None) == {**signs.state(None, None), 'last_check': '', 'last_check_at': None}
-  progress = {'msg': 'Stop: build 40%', 'code': 'addon_build', 'args': {'name': 'Stop'}}
+  progress = {'msg': 'Stop: build 40%', 'code': 'addon_build', 'args': {'name': 'Stop', 'interface': 'ff/53/4c', 'sha256': 'b' * 64}}
   assert signs.state(None, progress)['preparing'] == 'Stop: build 40%'
   assert vasm.state(None, progress)['preparing'] == ''
   assert signs.state(None, {**progress, 'code': 'build'})['preparing'] == ''
+
+
+def test_a_model_is_its_interface_and_sha256_not_its_name(vasm, tmp_path):
+  # one file on two add-ons' interfaces, and one display name on both
+  sha = vasm.models[0][2]
+  other = A.Addon('other', (0xFF, 0x53, 0x4C), models=(('V-ASM', vasm.models[0][1], sha),))
+  run = {'at': 1000.0, 'result': 'some add-on models are left for the next park',
+         'models': {'ff/56/41': {sha: {'name': 'V-ASM', 'state': 'ready'}},
+                    'ff/53/4c': {sha: {'name': 'V-ASM', 'state': 'left', 'detail': 'link lost'}}}}
+  assert vasm.state(None, None, run)['last_check'] == 'V-ASM sent and built'
+  assert other.state(None, None, run)['last_check'] == 'V-ASM left for the next park: link lost'
+  progress = {'msg': 'V-ASM: build 40%', 'code': 'addon_build', 'args': {'name': 'V-ASM', 'interface': 'ff/53/4c', 'sha256': sha}}
+  assert (vasm.state(None, progress)['preparing'], other.state(None, progress)['preparing']) == ('', 'V-ASM: build 40%')
 
 
 def test_the_owner_can_import_it():
