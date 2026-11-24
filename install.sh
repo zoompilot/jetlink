@@ -22,7 +22,7 @@
 #                    the installed server; repeatable. On a Jetson:
 #                    power=always|switched, comma_poweroff=yes|no,
 #                    desktop=on|off, swap=on|off, power_mode=fastest|NAME,
-#                    clocks=on|off. On a PC: autostart=yes|no
+#                    clocks=on|off, gpu_max=full|MHZ. On a PC: autostart=yes|no
 #
 # Everything runs from main(), called on the last line, so a download cut off
 # part way through runs nothing, and nothing reading stdin can eat the script.
@@ -106,6 +106,7 @@ OS_RELEASE="${JETLINK_TEST_OS_RELEASE:-/etc/os-release}"
 PKG_PATH="${JETLINK_TEST_PKG_PATH:-$PATH}"
 DT_MODEL="${JETLINK_TEST_DT_MODEL:-/proc/device-tree/model}"
 MEM_SLEEP="${JETLINK_TEST_MEM_SLEEP:-/sys/power/mem_sleep}"
+DEVFREQ="${JETLINK_TEST_DEVFREQ:-/sys/class/devfreq}"
 SECURE_BOOT="${JETLINK_TEST_SECURE_BOOT:-/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c}"
 SWAPS="${JETLINK_TEST_SWAPS:-/proc/swaps}"
 MEMINFO="${JETLINK_TEST_MEMINFO:-/proc/meminfo}"
@@ -535,6 +536,8 @@ PM_BEST_ID='' PM_BEST_NAME='' PM_CURRENT=''
 # every power mode as ID:NAME and their names alone, slowest first;
 # PM_WANT_* the one to run in
 PM_MODES='' PM_NAMES='' PM_WANT_ID='' PM_WANT_NAME=''
+# the GPU's clock steps in MHz, slowest first: what gpu_max takes
+GPU_STEPS=''
 
 detect() {
   [ "$(uname -s)" = Linux ] || die "This installer is for Linux: a Jetson, or a PC running Linux." \
@@ -653,7 +656,18 @@ detect_power_modes() {
   PM_BEST_ID="${best%%:*}" PM_BEST_NAME="${best#*:}"
   PM_NAMES="$(echo "$PM_MODES" | sed -E 's/(^| )[0-9]+:/\1/g')"
   PM_CURRENT="$(power_mode_now)"
+  detect_gpu_steps
   return 0
+}
+
+# The GPU's devfreq steps, in hertz there, in MHz here.
+detect_gpu_steps() {
+  local f hz
+  for f in "$DEVFREQ"/*.gpu/available_frequencies; do
+    [ -r "$f" ] || continue
+    GPU_STEPS="$(for hz in $(cat "$f"); do [[ $hz =~ ^[0-9]+$ ]] && echo $((hz / 1000000)); done | sort -n -u | paste -sd ' ' -)"
+    return 0
+  done
 }
 
 power_mode_now() {
@@ -710,6 +724,9 @@ SWAP=on ADD_SWAP_GB=0 REMOVE_SWAP=0 SWAP_FILE_GB=0 SWAP_SHORT_GB=0 SWAP_NEED_GB=
 # server holds the clocks at that mode's top while it serves (on), or leaves
 # them to NVIDIA's scaling (off)
 POWER_MODE=fastest CLOCKS=on CLOCKS_SAVED=on
+# the GPU's top clock inside that mode: `full` for the mode's own, or one of
+# its steps in MHz, lower: less power at each frame, and less coil whine
+GPU_MAX=full GPU_MAX_SAVED=full
 # 1 when the Jetson starts without its desktop; the default target changes
 # only when the answer does, so a desktop turned back on by hand stays on
 DESKTOP_OFF=0 DESKTOP_OFF_SAVED=0
@@ -758,6 +775,7 @@ load_previous() {
   CLOCKS=on
   [ "${JETLINK_CLOCKS:-on}" != off ] || CLOCKS=off
   CLOCKS_SAVED=$CLOCKS
+  GPU_MAX="${JETLINK_GPU_MAX:-full}" GPU_MAX_SAVED="${JETLINK_GPU_MAX:-full}"
   MASKED_UNITS="${JETLINK_MASKED_UNITS:-}"
   JOURNALD_CAPPED="${JETLINK_JOURNALD_CAPPED:-0}"
   UEFI_TIMEOUT_PREV="${JETLINK_UEFI_TIMEOUT_PREV:-}"
@@ -872,8 +890,8 @@ choose_web_password() {
 # --set: the install it changes, and the answers it gives, checked before
 # anything is shown. It keeps the server and the source that are here, so it
 # needs no network, and the web page can run it in the car.
-SET_KEYS="On a Jetson: power=always|switched, comma_poweroff=yes|no, desktop=on|off, swap=on|off, power_mode=fastest|<a mode it has>, clocks=on|off. On a PC: autostart=yes|no."
-SET_POWER='' SET_POWEROFF='' SET_DESKTOP='' SET_SWAP='' SET_POWER_MODE='' SET_CLOCKS='' SET_AUTOSTART=''
+SET_KEYS="On a Jetson: power=always|switched, comma_poweroff=yes|no, desktop=on|off, swap=on|off, power_mode=fastest|<a mode it has>, clocks=on|off, gpu_max=full|<a GPU clock in MHz>. On a PC: autostart=yes|no."
+SET_POWER='' SET_POWEROFF='' SET_DESKTOP='' SET_SWAP='' SET_POWER_MODE='' SET_CLOCKS='' SET_GPU_MAX='' SET_AUTOSTART=''
 check_set() {
   [ ${#OPT_SET[@]} -gt 0 ] || return 0
   [ "$DOCKER_ERA" = 0 ] || die "This install runs the server in Docker, and --set changes only a native one." \
@@ -887,7 +905,7 @@ check_set() {
     [[ $kv == ?*=* ]] || die "--set takes KEY=VALUE, not '$kv'." "$SET_KEYS"
     key="${kv%%=*}" value="${kv#*=}"
     case "$key" in
-      power|comma_poweroff|desktop|swap|power_mode|clocks)
+      power|comma_poweroff|desktop|swap|power_mode|clocks|gpu_max)
         [ "$JETSON" = 1 ] || die "--set $key is for a Jetson, and this computer is a PC." "$SET_KEYS" ;;
       autostart)
         [ "$JETSON" = 0 ] || die "--set autostart is for a PC: a Jetson always starts Jetlink." "$SET_KEYS" ;;
@@ -905,6 +923,13 @@ check_set() {
         # the fastest by name is the fastest
         [ "$value" != "$PM_BEST_NAME" ] || value=fastest
         SET_POWER_MODE=$value ;;
+      gpu_max=*)
+        [ -n "$GPU_STEPS" ] || die "--set gpu_max needs the GPU's clock steps, and this Jetson does not list them."
+        [ "$value" = full ] || [[ " $GPU_STEPS " == *" $value "* ]] \
+          || die "--set gpu_max takes full or one of this GPU's clocks in MHz (${GPU_STEPS// /, }), not '$value'."
+        # its fastest step is no cap
+        [ "$value" != "${GPU_STEPS##* }" ] || value=full
+        SET_GPU_MAX=$value ;;
       autostart=yes|autostart=no) SET_AUTOSTART=$value ;;
       power=*) die "--set power takes always or switched, not '$value'." ;;
       desktop=*|swap=*|clocks=*) die "--set $key takes on or off, not '$value'." ;;
@@ -942,6 +967,7 @@ apply_set() {
   [ -z "$SET_SWAP" ] || SWAP=$SET_SWAP
   [ -z "$SET_POWER_MODE" ] || POWER_MODE=$SET_POWER_MODE
   [ -z "$SET_CLOCKS" ] || CLOCKS=$SET_CLOCKS
+  [ -z "$SET_GPU_MAX" ] || GPU_MAX=$SET_GPU_MAX
   case "$SET_AUTOSTART" in
     yes) AUTOSTART=1 ;;
     no) AUTOSTART=0 ;;
@@ -955,9 +981,9 @@ default_answers() {
   if [ "$JETSON" = 0 ]; then
     echo "autostart=yes"
   elif [ "$DEEP_SLEEP" = 1 ]; then
-    echo "power=always comma_poweroff=yes desktop=off swap=on power_mode=fastest clocks=on"
+    echo "power=always comma_poweroff=yes desktop=off swap=on power_mode=fastest clocks=on gpu_max=full"
   else
-    echo "power=switched comma_poweroff=yes desktop=off swap=on power_mode=fastest clocks=on"
+    echo "power=switched comma_poweroff=yes desktop=off swap=on power_mode=fastest clocks=on gpu_max=full"
   fi
 }
 
@@ -983,6 +1009,7 @@ set_always_on() {
 jetson_musts() {
   [ "$JETSON" = 1 ] || return 0
   want_power_mode
+  want_gpu_max
   if [ -n "$PM_BEST_NAME" ]; then
     if [ "$PM_BEST_NAME" != MAXN_SUPER ] && [[ "$MODEL" == *"Orin Nano"* ]]; then
       note "This JetPack install does not offer the Orin Nano's Super modes; JetPack 7.2.1's"
@@ -1007,6 +1034,16 @@ want_power_mode() {
   done
   [ -z "$PM_MODES" ] || note "This Jetson has no power mode $POWER_MODE now, so Jetlink uses the fastest, $PM_BEST_NAME."
   POWER_MODE=fastest
+}
+
+# A GPU cap this Jetson's GPU has no step for (a JetPack update changed them)
+# goes back to full. Without the steps to check against it stays: the server
+# keeps it inside the mode either way.
+want_gpu_max() {
+  [ "$GPU_MAX" != full ] && [ -n "$GPU_STEPS" ] || return 0
+  [[ " $GPU_STEPS " != *" $GPU_MAX "* ]] || return 0
+  note "This Jetson's GPU has no $GPU_MAX MHz clock now, so Jetlink lets it run at the power mode's top."
+  GPU_MAX=full
 }
 
 # Jetlink's swap file tops up the swap this Jetson has to what building the
@@ -1295,6 +1332,13 @@ show_plan() {
         say "  • Hold the clocks at the power mode's top speed while serving"
       else
         say "  • Leave the clocks to NVIDIA's scaling"
+      fi
+    fi
+    if [ "$GPU_MAX" != "$GPU_MAX_SAVED" ]; then
+      if [ "$GPU_MAX" = full ]; then
+        say "  • Let the GPU run at the power mode's top speed"
+      else
+        say "  • Cap the GPU at $GPU_MAX MHz ${D}(quieter, frames run slower)${N}"
       fi
     fi
     if [ "$ADD_SWAP_GB" -gt 0 ]; then
@@ -2308,7 +2352,10 @@ write_env() {
   if [ "$JETSON" = 1 ] && [ "$POWEROFF_WITH_COMMA" = 1 ]; then poweroff=--poweroff; fi
   # and how to set a Jetson's clocks, inside the limits of the mode it runs in
   local clocks=''
-  if [ "$JETSON" = 1 ] && [ -n "$PM_WANT_NAME" ]; then clocks="--clocks $CLOCKS --power-mode $PM_WANT_NAME"; fi
+  if [ "$JETSON" = 1 ] && [ -n "$PM_WANT_NAME" ]; then
+    clocks="--clocks $CLOCKS --power-mode $PM_WANT_NAME"
+    [ "$GPU_MAX" = full ] || clocks+=" --gpu-max $GPU_MAX"
+  fi
   {
     echo "# Written by the Jetlink installer; run it again (jetlink setup) to change these."
     printf 'JETLINK_CACHE_DIR=%q\n' "$CACHE_DIR"
@@ -2340,6 +2387,8 @@ write_conf() {
     printf 'JETLINK_POWER_MODE=%q\n' "$POWER_MODE"
     printf 'JETLINK_POWER_MODES=%q\n' "$PM_NAMES"
     printf 'JETLINK_CLOCKS=%q\n' "$CLOCKS"
+    printf 'JETLINK_GPU_MAX=%q\n' "$GPU_MAX"
+    printf 'JETLINK_GPU_STEPS=%q\n' "$GPU_STEPS"
     printf 'JETLINK_SWAP=%q\n' "$SWAP"
     printf 'JETLINK_SWAP_FILE=%q\n' "$SWAP_FILE"
     printf 'JETLINK_SWAP_GB=%q\n' "$SWAP_FILE_GB"

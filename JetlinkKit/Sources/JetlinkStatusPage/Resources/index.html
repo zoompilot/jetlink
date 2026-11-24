@@ -224,6 +224,8 @@ pre { margin: 10px 0 0; max-height: 60vh; overflow: auto; font: 11.5px/1.5 var(-
 .segmented button { min-height: 38px; border: 0; border-radius: 9px; background: none; color: var(--dim); font-size: 14px; font-weight: 500; cursor: pointer; }
 .segmented button[aria-pressed="true"] { background: var(--pick); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
 .segmented button:disabled { cursor: not-allowed; }
+/* more choices than fit one line on a phone: rows of four */
+.segmented.many { grid-auto-flow: row; grid-template-columns: repeat(4, 1fr); }
 .setting { padding: 12px 0; border-top: 1px solid var(--line); }
 .setting:first-of-type { border-top: 0; padding-top: 0; }
 .setting .line { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
@@ -444,6 +446,11 @@ dialog[open] { position: fixed; inset: auto 0 0 0; }
           <div class="line"><b>Full speed while connected<span class="dflt" id="d-clocks"></span></b>
             <label class="switch"><input type="checkbox" id="sw-clocks" aria-label="Full speed while connected"><i></i></label></div>
           <div class="desc" id="clocks-desc"></div>
+        </div>
+        <div class="setting" id="set-gpumax" hidden>
+          <div class="line"><b>GPU speed cap, MHz</b></div>
+          <div class="segmented many" id="seg-gpumax" role="group" aria-label="GPU speed cap, in MHz"></div>
+          <div class="desc" id="gpumax-desc"></div>
         </div>
         <div class="perfnow" id="perf-now" hidden><span class="nowk">Now</span> <span id="perf-now-v"></span></div>
       </section>
@@ -1130,10 +1137,35 @@ function drawPerformance(sys, lock) {
   segDefault(seg, sys.defaults && sys.defaults.power_mode);
   $('pmode-desc').textContent = picked === 'fastest' ? 'The fastest mode.' : 'Uses less power. Models run slower.';
   $('clocks-desc').textContent = draftValue('clocks') === 'on' ? 'Saves power when parked.' : 'NVIDIA sets the clocks. Frames can run slower.';
+  drawGpuMax(sys, lock, picked);
   // what the clocks are now, from the hardware panel's sample
   const now = perfNow(sys);
   $('perf-now').hidden = !now;
   if (now) $('perf-now-v').innerHTML = now;
+}
+
+// The GPU's top clock inside the power mode: full, or one of its steps in
+// MHz below its fastest, slowest first. Each mode has a limit of its own
+// (gpu_limits, by the mode's answer), and a cap at or above it changes nothing.
+function drawGpuMax(sys, lock, mode) {
+  const row = $('set-gpumax');
+  row.hidden = !('gpu_max' in sys.settings);
+  if (row.hidden) return;
+  const steps = sys.gpu_steps || [], seg = $('seg-gpumax');
+  const values = steps.slice(0, -1).map(String).concat('full'), shown = values.join(' ');
+  if (seg.dataset.steps !== shown) {
+    seg.dataset.steps = shown;
+    seg.innerHTML = values.map(v => `<button type="button" data-v="${esc(v)}" aria-pressed="false">${v === 'full' ? 'Full' : esc(v)}</button>`).join('');
+  }
+  const picked = draftValue('gpu_max');
+  for (const b of seg.children) { b.setAttribute('aria-pressed', String(b.dataset.v === picked)); b.disabled = lock; }
+  segDefault(seg, sys.defaults && sys.defaults.gpu_max);
+  const limit = (sys.gpu_limits || {})[mode], name = mode === 'fastest' ? 'the fastest mode' : modeName(mode);
+  $('gpumax-desc').textContent = picked === 'full'
+    ? `The GPU goes as fast as ${name} lets it${limit ? ', ' + limit + ' MHz' : ''}.`
+    : limit && Number(picked) >= limit
+      ? `${name[0].toUpperCase() + name.slice(1)} already keeps the GPU at ${limit} MHz, so this cap changes nothing.`
+      : 'Less power at each frame, for less coil whine. Models run slower: watch the frame budget on the Status tab.';
 }
 
 // "Full speed · comma connected", from whether the GPU's clock is held now
@@ -1141,7 +1173,8 @@ function perfNow(sys) {
   const held = S.hw && S.hw.clocks_held;
   if (held === undefined) return '';
   if (!held) return '<b>Power saving</b> · ' + (sys.settings.clocks === 'off' ? 'NVIDIA sets the clocks' : 'parked');
-  return '<b>Full speed</b> · ' + (S.engine && S.engine.state === 'building' ? 'building a model' : 'comma connected');
+  const cap = sys.settings.gpu_max && sys.settings.gpu_max !== 'full' ? ` · GPU at ${esc(sys.settings.gpu_max)} MHz or less` : '';
+  return '<b>Full speed</b> · ' + (S.engine && S.engine.state === 'building' ? 'building a model' : 'comma connected') + cap;
 }
 
 // What the swap answer does here, from what the installer recorded.
@@ -1169,6 +1202,7 @@ function applySettings() {
     const v = draftValue(k), sw = SWITCHES[k];
     if (sw) return sw.said[v === sw.on ? 0 : 1];
     if (k === 'power') return v === 'always' ? 'Always on' : 'Switched power';
+    if (k === 'gpu_max') return v === 'full' ? "The GPU at the power mode's top speed" : `The GPU capped at ${v} MHz`;
     return v === 'fastest' ? 'The fastest power mode' : 'Power mode ' + modeName(v);
   });
   sheet({
@@ -1454,6 +1488,7 @@ async function tapped(t) {
   }
   if (t.dataset.v && t.closest('#seg-power')) return setDraft('power', t.dataset.v);
   if (t.dataset.v && t.closest('#seg-pmode')) return setDraft('power_mode', t.dataset.v);
+  if (t.dataset.v && t.closest('#seg-gpumax')) return setDraft('gpu_max', t.dataset.v);
   switch (t.id) {
     case 'lib-load':
       S.libLoading = true; mark('library');

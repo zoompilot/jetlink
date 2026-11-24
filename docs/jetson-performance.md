@@ -67,7 +67,10 @@ the clocks at full speed, 60 s each:
 
 * The input stayed under 20.5 W, below the board's over-current limit of
   4.96 A at 5 V. Lower clocks for the smaller models saved about 2 W but no
-  coil whine, so every model runs at full speed.
+  coil whine on the bench Jetson, so every model runs at full speed by
+  default. Another Orin Nano Super whined loudly in MAXN SUPER and 25W and
+  much less in 15W (612 MHz); the [GPU speed cap](installation-reference.md#gpu-speed-cap)
+  lowers the GPU alone, keeping the mode's processor and memory speeds.
 * With nvpmodel's own MAXN SUPER profile applied at boot, which also turns
   off part of the GPU, Lebowski took 35.3 ms. On a Jetlink install the server
   uses the GPU before nvpmodel runs, so that profile never applies.

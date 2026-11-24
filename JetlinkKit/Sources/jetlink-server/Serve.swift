@@ -61,6 +61,11 @@
     var clocks: String?
     @Option(help: "The nvpmodel power mode whose limits --clocks keeps to (MAXN_SUPER).")
     var powerMode: String?
+    @Option(
+      help: ArgumentHelp(
+        "With --clocks, the GPU's top clock in MHz, inside the power mode's own: a lower peak draw, for less coil whine. Frames run slower.",
+        valueName: "MHz"))
+    var gpuMax: Int?
     @Flag(name: .customLong("no-preload"), help: "Do not load the engine loaded last before a comma asks.")
     var noPreload = false
     @Flag(name: .customLong("no-keepalive"), help: "Do not keep the GPU clocked up between frames (a Mac's onnxruntime).")
@@ -81,6 +86,7 @@
       guard clocks == nil || (["on", "off"].contains(clocks) && powerMode != nil) else {
         throw ValidationError("--clocks takes on or off, with --power-mode")
       }
+      guard gpuMax == nil || (clocks != nil && (gpuMax ?? 0) > 0) else { throw ValidationError("--gpu-max takes MHz above 0, with --clocks") }
     }
 
     func run() throws {
@@ -100,7 +106,7 @@
         gadget = SysfsGadget()
         let telemetry = LinuxHost.telemetry(gpu: (backend as? TrtBackend)?.trt.device ?? 0)
         hooks = LinuxHost.hooks(sleepAfter: sleepAfter, poweroff: poweroff, telemetry: telemetry)
-        let jetsonClocks = powerMode.flatMap { JetsonClocks(modeName: $0) }
+        let jetsonClocks = powerMode.flatMap { JetsonClocks(modeName: $0, gpuMax: gpuMax.map { $0 * 1_000_000 }) }
       #endif
       hooks.fatal = exitOnFatal
 

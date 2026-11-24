@@ -312,6 +312,9 @@ power_usage() {
   local modes="${JETLINK_POWER_MODES:-}"
   modes="${modes// /, }"
   [ -n "$modes" ] || modes="the modes this Jetson has"
+  local steps="${JETLINK_GPU_STEPS:-}"
+  steps="${steps// /, }"
+  [ -n "$steps" ] || steps="its clocks"
   cat <<EOF
 ${B}jetlink power${N}: a Jetson's power mode and clocks
 
@@ -321,6 +324,10 @@ ${B}jetlink power${N}: a Jetson's power mode and clocks
   ${B}jetlink power clocks${N} on|off   on (the default): the power mode's top speed while a comma
                                 is connected or an engine builds, NVIDIA's scaling otherwise;
                                 off: NVIDIA's scaling always
+  ${B}jetlink power gpu${N} full|MHZ    cap the GPU's clock inside the power mode: ${B}full${N} (the
+                                default) or one of $steps MHz.
+                                Lower draws less at each frame, for less coil whine; frames
+                                run slower
 
 Each change restarts the server, about half a minute; the Jetson does not restart.
 EOF
@@ -339,17 +346,21 @@ cmd_power() {
       [ "$mode" = fastest ] && mode="fastest (${JETLINK_POWER_MODES##* })"
       echo "  ${B}Power mode${N}  $mode"
       echo "  ${B}Clocks${N}      ${JETLINK_CLOCKS:-on}"
+      local cap="${JETLINK_GPU_MAX:-full}"
+      [ "$cap" = full ] || cap="$cap MHz"
+      echo "  ${B}GPU cap${N}     $cap"
       # held is the GPU's lowest clock raised to its highest, as the web page reads it (PageHardware)
       for gpu in /sys/class/devfreq/*.gpu; do
         [ -r "$gpu/min_freq" ] || continue
         if [ "$(cat "$gpu/min_freq")" = "$(cat "$gpu/max_freq")" ]; then now="full speed"; else now="power saving"; fi
       done
       [ -z "$now" ] || echo "  ${B}Now${N}         $now" ;;
-    mode|clocks)
+    mode|clocks|gpu)
       [ $# -eq 2 ] || { power_usage; exit 2; }
       as_root power "$@"
       local key=$1
       [ "$key" = mode ] && key=power_mode
+      [ "$key" = gpu ] && key=gpu_max
       run_installer --reconfigure --set "$key=$2" ;;
     help|-h|--help) power_usage ;;
     *) power_usage; exit 2 ;;

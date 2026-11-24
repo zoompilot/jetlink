@@ -30,6 +30,15 @@ public enum JetsonPower {
       self.memory = memory
       self.cpu = cpu
     }
+
+    /// With the GPU capped lower still (`--gpu-max`, in hertz): the lower of
+    /// the two, so a cap never lifts the mode's own limit.
+    public func gpu(max: Int?) -> ModeLimits {
+      guard let max else { return self }
+      var limits = self
+      limits.gpu = Swift.min(gpu ?? max, max)
+      return limits
+    }
   }
 
   /// The `< POWER_MODEL ID=2 NAME=MAXN_SUPER >` sections of an nvpmodel.conf,

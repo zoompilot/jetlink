@@ -36,6 +36,16 @@ struct JetsonPowerTests {
     #expect(JetsonPower.limits(Self.conf, mode: "60W") == nil)
   }
 
+  @Test("A GPU cap is the lower of it and the mode's limit, and a mode with none takes the cap")
+  func gpuCap() {
+    let fifteen = JetsonPower.ModeLimits(gpu: 612_000_000, memory: 2_133_000_000, cpu: 1_497_600)
+    #expect(fifteen.gpu(max: nil) == fifteen)
+    #expect(fifteen.gpu(max: 408_000_000).gpu == 408_000_000)
+    #expect(fifteen.gpu(max: 816_000_000).gpu == 612_000_000)
+    #expect(fifteen.gpu(max: 408_000_000).memory == 2_133_000_000)
+    #expect(JetsonPower.ModeLimits().gpu(max: 510_000_000) == JetsonPower.ModeLimits(gpu: 510_000_000))
+  }
+
   @Test("The modes by ID, and the status file's mode, with or without its fan mode")
   func modes() {
     #expect(JetsonPower.modes(Self.conf) == [0: "15W", 2: "MAXN_SUPER"])

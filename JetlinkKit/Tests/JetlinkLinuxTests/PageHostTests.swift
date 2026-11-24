@@ -170,6 +170,44 @@
       #expect(plain.host.info()["settings"] as? [String: String] == ["power": "always", "comma_poweroff": "yes", "desktop": "on"])
     }
 
+    @Test("The GPU cap: full or one of the GPU's steps, and each mode's own GPU limit beside them")
+    func gpuMax() throws {
+      let installed = Installed(
+        conf: #"""
+          JETLINK_POWER_MODE=fastest
+          JETLINK_POWER_MODES=15W\ 25W\ MAXN_SUPER
+          JETLINK_CLOCKS=on
+          JETLINK_GPU_MAX=510
+          JETLINK_GPU_STEPS=306\ 408\ 510\ 612\ 714\ 816\ 918\ 1020
+          JETLINK_DEFAULTS=power=always\ comma_poweroff=yes\ desktop=off\ swap=on\ power_mode=fastest\ clocks=on\ gpu_max=full
+          """#)
+      installed.tree.write(
+        "/etc/nvpmodel.conf",
+        """
+        < POWER_MODEL ID=0 NAME=15W >
+        GPU MAX_FREQ 612000000
+        < POWER_MODEL ID=1 NAME=25W >
+        GPU MAX_FREQ 918000000
+        < POWER_MODEL ID=2 NAME=MAXN_SUPER >
+        GPU MAX_FREQ -1
+
+        """)
+      let info = installed.host.info()
+      #expect((info["settings"] as? [String: String])?["gpu_max"] == "510")
+      #expect(info["gpu_steps"] as? [Int] == [306, 408, 510, 612, 714, 816, 918, 1020])
+      // by the modes' answers as the page offers them; no limit is the fastest step
+      #expect(info["gpu_limits"] as? [String: Int] == ["15W": 612, "25W": 918, "fastest": 1020])
+      #expect((info["defaults"] as? [String: String])?["gpu_max"] == "full")
+      try installed.host.apply(["gpu_max": "408"])
+      #expect(installed.commands.ran.all.last?.suffix(2) == ["--set", "gpu_max=408"])
+      #expect(throws: PageSystemError.self) { try installed.host.apply(["gpu_max": "500"]) }
+      #expect(throws: PageSystemError.self) { try installed.host.apply(["gpu_max": "max"]) }
+      // an installer that did not record the steps offers no cap
+      let older = Installed(conf: #"JETLINK_POWER_MODES=15W\ 25W\ MAXN_SUPER"#)
+      #expect((older.host.info()["settings"] as? [String: String])?["gpu_max"] == nil)
+      #expect(throws: PageSystemError.self) { try older.host.apply(["gpu_max": "full"]) }
+    }
+
     @Test("Settings become one installer run, as its own unit, its output beside it")
     func apply() throws {
       let installed = Installed()

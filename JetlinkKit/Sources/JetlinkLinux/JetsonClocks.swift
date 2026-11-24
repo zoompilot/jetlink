@@ -8,7 +8,9 @@
   /// scaling otherwise. Each clock is a lowest and a highest in sysfs (the
   /// GPU's and memory's devfreq nodes, cpufreq's policies); held is both at
   /// the top. The limits come from nvpmodel's configuration, so they hold
-  /// where nvpmodel could not switch to the mode without a restart.
+  /// where nvpmodel could not switch to the mode without a restart. A GPU
+  /// cap (`--gpu-max`) lowers the GPU's top further, inside the mode: a
+  /// lower peak draw for each frame, and so less coil whine.
   public final class JetsonClocks: @unchecked Sendable {
     /// After the comma leaves, how long the clocks stay up: a handover or a
     /// cable's blip reconnects within it.
@@ -32,9 +34,10 @@
     private var drop: DispatchWorkItem?
 
     /// nil off a Jetson (no GPU devfreq node): the clocks stay as they are.
-    public init?(modeName: String, root: HostRoot = .system) {
+    /// `gpuMax` in hertz, nil for the mode's own limit.
+    public init?(modeName: String, gpuMax: Int? = nil, root: HostRoot = .system) {
       guard let gpu = gpuDevfreq(root) else { return nil }
-      let limits = JetsonPower.limits(Sysfs.read(root.path("/etc/nvpmodel.conf")) ?? "", mode: modeName) ?? JetsonPower.ModeLimits()
+      let limits = (JetsonPower.limits(Sysfs.read(root.path("/etc/nvpmodel.conf")) ?? "", mode: modeName) ?? JetsonPower.ModeLimits()).gpu(max: gpuMax)
       var found = [
         JetsonClocks.node(root, "GPU", gpu, steps: "available_frequencies", min: "min_freq", max: "max_freq", cap: limits.gpu),
         JetsonClocks.node(
@@ -49,7 +52,8 @@
       guard let gpuNode = found[0] else { return nil }
       self.root = root
       nodes = [gpuNode] + found.dropFirst().compactMap { $0 }
-      log.info("clocks inside power mode \(modeName)")
+      let capped = gpuMax == nil ? "" : ", the GPU at \(gpuNode.clock.top / 1_000_000) MHz or less"
+      log.info("clocks inside power mode \(modeName)\(capped)")
     }
 
     /// Off: NVIDIA's scaling, once, for clocks an earlier run held.

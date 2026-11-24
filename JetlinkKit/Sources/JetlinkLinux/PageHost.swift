@@ -112,12 +112,36 @@
       if (Int(conf["JETLINK_SWAP_NEED_GB"] ?? "") ?? 0) > 0 || !(conf["JETLINK_SWAP_FILE"] ?? "").isEmpty {
         settings["swap"] = conf["JETLINK_SWAP"] == "off" ? "off" : "on"
       }
-      // an installer that lists the power modes also takes these two
+      // an installer that lists the power modes also takes these two, and
+      // the GPU cap once it lists the GPU's steps too
       if !powerModes(answers).isEmpty {
         settings["power_mode"] = conf["JETLINK_POWER_MODE"] ?? "fastest"
         settings["clocks"] = conf["JETLINK_CLOCKS"] == "off" ? "off" : "on"
+        if !gpuSteps(answers).isEmpty { settings["gpu_max"] = conf["JETLINK_GPU_MAX"] ?? "full" }
       }
       return settings
+    }
+
+    /// The GPU's clock steps in MHz, slowest first, as the installer found
+    /// them: what `gpu_max` takes besides `full`.
+    func gpuSteps(_ answers: Answers) -> [Int] {
+      (answers.conf["JETLINK_GPU_STEPS"] ?? "").split(separator: " ").compactMap { Int($0) }.sorted()
+    }
+
+    /// Each mode's own GPU limit in MHz, by its answer as the page offers it,
+    /// from nvpmodel.conf; a mode with none has the GPU's fastest step. So
+    /// the page can say when a cap is above the mode's and changes nothing.
+    func gpuLimits(_ answers: Answers) -> [String: Int] {
+      let steps = gpuSteps(answers), names = powerModes(answers)
+      guard let fastest = steps.last else { return [:] }
+      let conf = Sysfs.read(root.path("/etc/nvpmodel.conf")) ?? ""
+      var limits: [String: Int] = [:]
+      for name in names {
+        let hz = JetsonPower.limits(conf, mode: name)?.gpu
+        let top = hz.map { limit in steps.last(where: { $0 * 1_000_000 <= limit }) ?? steps[0] } ?? fastest
+        limits[name == names.last ? "fastest" : name] = top
+      }
+      return limits
     }
 
     /// The Jetson's power modes, slowest first, as the installer found them:
@@ -169,6 +193,8 @@
         "swap_facts": swapFacts(answers),
         // as the page offers them: the fastest's answer is `fastest`
         "power_modes": modeNames.map { ["value": $0 == modeNames.last ? "fastest" : $0, "name": $0] },
+        "gpu_steps": gpuSteps(answers),
+        "gpu_limits": gpuLimits(answers),
         "defaults": defaults(answers).filter { current[$0.key] != nil },
         "deep_sleep": modes.split(separator: " ").contains { $0 == "deep" || $0 == "[deep]" },
         "sleep_after": answers.sleepAfter,
@@ -190,7 +216,12 @@
       var sets: [String] = []
       for (key, value) in settings.sorted(by: { $0.key < $1.key }) {
         guard here[key] != nil else { throw .refused("\(key) is not a setting on this computer.") }
-        let allowed = key == "power_mode" ? Set(["fastest"] + powerModes(answers)) : PageHost.choices[key]
+        let allowed =
+          switch key {
+          case "power_mode": Set(["fastest"] + powerModes(answers))
+          case "gpu_max": Set(["full"] + gpuSteps(answers).map(String.init))
+          default: PageHost.choices[key]
+          }
         guard allowed?.contains(value) == true else { throw .refused("\(key) cannot be \(value).") }
         sets.append("\(key)=\(value)")
       }
