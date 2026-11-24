@@ -61,7 +61,10 @@ net = vasm().wrap(net, V_ASM_SHA256, [('output0', (1, 3))], params=Params(), sca
 `outputs` names every graph output with its shape, the one `forward()` returns
 first. `scaled_u8=True` promises a `blobFromImage(img, 1/255)` blob, sent as
 its u8 bytes; leave it off for any other blob. A uint8 blob goes as its bytes,
-which the model is given as the same values, whatever its input type. The
+which the model is given as the same values, whatever its input type. A fork
+that has the u8 image can skip the float blob: `setInput(scaled_input(net,
+u8))`, with `u8` as `[1, C, H, W]`, sends the bytes to be scaled on the Jetson
+and makes the float blob only when the net runs on the comma. The
 Jetson takes one image, `[1, C, H, W]`: a batch, or a `setInput` with a
 `scalefactor` or `mean`, runs on the comma. The wrapper asks the Jetson while
 the setting is on and the Jetson has the model, and runs the net itself
@@ -122,7 +125,9 @@ GPU. A frame that comes early waits at most one pass. With no driving frame
 for a second, nothing is driving and passes run at once.
 
 A request may wait for a gap as long as the pass still ends inside the comma's
-50 ms, which most often means through the end of the next frame. One that
+50 ms, which most often means through the end of the next frame. The 50 ms runs
+from the comma's write, so the time the request took to arrive comes out of the
+wait, and even a refusal reaches the comma in time. One that
 finds none is answered `YIELD`, and the comma runs its own model for that
 request alone. When three requests in two seconds find none, the hellos say
 yielding until that passes, and the comma keeps to its own model until the
@@ -163,8 +168,9 @@ often), counts and round trips.
 The client asks only while the link is live: a hello or an answer in the last
 2.5 s, a hello that lists the model and does not say yielding, no write in
 flight. It waits 50 ms for an answer.
-A miss, a timeout or a bad answer, rests the link for 3 s, so a slow host
-never holds the caller at the faster rate it keeps for the host.
+A bad answer, or three timeouts in 2 s, rests the link for 3 s, so a slow host
+never holds the caller at the faster rate it keeps for the host. A lone timeout
+costs that request alone.
 
 It never opens an endpoint before a host has configured the gadget, and closes
 both on any error. It reads in 16 KB pieces and writes in 8 KB ones, as

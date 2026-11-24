@@ -666,6 +666,8 @@ public final class AddonService: @unchecked Sendable {
     var lastHello = Date()
     while !isStopped {
       let first = try header.withUnsafeMutableBytes { try pipes.pipes.read(into: $0.baseAddress!, count: $0.count, timeout: Self.readTimeout) }
+      // the comma's 50 ms runs from its write: the request's transfer spends the budget too
+      let arrived = DispatchTime.now().uptimeNanoseconds
       addon.count { $0.received += first }
       if first == 0 || Date().timeIntervalSince(lastHello) >= Self.helloEvery {
         // a hello the comma is not reading is skipped, but one begun is finished or the link ends: the stream has no other framing
@@ -681,7 +683,7 @@ public final class AddonService: @unchecked Sendable {
       let request = try header.withUnsafeBytes { try AddonWire.request(header: $0) }
       try readFully(pipes, &body, from: 0, to: request.bodyBytes)
       addon.count { $0.received += request.bodyBytes }
-      let answer = body.withUnsafeBytes { handle(addon, request, image: UnsafeRawBufferPointer(rebasing: $0[0..<request.nbytes])) }
+      let answer = body.withUnsafeBytes { handle(addon, request, image: UnsafeRawBufferPointer(rebasing: $0[0..<request.nbytes]), arrived: arrived) }
       try writeFully(pipes, answer)
       addon.count {
         $0.answered += 1
@@ -690,14 +692,14 @@ public final class AddonService: @unchecked Sendable {
     }
   }
 
-  func handle(_ addon: Served, _ request: AddonWire.Request, image: UnsafeRawBufferPointer) -> [UInt8] {
+  func handle(_ addon: Served, _ request: AddonWire.Request, image: UnsafeRawBufferPointer, arrived: UInt64? = nil) -> [UInt8] {
     let started = DispatchTime.now().uptimeNanoseconds
     guard let model = addon.models[request.tag], model.shape == request.shape else {
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .unknownModel)
     }
     // admitted, the gap is this pass's until it ends: no other add-on spends it too
     let cost = model.costNs
-    guard gate.admit(cost: cost, wait: max(0, Self.answerBudget - Double(cost) / 1e9)) else {
+    guard gate.admit(cost: cost, wait: Self.gapWait(cost: cost, spent: started - min(arrived ?? started, started))) else {
       model.relax()
       addon.count { $0.yields += 1 }
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .yield)
@@ -724,6 +726,13 @@ public final class AddonService: @unchecked Sendable {
       if since == 1 || since % 100 == 0 { log.warning("\(addon.name): \(model.file) failed: \(error)") }
       return AddonWire.answer(seq: request.seq, tag: request.tag, status: .inferFailed)
     }
+  }
+
+  /// How long a request may wait for a gap: what is left of the budget once
+  /// its transfer (`spent`) and the pass are taken out, so the answer, `YIELD`
+  /// included, reaches the comma before it gives up.
+  static func gapWait(cost: UInt64, spent: UInt64) -> TimeInterval {
+    max(0, answerBudget - Double(spent) / 1e9 - Double(cost) / 1e9)
   }
 
   private func report(_ addon: Served) {

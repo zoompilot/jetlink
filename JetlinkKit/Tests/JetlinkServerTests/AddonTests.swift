@@ -184,7 +184,7 @@ struct AddonTests {
   @Test("At 20 Hz with 15 ms frames, a request at any point in the period gets a gap within the comma's budget")
   func gateSweep() {
     let cost: UInt64 = 8_000_000
-    let wait = max(0, AddonService.answerBudget - Double(cost) / 1e9)
+    let wait = AddonService.gapWait(cost: cost, spent: 0)
     var served = 0
     for offset in stride(from: 0, to: 50, by: 2) {
       let gate = AddonGate()
@@ -209,6 +209,14 @@ struct AddonTests {
     }
     // real sleeps: a loaded runner misses a few; a gate that never waits serves about half
     #expect(served >= 20, "\(served) of 25 offsets served")
+  }
+
+  @Test("A request's transfer comes out of its wait for a gap, so even a yield answers inside the comma's budget")
+  func gapWaitCountsTransfer() {
+    let cost: UInt64 = 8_000_000
+    #expect(abs(AddonService.gapWait(cost: cost, spent: 0) - 0.032) < 1e-9)
+    #expect(abs(AddonService.gapWait(cost: cost, spent: 20_000_000) - 0.012) < 1e-9)
+    #expect(AddonService.gapWait(cost: cost, spent: 45_000_000) == 0)
   }
 
   @Test("A model builds on the backend and answers every output, in name order")

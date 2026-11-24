@@ -17,7 +17,7 @@ import pytest
 
 from jetlink.addons import link as link_mod
 from jetlink.addons import wire as W
-from jetlink.addons.link import AddonLink, HostModel, JetsonNet, blob_to_u8
+from jetlink.addons.link import AddonLink, HostModel, JetsonNet, ScaledU8, blob_to_u8, scaled_input
 
 SHA = "ab12cd34" + "0" * 56
 TAG = W.tag(SHA)
@@ -237,7 +237,7 @@ def test_answers_only_for_a_fresh_hello_listing_the_model(tmp_path, no_threads):
   assert link.infer(TAG, image, 3) is None
 
 
-def test_a_miss_rests_the_link(tmp_path, no_threads, monkeypatch):
+def test_timeouts_rest_the_link_only_when_they_repeat(tmp_path, no_threads, monkeypatch):
   clock = Clock()
   link = AddonLink(function(tmp_path), host_ready=lambda: False, clock=clock)
   link.handle(W.pack_hello([TAG]))
@@ -245,13 +245,26 @@ def test_a_miss_rests_the_link(tmp_path, no_threads, monkeypatch):
   link._requests = SimpleNamespace(put_nowait=lambda msg: None)   # never answered
   image = np.zeros((3, 2, 2), np.uint8)
   assert link.infer(TAG, image, 3) is None and link.stats["timeouts"] == 1
+  assert link.ready(TAG)   # one late answer costs that request alone
+  # spread wider than the window, timeouts never rest it
+  for _ in range(link_mod.MISS_REST_AFTER):
+    clock.t += link_mod.MISS_WINDOW_S
+    link.handle(W.pack_hello([TAG]))
+    assert link.infer(TAG, image, 3) is None and link.ready(TAG)
+  for _ in range(link_mod.MISS_REST_AFTER):
+    assert link.infer(TAG, image, 3) is None
   link.handle(W.pack_hello([TAG]))   # a late answer or hello keeps it live, but not ready
   assert link.live(TAG) and not link.ready(TAG)
   clock.t += link_mod.MISS_HOLD_S
   link.handle(W.pack_hello([TAG]))
   assert link.ready(TAG)
+
+
+def test_a_bad_answer_rests_the_link_at_once(tmp_path, no_threads):
+  link = AddonLink(function(tmp_path), host_ready=lambda: False, clock=Clock())
+  link.handle(W.pack_hello([TAG]))
   answering(link, values=(1.0, 2.0))   # wrong size
-  assert link.infer(TAG, image, 3) is None and not link.ready(TAG)
+  assert link.infer(TAG, np.zeros((3, 2, 2), np.uint8), 3) is None and not link.ready(TAG)
 
 
 def test_a_yield_answer_is_for_that_request_alone(tmp_path, no_threads):
@@ -301,6 +314,9 @@ class FakeLink:
     self.images.append(image)
     self.encodings.append(encoding)
     return self.flat
+
+  def note_attempt(self, tag):
+    pass
 
   def poll(self, tag):
     return True
@@ -400,6 +416,46 @@ def test_any_runtime_asks_the_host_first_and_runs_its_own_model_otherwise():
   model.enabled = lambda: False
   link.flat = np.arange(5, dtype=np.float32)
   assert model(blob) == ("own", "model") and ran == [(1, 3, 4, 4)] * 2
+
+
+def test_a_scaled_u8_goes_as_its_bytes_and_the_float_blob_is_made_only_to_run_here():
+  link = FakeLink(np.arange(2, dtype=np.float32))
+  cpu = CpuNet()
+  net = JetsonNet(cpu, link, SHA, (("output0", (1, 2)),))
+  u8 = (np.arange(48, dtype=np.uint8) * 5).reshape(1, 3, 4, 4)
+  net.setInput(ScaledU8(u8))
+  assert net.forward().tolist() == [[0, 1]]
+  assert link.encodings == [W.ENC_U8] and np.array_equal(link.images[0], u8[0])
+  assert not hasattr(cpu, "blob")   # the host answered: no float blob, no copy into the net
+  link.flat = None
+  assert net.forward() == ("cpu", None)
+  assert cpu.blob.dtype == np.float32 and np.array_equal(cpu.blob, u8.astype(np.float32) / 255.0)
+
+
+def test_a_scaled_u8_runs_any_runtime_on_its_float_blob_when_the_host_does_not_answer():
+  ran = []
+  model = HostModel(FakeLink(None), SHA, (("output0", (1, 2)),), local=lambda blob: ran.append(blob) or ("own",))
+  u8 = np.full((1, 3, 2, 2), 51, np.uint8)
+  assert model(ScaledU8(u8)) == ("own",) and ran[0].dtype == np.float32 and np.allclose(ran[0], 0.2)
+
+
+def test_a_scaled_u8_cv2_would_scale_or_shift_runs_on_the_comma_on_its_float_blob():
+  link = FakeLink(np.arange(2, dtype=np.float32))
+  cpu = CpuNet()
+  net = JetsonNet(cpu, link, SHA, (("output0", (1, 2)),))
+  u8 = np.full((1, 3, 2, 2), 51, np.uint8)
+  net.setInput(ScaledU8(u8), mean=(0.5, 0.5, 0.5))
+  assert net.forward() == ("cpu", None) and not link.sent
+  assert cpu.blob.dtype == np.float32 and np.allclose(cpu.blob, 0.2)
+  net.setInput(ScaledU8(u8), "", 2.0)
+  assert net.forward() == ("cpu", None) and not link.sent
+
+
+def test_scaled_input_gives_a_plain_net_its_float_blob():
+  u8 = np.full((1, 3, 2, 2), 255, np.uint8)
+  assert isinstance(scaled_input(JetsonNet(CpuNet(), FakeLink(None), SHA, (("output0", (1, 2)),)), u8), ScaledU8)
+  plain = scaled_input(CpuNet(), u8)
+  assert isinstance(plain, np.ndarray) and plain.dtype == np.float32 and np.all(plain == 1.0)
 
 
 def test_reports_go_to_the_callback(tmp_path, no_threads):

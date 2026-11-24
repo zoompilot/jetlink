@@ -15,8 +15,9 @@ again. infer() returns None, for the caller's own model, on any doubt:
   - the host yielding its GPU to the driving model: a YIELD answer for that
     request alone, a YIELD hello until the next plain one,
   - no answer within REPLY_TIMEOUT_S, a send still in flight, or an answer of
-    the wrong size; after a miss it rests MISS_HOLD_S, so a slow host cannot
-    hold a caller at the faster cadence it keeps for the host.
+    the wrong size; it rests MISS_HOLD_S after a bad answer, or MISS_REST_AFTER
+    timeouts in MISS_WINDOW_S, so a slow host cannot hold a caller at the faster
+    cadence it keeps for the host, while one late answer costs that request alone.
 
 HostModel wraps any runtime's model as a call, and JetsonNet stands in for a
 cv2.dnn net (setInput/forward): only the forward pass moves, and the caller's
@@ -54,6 +55,9 @@ from jetlink.comma import functions
 HELLO_FRESH_S = 2.5
 REPLY_TIMEOUT_S = 0.05
 MISS_HOLD_S = 3.0
+# as the server's yieldAfter in yieldFor: a lone timeout is a transfer's tail, not a slow host
+MISS_REST_AFTER = 3
+MISS_WINDOW_S = 2.0
 REOPEN_S = 2.0
 WRITE_CHUNK = 8192
 # as jetlink.transport.ffs reads: a multiple of the packet size, an order-2 allocation
@@ -147,7 +151,8 @@ class AddonLink:
     self.last_hello = -1e9
     self.yield_seen = False
     self.hold_until = -1e9
-    self.stats = {"sent": 0, "answered": 0, "timeouts": 0, "skipped_busy": 0, "unknown_model": 0, "bad_answers": 0,
+    self.misses: collections.deque = collections.deque(maxlen=MISS_REST_AFTER)
+    self.stats = {"eligible_attempts": 0, "sent": 0, "answered": 0, "timeouts": 0, "skipped_busy": 0, "unknown_model": 0, "bad_answers": 0,
                   "yields": 0, "reopens": 0}
     self.round_trips = RoundTrips()
     self._lock = threading.Lock()
@@ -174,6 +179,11 @@ class AddonLink:
 
   def live(self, model_tag: int) -> bool:
     return model_tag in self.tags and self.clock() - self.last_hello < HELLO_FRESH_S and not self.yield_seen
+
+  def note_attempt(self, model_tag: int):
+    with self._lock:
+      if self.live(model_tag):
+        self.stats["eligible_attempts"] += 1
 
   def ready(self, model_tag: int) -> bool:
     return self.live(model_tag) and self.clock() >= self.hold_until and not self._writing.is_set()
@@ -216,7 +226,7 @@ class AddonLink:
     if not slot[0].wait(REPLY_TIMEOUT_S):
       self._drop(seq)
       self.stats["timeouts"] += 1
-      self.hold_until = self.clock() + MISS_HOLD_S
+      self._timed_out()
       return None
     status, server_us, out = slot[1]
     if status == W.STATUS_UNKNOWN_MODEL:
@@ -230,6 +240,13 @@ class AddonLink:
     self.round_trips.add((time.monotonic_ns() - t0) // 1000, server_us)
     self.stats["answered"] += 1
     return out
+
+  def _timed_out(self):
+    now = self.clock()
+    self.misses.append(now)
+    if len(self.misses) == MISS_REST_AFTER and now - self.misses[0] < MISS_WINDOW_S:
+      self.misses.clear()
+      self.hold_until = now + MISS_HOLD_S
 
   def report(self) -> dict:
     """models: the host's, by tag; missing: those this comma asks for that a
@@ -450,6 +467,28 @@ def blob_to_u8(blob: np.ndarray) -> np.ndarray:
   return np.rint(blob[0] * 255.0).clip(0, 255).astype(np.uint8)
 
 
+class ScaledU8:
+  """A uint8 blob [1, C, H, W] that stands for blob / 255, as blobFromImage(img,
+  1/255) makes it: the host gets its bytes as they are and scales them, and the
+  float blob is made only when the comma runs the model itself, so neither end
+  converts the image back. For a HostModel or JetsonNet only; scaled_input()
+  gives a plain net its float blob."""
+
+  __slots__ = ("u8",)
+
+  def __init__(self, u8: np.ndarray):
+    self.u8 = u8
+
+  def scaled(self) -> np.ndarray:
+    return self.u8.astype(np.float32) / 255.0
+
+
+def scaled_input(net, u8: np.ndarray):
+  """The blob for net from a uint8 [1, C, H, W] image scaled by 1/255:
+  ScaledU8 for a net that asks a host, the float blob for any other."""
+  return ScaledU8(u8) if isinstance(net, HostModel) else ScaledU8(u8).scaled()
+
+
 class HostModel:
   """Any runtime's model, asking the host first: model(blob) gives every
   output in `outputs` order, from the host when it answers and from
@@ -487,8 +526,15 @@ class HostModel:
   def ask(self, blob) -> dict | None:
     """Every output by name from the host; None for the caller's own model."""
     # the image is built only for a host that will take it: no cost on the comma without one
-    if blob is None or not self.on() or not self.link.poll(self.tag):
+    if blob is None or not self.on():
       return None
+    self.link.note_attempt(self.tag)
+    if not self.link.poll(self.tag):
+      return None
+    if isinstance(blob, ScaledU8):
+      if blob.u8.dtype != np.uint8 or blob.u8.ndim != 4 or blob.u8.shape[0] != 1:
+        return None
+      return self._values(np.ascontiguousarray(blob.u8[0]), W.ENC_U8)
     blob = np.asarray(blob)
     # the host takes one image, [1, C, H, W]: a batch runs here, whole
     if blob.ndim != 4 or blob.shape[0] != 1:
@@ -500,6 +546,9 @@ class HostModel:
       image, encoding = blob_to_u8(blob), W.ENC_U8
     else:
       image, encoding = np.ascontiguousarray(blob[0], np.float32), W.ENC_F32
+    return self._values(image, encoding)
+
+  def _values(self, image: np.ndarray, encoding: int) -> dict | None:
     flat = self.link.infer(self.tag, image, sum(self.sizes), encoding)
     if flat is None:
       return None
@@ -511,6 +560,8 @@ class HostModel:
 
   def __call__(self, blob):
     values = self.ask(blob)
+    if values is None and isinstance(blob, ScaledU8):
+      blob = blob.scaled()
     return self.local(blob) if values is None else tuple(values[name] for name, _ in self.outputs)
 
 
@@ -519,10 +570,10 @@ class JetsonNet(HostModel):
   of `outputs` is what forward() with no names returns, as cv2 returns the
   graph's first."""
 
-  _OWN = frozenset({"net", "link", "tag", "local", "outputs", "wire", "sizes", "scaled_u8", "enabled", "blob"})
+  _OWN = frozenset({"net", "link", "tag", "local", "outputs", "wire", "sizes", "scaled_u8", "enabled", "blob", "pending"})
 
   def __init__(self, net, link: AddonLink, sha256: str, outputs, scaled_u8: bool = False, enabled=None):
-    self.net, self.blob = net, None
+    self.net, self.blob, self.pending = net, None, None
     super().__init__(link, sha256, outputs, scaled_u8=scaled_u8, enabled=enabled)
 
   def setInput(self, blob, *args, **kwargs):
@@ -530,7 +581,15 @@ class JetsonNet(HostModel):
     # that cv2 would scale or shift runs on the comma, where it is
     scale = kwargs.get("scalefactor", args[1] if len(args) > 1 else 1.0)
     mean = kwargs.get("mean", args[2] if len(args) > 2 else None)
-    self.blob = blob if scale == 1.0 and (mean is None or not np.any(mean)) else None
+    plain = scale == 1.0 and (mean is None or not np.any(mean))
+    self.pending = None
+    if isinstance(blob, ScaledU8):
+      if plain:
+        # the float blob reaches the net only if forward() runs it here
+        self.blob, self.pending = blob, (args, kwargs)
+        return
+      blob = blob.scaled()
+    self.blob = blob if plain else None
     self.net.setInput(blob, *args, **kwargs)
 
   def forward(self, names=None):
@@ -538,6 +597,10 @@ class JetsonNet(HostModel):
     values = self.ask(self.blob) if set(wanted) <= {name for name, _ in self.outputs} else None
     if values is not None:
       return values[wanted[0]] if names is None or isinstance(names, str) else tuple(values[name] for name in wanted)
+    if self.pending is not None:
+      args, kwargs = self.pending
+      self.pending = None
+      self.net.setInput(self.blob.scaled(), *args, **kwargs)
     return self.net.forward() if names is None else self.net.forward(names)
 
   def __getattr__(self, name):
