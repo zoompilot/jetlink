@@ -163,7 +163,10 @@ never needs the gadget rebuilt or the comma restarted.
 `report(dict)` hears the link every 30 s while the caller asks or hellos
 come: connected, yielding, the host's model tags, `missing` (the ones this
 comma asks for that a connected host lacks, a different file on each end most
-often), counts and round trips.
+often), counts and round trips. Compare changes using the increase in
+`answered` divided by the increase in `eligible_attempts` at the same model
+cadence. A model attempt counts before busy and rest checks. `submit_ms`
+accumulates caller time spent submitting AIO writes.
 
 The client asks only while the link is live: a hello or an answer in the last
 2.5 s, a hello that lists the model and does not say yielding, no write in
@@ -174,7 +177,10 @@ costs that request alone.
 
 It never opens an endpoint before a host has configured the gadget, and closes
 both on any error. It reads in 16 KB pieces and writes in 8 KB ones, as
-FunctionFS allocates one contiguous kernel buffer per call.
+FunctionFS allocates one contiguous kernel buffer per call. On Linux the caller
+queues those writes together with native AIO. The 50 ms includes submission.
+TCP and systems without AIO use the writer thread. A disconnected interface
+waits for its own queued writes to settle before reopening.
 
 ## Provisioning
 

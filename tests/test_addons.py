@@ -39,6 +39,7 @@ class Clock:
 
 @pytest.fixture
 def no_threads(monkeypatch):
+  monkeypatch.setattr(link_mod.sys, "platform", "darwin")
   monkeypatch.setattr(link_mod.threading, "Thread", lambda *a, **k: SimpleNamespace(start=lambda: None))
 
 
@@ -162,7 +163,7 @@ def test_reads_go_in_pieces_and_a_message_ends_at_a_short_one(tmp_path, monkeypa
     return len(piece)
   monkeypatch.setattr(link_mod.os, "readv", readv)
   monkeypatch.setattr(link_mod, "_mask_signals", lambda: None)
-  slot = [link_mod.threading.Event(), None]
+  slot = [link_mod.threading.Event(), None, 0.0]
   link._waiting[9] = slot
   with pytest.raises(SystemExit):
     link._read_forever()
@@ -216,7 +217,8 @@ def test_a_stream_answer_is_its_header_and_floats_and_any_pad():
 
 
 def answering(link, status=W.STATUS_OK, values=(0.1, 0.8, 0.1)):
-  def put(msg):
+  def put(request):
+    _, msg = request
     seq, tag, _, _, _ = W.unpack_request(msg)
     link.handle(W.pack_answer(seq, tag, status, 900, np.asarray(values, np.float32).tobytes()))
   link._requests = SimpleNamespace(put_nowait=put)
@@ -620,3 +622,119 @@ def test_attributes_set_on_the_wrapper_land_on_the_net():
   assert cpu.custom == 7 and net.custom == 7
   net.blob = None
   assert not hasattr(cpu, "blob")
+
+
+def test_shared_sender_partial_submit_busy_and_disconnect(tmp_path, monkeypatch):
+  from tests.aio_fakes import FakeAio
+  from threading import Event, Thread
+
+  entered, resume = Event(), Event()
+  class Partial(FakeAio):
+    def submit(self, plan, bases, start, count):
+      if start == 0:
+        entered.set()
+        assert resume.wait(1)
+      return super().submit(plan, bases, start, min(1, count))
+
+  monkeypatch.setattr(link_mod.sys, "platform", "linux")
+  monkeypatch.setattr(link_mod, "Aio", lambda fd, depth: Partial(None, depth))
+  link = AddonLink(function(tmp_path), host_ready=lambda: True)
+  link._threads_started = True
+  link._ensure_open()
+  sender = link._sender
+  sender.aio.holding = True
+  link.handle(W.pack_hello([TAG, TAG + 1]))
+  image = np.zeros((3, 64, 64), np.uint8)
+  worker = Thread(target=link.infer, args=(TAG, image, 1))
+  worker.start()
+  assert entered.wait(1)
+  assert not link.poll(TAG + 1)
+  resume.set()
+  worker.join(1)
+  assert sender.aio.requests == [8192, W.REQ.size + image.nbytes - 8192]
+  assert W.unpack_request(sender.aio.wire)[1] == TAG
+  assert not link.poll(TAG + 1)
+  sender.aio.release()
+  assert link.poll(TAG + 1)
+  sender.aio.holding = True
+  link.infer(TAG + 1, image, 1)
+  link._close(sender.endpoint)
+  assert not sender.settled.is_set()
+  link._next_open = 0
+  link._ensure_open()
+  assert link._rx is None
+  # A second interface still sends while the first waits for the USB host.
+  other_path = tmp_path / "signs"
+  other_path.mkdir()
+  other = AddonLink(function(other_path), host_ready=lambda: True)
+  other._threads_started = True
+  other._ensure_open()
+  other.handle(W.pack_hello([TAG]))
+  other.infer(TAG, image, 1)
+  assert W.unpack_request(other._sender.aio.wire)[1] == TAG
+  assert other.poll(TAG)
+  other._close()
+  sender.aio.shutdown()
+  assert sender.settled.wait(1) and sender.aio.closed
+  link._ensure_open()
+  link._close(sender.endpoint)
+  assert link._sender is not sender and link._rx is not None
+  link._close()
+
+
+def test_setup_failure_uses_writer(tmp_path, monkeypatch, no_threads):
+  def unavailable(fd, depth):
+    raise BlockingIOError
+  monkeypatch.setattr(link_mod.sys, "platform", "linux")
+  monkeypatch.setattr(link_mod, "Aio", unavailable)
+  link = AddonLink(function(tmp_path), host_ready=lambda: True)
+  link._ensure_open()
+  assert link._sender is None and link._writer_started
+  link._close()
+
+
+def test_wrapper_counts_busy_and_rest_once(tmp_path, no_threads):
+  link = AddonLink(function(tmp_path), host_ready=lambda: False)
+  model = HostModel(link, SHA, (("out", (3,)),))
+  link.handle(W.pack_hello([TAG]))
+  blob = np.zeros((1, 3, 2, 2), np.uint8)
+  link._writing.set()
+  assert not model.ready() and model.ask(blob) is None
+  link._writing.clear()
+  link.hold_until = float("inf")
+  assert model.ask(blob) is None
+  link.hold_until = 0
+  answering(link)
+  assert model.ask(blob) is not None
+  assert link.stats["eligible_attempts"] == 3 and link.stats["answered"] == 1
+
+
+@pytest.mark.parametrize("partial", [True, False])
+def test_submit_spends_the_reply_budget(tmp_path, monkeypatch, partial):
+  from tests.aio_fakes import FakeAio
+  clock = Clock()
+  monkeypatch.setattr(link_mod.sys, "platform", "linux")
+  monkeypatch.setattr(link_mod, "time", SimpleNamespace(monotonic=clock, monotonic_ns=lambda: int(clock() * 1e9)))
+  class Slow(FakeAio):
+    def submit(self, plan, bases, start, count):
+      clock.t += link_mod.REPLY_TIMEOUT_S * 2
+      queued = super().submit(plan, bases, start, 1 if partial else count)
+      if not partial:
+        seq, tag, *_ = W.unpack_request(self.wire)
+        link.handle(W.pack_answer(seq, tag, W.STATUS_OK, 1, bytes(4)))
+      return queued
+
+  monkeypatch.setattr(link_mod, "Aio", lambda fd, depth: Slow(None, depth))
+  link = AddonLink(function(tmp_path), host_ready=lambda: True)
+  link._threads_started = True
+  link._ensure_open()
+  sender = link._sender
+  link.handle(W.pack_hello([TAG]))
+  assert link.infer(TAG, np.zeros((3, 64, 64), np.uint8), 1) is None
+  if partial:
+    assert sender.settled.wait(1) and link._tx is None
+    assert sender.aio.submits == 1
+  else:
+    assert link.stats["timeouts"] == 1
+    link._close()
+    assert sender.settled.wait(1)

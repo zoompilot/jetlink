@@ -107,3 +107,19 @@ def test_a_layout_cuts_spans_into_requests_of_the_size():
 def test_a_request_gathers_at_most_iovecs_buffers():
   with pytest.raises(ValueError):
     layout((1,) * (IOVECS + 1), 8192)
+
+
+@pytest.mark.real_aio
+@pytest.mark.skipif(sys.platform != 'linux', reason='Linux AIO')
+def test_addon_sized_batch(tmp_path):
+  payload = os.urandom(372 * 1024)
+  plan = layout((len(payload),), 8192)
+  # Every write targets offset zero on a regular file. Check the byte counts
+  # here; the FunctionFS fake verifies the order of the byte stream.
+  with (tmp_path / 'endpoint').open('wb') as endpoint:
+    aio = Aio(endpoint.fileno(), plan.count)
+    try:
+      assert aio.submit(plan, [address(payload)[0]], 0, plan.count) == plan.count
+      assert sum(aio.reap(plan.count, 1)) == len(payload)
+    finally:
+      aio.close()
