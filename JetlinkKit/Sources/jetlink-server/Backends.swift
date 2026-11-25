@@ -22,7 +22,7 @@
     var backend = BackendName.auto
     @Option(
       help: ArgumentHelp(
-        "trt: a CUDA device index (0). ort: ane (default), ane-whole, coreml or cpu on a Mac; cpu on Linux. litert: gpu (default) or cpu, its libraries in $JETLINK_LITERT_DIR (npu is Android's).",
+        "trt: a CUDA device index (0). ort: ane (default), ane-both, ane-whole, coreml or cpu on a Mac; cpu on Linux. litert: gpu (default) or cpu, its libraries in $JETLINK_LITERT_DIR (npu is Android's).",
         valueName: "device"))
     var device: String?
     @Flag(help: "TensorRT: time each launch with CUDA events and log their spread every 1,200 frames.")
@@ -62,7 +62,7 @@
 
   /// What the backends read from the command line.
   struct BackendOptions {
-    /// trt: a CUDA device index. ort: ane, ane-whole, coreml or cpu on a Mac,
+    /// trt: a CUDA device index. ort: ane, ane-both, ane-whole, coreml or cpu on a Mac,
     /// cpu on Linux. litert: gpu or cpu. nil for each one's default.
     var device: String?
     var keepAlive = true

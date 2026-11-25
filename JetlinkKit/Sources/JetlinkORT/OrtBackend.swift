@@ -11,6 +11,19 @@ import JetlinkServer
 public enum OrtProfile: String, CaseIterable, Sendable {
   /// The vision trunk on the Neural Engine, everything after it on the GPU.
   case ane
+  /// The `ane` cut with the policy on the Neural Engine too, and nothing on
+  /// the GPU. In the iPhone app on an iPad Air (M1) with Light Speed 2, CPU
+  /// keep-warm on, 3,600 real frames at 20 Hz: 25.1 ms median and 26.5 worst,
+  /// against 32.2 and 44.6 for `ane` with its GPU keep-alive off, and 33.5 and
+  /// 53.7 (159 frames over 46 ms) with it on.
+  /// The policy's LayerNormalizations then run in the Neural Engine's fp16,
+  /// which on another model took road_transform below the parity gate
+  /// (docs/mac-performance.md). Light Speed 2 on that iPad passes
+  /// scripts/verify_parity.py against the CPU, hidden state included, on its
+  /// 32 frames and on 300 real night frames; lead_prob is closest to its bound
+  /// (0.18 of 0.68), and the policy's mean errors are 1.5 to 8 times `ane`'s.
+  /// Check a model's parity on this profile before driving it.
+  case aneBoth = "ane-both"
   /// The whole graph on the GPU, for when something else holds the Neural Engine.
   case coreml
   /// The whole graph as one CoreML program with every compute unit allowed,
@@ -34,7 +47,7 @@ public enum OrtProfile: String, CaseIterable, Sendable {
   /// What this build's onnxruntime runs, the default first.
   public static var available: [OrtProfile] {
     #if canImport(Metal)
-      [.ane, .aneWhole, .coreml, .cpu]
+      [.ane, .aneBoth, .aneWhole, .coreml, .cpu]
     #elseif os(Android)
       [.htp, .htpWhole, .gpu, .cpu]
     #else
@@ -46,6 +59,7 @@ public enum OrtProfile: String, CaseIterable, Sendable {
   var sessions: [(name: String, unit: OrtUnit)] {
     switch self {
     case .ane: [("vision", .coreML("CPUAndNeuralEngine")), ("policy", .coreML("CPUAndGPU"))]
+    case .aneBoth: [("vision", .coreML("CPUAndNeuralEngine")), ("policy", .coreML("CPUAndNeuralEngine"))]
     case .coreml: [("model", .coreML("CPUAndGPU"))]
     case .aneWhole: [("model", .coreML("ALL"))]
     case .htp: [("vision", .htp), ("policy", .qnnGPU)]
@@ -62,7 +76,7 @@ public enum OrtProfile: String, CaseIterable, Sendable {
   /// goldens hold the Mac's CPU to Python's outputs bit for bit.
   var layout: CoreMLPreparation.Layout {
     switch self {
-    case .ane, .htp: .split
+    case .ane, .aneBoth, .htp: .split
     case .aneWhole, .htpWhole: .aneWhole
     case .coreml, .gpu: .whole
     case .cpu:

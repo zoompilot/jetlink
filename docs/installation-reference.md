@@ -268,7 +268,7 @@ stop any server using the same cache first.
 | `--dial HOST[:PORT]` | none | Also dial this address and serve it, as the phone apps dial the comma (`192.168.60.1:5599`) over its USB network interface. |
 | `--cache DIR` | [see below](#cache-folder-and-environment) | Models and prepared engines. |
 | `--backend B` | `auto` | `auto` takes TensorRT where it loads, else ONNX Runtime; `trt` or `ort` that cannot run here is an error. The service passes `trt`, so a machine without TensorRT fails loudly instead of serving from the CPU. |
-| `--device D` | per backend | `trt`: the CUDA device index (0). `ort`: `ane` (default), `ane-whole`, `coreml` or `cpu` on a Mac; `cpu` on Linux. |
+| `--device D` | per backend | `trt`: the CUDA device index (0). `ort`: `ane` (default), `ane-both`, `ane-whole`, `coreml` or `cpu` on a Mac; `cpu` on Linux. |
 | `--tensorrt-libs DIR` | `lib/tensorrt` beside `bin/` if it exists, else the loader path | Where TensorRT's libraries are: a PC's own copy. A Jetson's are JetPack's, on the loader path. |
 | `--gpu-timing` | off | TensorRT: time each launch with CUDA events and log their spread every 1,200 frames. |
 | `--sleep-after S` | 0 (never) | Linux, with `--usb` only: suspend after S seconds with no comma on the bus. |

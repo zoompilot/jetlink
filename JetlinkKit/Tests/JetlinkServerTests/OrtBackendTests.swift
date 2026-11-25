@@ -20,6 +20,7 @@ struct OrtBackendTests {
     #endif
     let table: [(OrtProfile, [String], [OrtUnit], String)] = [
       (.ane, ["vision", "policy"], [.coreML("CPUAndNeuralEngine"), .coreML("CPUAndGPU")], "split"),
+      (.aneBoth, ["vision", "policy"], [.coreML("CPUAndNeuralEngine"), .coreML("CPUAndNeuralEngine")], "split"),
       (.coreml, ["model"], [.coreML("CPUAndGPU")], "whole"),
       (.aneWhole, ["model"], [.coreML("ALL")], "aneWhole"),
       (.htp, ["vision", "policy"], [.htp, .qnnGPU], "split"),
@@ -34,8 +35,9 @@ struct OrtBackendTests {
       #expect("\(profile.layout)" == layout, "\(profile)")
     }
     #expect(OrtProfile(rawValue: "ane-whole") == .aneWhole && OrtProfile(rawValue: "htp-whole") == .htpWhole)
+    #expect(OrtProfile(rawValue: "ane-both") == .aneBoth)
     #if canImport(Metal)
-      #expect(OrtProfile.available == [.ane, .aneWhole, .coreml, .cpu])
+      #expect(OrtProfile.available == [.ane, .aneBoth, .aneWhole, .coreml, .cpu])
     #elseif os(Android)
       #expect(OrtProfile.available == [.htp, .htpWhole, .gpu, .cpu])
     #else
