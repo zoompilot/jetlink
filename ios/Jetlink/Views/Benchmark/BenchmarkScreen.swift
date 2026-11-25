@@ -91,8 +91,8 @@ struct BenchmarkScreen: View {
       VStack(alignment: .leading, spacing: 14) {
         Text(sha256.flatMap(app.modelName) ?? (sha256 == nil ? "No Model" : "Model"))
           .font(.title2.weight(.bold))
-        if case .running(let title, let step, let index, let count) = app.comparison.phase {
-          comparing(title: title, step: step, index: index, count: count)
+        if case .running(let title, let step, let index) = app.comparison.phase {
+          comparing(title: title, step: step, index: index)
         } else if let event, running {
           progress(event)
         } else {
@@ -160,32 +160,19 @@ struct BenchmarkScreen: View {
     }
   }
 
-  private func comparing(title: String, step: String, index: Int, count: Int) -> some View {
+  private func comparing(title: String?, step: String, index: Int) -> some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text(title.isEmpty ? step : "\(title): \(step)")
+      Text(title.map { "\($0): \(step)" } ?? step)
         .font(.headline)
-      Text("Processor \(index + 1) of \(count)")
+      Text("Processor \(index + 1) of \(ProcessorComparison.candidates.count)")
         .font(.subheadline)
         .foregroundStyle(.secondary)
       if let event, running {
-        ProgressView(value: min(event.elapsed / max(event.total, 1), 1))
-          .tint(.blue)
-        HStack(spacing: 0) {
-          Figure("P50", ms: event.frame?.p50)
-          Divider().frame(height: 32)
-          Figure("P99", ms: event.frame?.p99)
-        }
+        figures(event)
       } else {
         ProgressView()
       }
-      Button(role: .destructive) {
-        app.comparison.cancel()
-      } label: {
-        Label("Cancel", systemImage: "stop.fill")
-          .frame(maxWidth: .infinity)
-      }
-      .buttonStyle(.glass)
-      .controlSize(.large)
+      cancelButton { app.comparison.cancel() }
     }
   }
 
@@ -204,29 +191,37 @@ struct BenchmarkScreen: View {
 
   private func progress(_ event: BenchmarkEvent) -> some View {
     VStack(alignment: .leading, spacing: 12) {
-      ProgressView(value: min(event.elapsed / max(event.total, 1), 1))
-        .tint(.blue)
-      HStack {
-        Text("\(BenchmarkClock.text(event.elapsed)) of \(BenchmarkClock.text(event.total))")
-        Spacer()
-        Text("\(event.frames.formatted()) frames")
-      }
-      .font(.subheadline.monospacedDigit())
-      .foregroundStyle(.secondary)
-      HStack(spacing: 0) {
-        Figure("P50", ms: event.frame?.p50)
-        Divider().frame(height: 32)
-        Figure("P99", ms: event.frame?.p99)
-      }
-      Button(role: .destructive) {
-        cancel()
-      } label: {
-        Label("Cancel", systemImage: "stop.fill")
-          .frame(maxWidth: .infinity)
-      }
-      .buttonStyle(.glass)
-      .controlSize(.large)
+      figures(event)
+      cancelButton(cancel)
     }
+  }
+
+  /// How far a running benchmark is, and its numbers so far.
+  @ViewBuilder
+  private func figures(_ event: BenchmarkEvent) -> some View {
+    ProgressView(value: min(event.elapsed / max(event.total, 1), 1))
+      .tint(.blue)
+    HStack {
+      Text("\(BenchmarkClock.text(event.elapsed)) of \(BenchmarkClock.text(event.total))")
+      Spacer()
+      Text("\(event.frames.formatted()) frames")
+    }
+    .font(.subheadline.monospacedDigit())
+    .foregroundStyle(.secondary)
+    HStack(spacing: 0) {
+      Figure("P50", ms: event.frame?.p50)
+      Divider().frame(height: 32)
+      Figure("P99", ms: event.frame?.p99)
+    }
+  }
+
+  private func cancelButton(_ action: @escaping () -> Void) -> some View {
+    Button(role: .destructive, action: action) {
+      Label("Cancel", systemImage: "stop.fill")
+        .frame(maxWidth: .infinity)
+    }
+    .buttonStyle(.glass)
+    .controlSize(.large)
   }
 
   private func start(seconds: Double) {
@@ -302,20 +297,22 @@ struct ComparisonCard: View {
     SummaryCard(title: "Comparison", systemImage: "arrow.triangle.branch", tint: .teal, trailing: picked?.title) {
       VStack(alignment: .leading, spacing: 12) {
         ForEach(outcome.trials, id: \.id) { trial in
+          let isPick = trial.id == outcome.decision.pick
+          let report = trial.report.flatMap { $0.frames > 0 ? $0 : nil }
           VStack(alignment: .leading, spacing: 2) {
             HStack {
-              Label(trial.title, systemImage: trial.id == outcome.decision.pick ? "checkmark.circle.fill" : "circle")
+              Label(trial.title, systemImage: isPick ? "checkmark.circle.fill" : "circle")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(trial.id == outcome.decision.pick ? .green : .primary)
+                .foregroundStyle(isPick ? .green : .primary)
               Spacer()
-              if let report = trial.report, report.frames > 0 {
-                Text("P99 \(report.frame.p99.formatted(.number.precision(.fractionLength(1)))) ms")
+              if let report {
+                Text("P99 \(FrameBudgetView.ms(report.frame.p99))")
                   .font(.subheadline.monospacedDigit())
               }
             }
-            if let report = trial.report, report.frames > 0 {
+            if let report {
               Text(
-                "P50 \(report.frame.p50.formatted(.number.precision(.fractionLength(1)))) ms, \(report.over50.formatted()) over budget, \(ThermalLevel(label: report.thermalAtEnd).title.lowercased()) at the end"
+                "P50 \(FrameBudgetView.ms(report.frame.p50)), \(report.over50.formatted()) over budget, \(ThermalLevel(label: report.thermalAtEnd).title.lowercased()) at the end"
               )
               .font(.footnote.monospacedDigit())
               .foregroundStyle(.secondary)

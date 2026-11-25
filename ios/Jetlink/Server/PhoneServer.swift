@@ -1,6 +1,7 @@
 import Foundation
 import JetlinkKit
 import JetlinkORT
+import JetlinkRegistry
 import JetlinkServer
 import Observation
 import os
@@ -24,8 +25,10 @@ final class PhoneServer: ServerControlling {
   /// The profile the running server was started on.
   private(set) var profile = Processor.fallback
   /// A processor comparison runs each candidate in turn: while this is set
-  /// the server runs it, whatever the setting says.
-  @ObservationIgnored var profileOverride: OrtProfile?
+  /// the server runs it, whatever the setting says (`restart(on:)`).
+  @ObservationIgnored private var profileOverride: OrtProfile?
+  /// A model on its way to a server on its own profile (`followModel`).
+  @ObservationIgnored private var following: String?
 
   /// How far back the dashboard's headline reaches.
   static let recentWindow: TimeInterval = 10
@@ -109,13 +112,13 @@ final class PhoneServer: ServerControlling {
     }
     runState = .starting
     lastFailure = nil
-    let profile = profileOverride ?? settings.profile(for: settings.lastModel)
+    let profile = profileOverride ?? following.map(settings.profile(for:)) ?? wantedProfile
     self.profile = profile
     do {
       let root = try PhoneServer.prepareCacheDirectory()
       let embedded = try EmbeddedServer(
         // The listener is only for bench tools over Wi-Fi; the comma never dials the phone.
-        configuration: Server.Configuration(port: settings.port, cacheRoot: root, listen: settings.developer, keepPlans: 2),
+        configuration: Server.Configuration(port: settings.port, cacheRoot: root, preload: following == nil, listen: settings.developer, keepPlans: 2),
         backend: OrtBackend(
           profile: profile, preparer: ONNXPreparer(), keepAlive: settings.keepGPUAwake, keepCPUWarm: settings.keepCPUWarm))
       self.embedded = embedded
@@ -163,6 +166,21 @@ final class PhoneServer: ServerControlling {
   func restart() {
     stop()
     start()
+  }
+
+  /// The profile the setting asks for: Automatic's goes by the model the
+  /// server loads at its start, the one it had loaded last.
+  private var wantedProfile: OrtProfile {
+    settings.profile(for: CacheLayout(root: PhoneSettings.cacheDirectory).lastLoaded()?.sha256)
+  }
+
+  /// A server on `profile` whatever the setting says, for a processor
+  /// comparison; nil goes back to the setting, with no restart when the
+  /// server is on its profile already.
+  func restart(on profile: OrtProfile?) {
+    profileOverride = profile
+    if profile == nil, runState == .serving, self.profile == wantedProfile { return }
+    restart()
   }
 
   /// iOS takes a suspended app's listening socket; listen again on the way back.
@@ -249,17 +267,25 @@ final class PhoneServer: ServerControlling {
   }
 
   /// Automatic runs each model on what a comparison picked for it, and a
-  /// server runs one profile: a model with another pick takes a restart,
-  /// which loads it again on its own.
+  /// server runs one profile: a model with another pick takes a server on
+  /// that profile, which is asked for the model in place of the one it
+  /// would load at its start.
   private func followModel(_ sha256: String) {
-    if settings.lastModel != sha256 {
-      settings.lastModel = sha256
+    if following == sha256 {
+      following = nil
     }
-    guard profileOverride == nil, runState == .serving else { return }
+    guard following == nil, profileOverride == nil, runState == .serving else { return }
     let wanted = settings.profile(for: sha256)
     guard wanted != profile else { return }
     note(.info, "this model runs on \(wanted.rawValue) here; restarting the server from \(profile.rawValue)")
+    following = sha256
     restart()
+    Task {
+      let reply = try? await send(.prepare(sha256: sha256, frameSkip: ModelStore.defaultFrameSkip))
+      if reply?.ok != true, following == sha256 {
+        following = nil
+      }
+    }
   }
 
   private func resetLiveState() {

@@ -5,7 +5,6 @@ import JetlinkKit
 /// processor's outputs to another's on the device itself
 /// (`OutputParity.compare`).
 public struct ProbeCapture: Sendable {
-  public let sha256: String
   /// Each frame's whole driving output.
   public let outputs: [[Float]]
   public let slices: [(name: String, range: Range<Int>)]
@@ -87,75 +86,22 @@ extension EngineHost {
 
   /// Runs the loaded engine over `frames` fixed frames from a reset, the
   /// hidden state fed back as a drive does, and returns each frame's driving
-  /// output. Refuses while a comma is connected or a benchmark runs, and
-  /// holds the engine as a benchmark does. Blocks; call it off the main
-  /// thread.
+  /// output. Holds the engine as a benchmark does (`withEngineHeld`).
+  /// Blocks; call it off the main thread.
   public func probe(frames: Int = EngineHost.probeFrames) throws -> ProbeCapture {
-    lock.lock()
-    guard let l = loaded else {
-      lock.unlock()
-      throw HostError.invalid("no model is loaded; prepare one first")
-    }
-    if session != nil {
-      lock.unlock()
-      throw HostError.invalid("a comma is connected; disconnect it to compare")
-    }
-    if benchmarking {
-      lock.unlock()
-      throw HostError.invalid("a benchmark is running")
-    }
-    benchmarking = true
-    lock.unlock()
-    defer {
-      lock.lock()
-      benchmarking = false
-      loaded?.staging.reset()
-      lock.unlock()
-    }
-    let spec = l.spec
-    guard let io = l.engine.outputs[ModelConstants.drivingOutput], io.type == .float || io.type == .float16 else {
-      throw HostError.failed("the engine's driving output is not float")
-    }
-    var noise = SplitMix(seed: 0)
-    var outputs: [[Float]] = []
-    lock.lock()
-    l.staging.reset()
-    lock.unlock()
-    for i in 0..<frames {
-      let warped = ProbeFrames.warped(spec, frame: i, noise: &noise)
-      let packed = ProbeFrames.packed(spec, frame: i)
-      var output = [Float](repeating: 0, count: spec.outputCount)
-      lock.lock()
-      guard loaded === l else {
-        lock.unlock()
-        throw HostError.failed("the engine was unloaded during the comparison")
+    try withEngineHeld(to: "compare") { l in
+      let spec = l.spec
+      var noise = SplitMix(seed: 0)
+      var outputs: [[Float]] = []
+      lock.withLock { l.staging.reset() }
+      for i in 0..<frames {
+        var output = [Float](repeating: 0, count: spec.outputCount)
+        let frame = try runFrame(
+          l, warped: ProbeFrames.warped(spec, frame: i, noise: &noise), packed: ProbeFrames.packed(spec, frame: i), into: &output)
+        guard frame.finite else { throw HostError.failed("frame \(i) of the comparison was not finite") }
+        outputs.append(output)
       }
-      do {
-        try warped.withUnsafeBytes { w in
-          try packed.withUnsafeBytes { p in try l.staging.stage(warped: w.baseAddress!, packed: p.baseAddress!) }
-        }
-        try l.engine.run()
-      } catch {
-        lock.unlock()
-        throw error
-      }
-      let out = l.staging.layout.output!
-      output.withUnsafeMutableBytes { o in
-        if io.type == .float16 {
-          Convert.f16ToF32(out, o.baseAddress!, count: spec.outputCount)
-        } else {
-          o.baseAddress!.copyMemory(from: out, byteCount: spec.outputCount * 4)
-        }
-      }
-      let finite = output.withUnsafeBytes { Convert.allFinite($0.baseAddress!, count: spec.outputCount) }
-      if finite {
-        l.staging.keep(outputs: out, type: io.type)
-      }
-      lock.unlock()
-      guard finite else { throw HostError.failed("frame \(i) of the comparison was not finite") }
-      outputs.append(output)
+      return ProbeCapture(outputs: outputs, slices: spec.outputSlices.map { ($0.name, $0.range(in: spec.outputCount)) })
     }
-    return ProbeCapture(
-      sha256: l.sha256, outputs: outputs, slices: spec.outputSlices.map { ($0.name, $0.range(in: spec.outputCount)) })
   }
 }

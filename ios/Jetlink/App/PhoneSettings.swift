@@ -34,12 +34,6 @@ final class PhoneSettings {
     didSet { defaults.set(automaticPicks, forKey: Keys.automaticPicks) }
   }
 
-  /// The model the server had last, so a start can choose Automatic's
-  /// processor for it before the server says what it loads.
-  var lastModel: String? {
-    didSet { defaults.set(lastModel, forKey: Keys.lastModel) }
-  }
-
   /// The profile the server runs `sha256` on.
   func profile(for sha256: String?) -> OrtProfile {
     if let profile = device.profile { return profile }
@@ -78,7 +72,6 @@ final class PhoneSettings {
     // A device stored before Automatic existed was chosen by hand, and stays.
     self.device = defaults.string(forKey: Keys.device).flatMap(Processor.init(rawValue:)) ?? .automatic
     self.automaticPicks = defaults.dictionary(forKey: Keys.automaticPicks) as? [String: String] ?? [:]
-    self.lastModel = defaults.string(forKey: Keys.lastModel)
     self.keepGPUAwake = defaults.object(forKey: Keys.keepGPUAwake) as? Bool ?? false
     self.keepCPUWarm = defaults.object(forKey: Keys.keepCPUWarm) as? Bool ?? true
     self.keepScreenOn = defaults.object(forKey: Keys.keepScreenOn) as? Bool ?? true
@@ -96,7 +89,6 @@ final class PhoneSettings {
     static let developer = "developer"
     static let device = "device"
     static let automaticPicks = "automaticPicks"
-    static let lastModel = "lastModel"
     static let keepGPUAwake = "keepGPUAwake"
     static let keepCPUWarm = "keepCPUWarm"
     static let keepScreenOn = "keepScreenOn"

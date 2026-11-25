@@ -8,12 +8,22 @@ struct ProcessorComparisonTests {
     ("lead", 0..<144), ("lead_prob", 144..<147), ("road_transform", 147..<159), ("meta", 159..<214), ("plan", 214..<1204),
   ]
 
+  static func value(_ i: Int, _ frame: Int) -> Float {
+    let angle: Double = 0.37 * Double(i) + 0.9 * Double(frame)
+    let scale = Double(1 + i % 7)
+    return Float(sin(angle) * scale)
+  }
+
   static func reference(_ frame: Int) -> [Float] {
-    (0..<1204).map { Float(sin(0.37 * Double($0) + 0.9 * Double(frame)) * Double(1 + $0 % 7)) }
+    (0..<1204).map { value($0, frame) }
   }
 
   static func candidate(_ frame: Int, noise: Double) -> [Float] {
-    (0..<1204).map { Float(sin(0.37 * Double($0) + 0.9 * Double(frame)) * Double(1 + $0 % 7)) + Float(noise * cos(1.3 * Double($0) + Double(frame))) }
+    (0..<1204).map { i -> Float in
+      let angle: Double = 1.3 * Double(i) + Double(frame)
+      let off = Float(noise * cos(angle))
+      return value(i, frame) + off
+    }
   }
 
   /// The slices scripts/verify_parity.py's report_slices fails on the same
@@ -98,7 +108,8 @@ struct ProcessorComparisonTests {
     #expect(ProcessorPick.decide([]).pick == nil)
     let trials = Self.trials(Self.report(26.1), Self.report(41.9), nil)
     let text = ProcessorPick.text(
-      trials, decision: ProcessorPick.decide(trials), parity: nil, chip: "Apple M1", model: "Light Speed 2", sha256: "909a140019050a9d7f00")
+      trials, decision: ProcessorPick.decide(trials), parity: nil, reference: "Neural Engine + GPU", chip: "Apple M1", model: "Light Speed 2",
+      sha256: "909a140019050a9d7f00")
     #expect(text.contains("Pick: Neural Engine Only.") && text.contains("GPU Only: did not run") && text.contains("outputs match"))
   }
 }

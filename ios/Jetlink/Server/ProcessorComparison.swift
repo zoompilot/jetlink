@@ -8,23 +8,21 @@ import Observation
 /// Automatic set to the best of them for that model (`ProcessorPick`).
 ///
 /// Each candidate takes a server of its own, so the server is restarted on
-/// it, the model prepared there, its outputs captured on fixed frames and a
-/// benchmark run. The least preferred goes first: the device warms as the
+/// it, the model prepared there and a benchmark run, with the outputs of the
+/// two that are compared captured on fixed frames first. The least preferred goes first: the device warms as the
 /// runs go, so the one preferred has to hold up warm, as on a drive.
 @MainActor
 @Observable
 final class ProcessorComparison {
   enum Phase: Equatable {
     case idle
-    /// Which candidate of how many, and what it is doing.
-    case running(title: String, step: String, index: Int, count: Int)
-    case done
+    /// Which candidate, nil before the first, and what it is doing.
+    case running(title: String?, step: String, index: Int)
     case failed(String)
   }
 
   /// One finished comparison, for the screen and the share sheet.
   struct Outcome: Equatable {
-    let sha256: String
     let trials: [ProcessorPick.Trial]
     let decision: ProcessorPick.Decision
     let text: String
@@ -42,9 +40,9 @@ final class ProcessorComparison {
   /// The one whose outputs the others are held to: it has passed the parity
   /// check against the CPU wherever that was run.
   static let reference = OrtProfile.ane
-  /// The ones that run part of the model in lower precision than the
-  /// reference, and are taken only when their outputs match it.
-  static let checked: Set<OrtProfile> = [.aneBoth]
+  /// The one that runs part of the model in lower precision than the
+  /// reference, and is taken only when its outputs match it.
+  static let checked = OrtProfile.aneBoth
   /// Each benchmark's length. A minute misleads: on an iPad Air (M1) one
   /// 60 s run read 30.0 ms median where three minutes read 33.5.
   static let seconds = 180.0
@@ -63,7 +61,7 @@ final class ProcessorComparison {
   func start(sha256: String, modelName: String, chip: String) {
     guard !running else { return }
     outcome = nil
-    phase = .running(title: "", step: "Starting", index: 0, count: ProcessorComparison.candidates.count)
+    phase = .running(title: nil, step: "Starting", index: 0)
     task = Task { await run(sha256: sha256, modelName: modelName, chip: chip) }
   }
 
@@ -78,18 +76,19 @@ final class ProcessorComparison {
 
   private func run(sha256: String, modelName: String, chip: String) async {
     let order = Array(ProcessorComparison.candidates.reversed())
+    let reference = ProcessorComparison.reference
+    let checked = ProcessorComparison.checked
     var reports: [OrtProfile: BenchmarkReport] = [:]
     var captures: [OrtProfile: ProbeCapture] = [:]
     var failures: [OrtProfile: String] = [:]
     defer {
       // back to what the setting says, with the pick this run made
-      server.profileOverride = nil
-      server.restart()
+      server.restart(on: nil)
       task = nil
     }
     for (index, profile) in order.enumerated() {
       func step(_ text: String) {
-        phase = .running(title: profile.title, step: text, index: index, count: order.count)
+        phase = .running(title: profile.title, step: text, index: index)
       }
       // A comma's frames come first, and a partial comparison picks nothing.
       if server.link.state == .connected {
@@ -99,56 +98,47 @@ final class ProcessorComparison {
       }
       do {
         step("Preparing the model")
-        server.profileOverride = profile
-        server.restart()
+        server.restart(on: profile)
         try await prepare(sha256)
-        step("Checking its outputs")
-        captures[profile] = try await server.probe()
+        if profile == reference || profile == checked {
+          step("Checking its outputs")
+          captures[profile] = try await server.probe()
+        }
         step("Measuring")
         reports[profile] = try await benchmark()
         try Task.checkCancellation()
-      } catch is CancellationError {
-        server.note(.info, "the processor comparison was cancelled")
-        phase = .idle
-        return
       } catch {
-        if Task.isCancelled {
+        if error is CancellationError || Task.isCancelled {
+          server.note(.info, "the processor comparison was cancelled")
           phase = .idle
           return
         }
-        let text = (error as? Failure)?.text ?? "It could not run this model."
-        failures[profile] = text
+        failures[profile] = (error as? Failure)?.text ?? "It could not run this model."
         server.note(.warning, "comparison: \(profile.rawValue) failed: \(error)")
       }
     }
 
     // Without the reference there is nothing to hold the others to.
-    guard reports[ProcessorComparison.reference] != nil else {
+    guard reports[reference] != nil else {
       phase = .failed("The comparison did not finish. See Logs for details.")
       return
     }
     var parity: OutputParity.Result?
-    var matches: [OrtProfile: Bool] = [:]
-    if let reference = captures[ProcessorComparison.reference] {
-      for profile in ProcessorComparison.checked {
-        guard let capture = captures[profile] else { continue }
-        let result = OutputParity.compare(candidate: capture.outputs, reference: reference.outputs, slices: reference.slices)
-        matches[profile] = result.passed
-        parity = result
-        server.note(result.passed ? .info : .warning, "comparison: \(profile.rawValue) outputs \(result.passed ? "match" : "differ")\n\(result.text)")
-      }
+    if let ours = captures[checked], let theirs = captures[reference] {
+      parity = OutputParity.compare(candidate: ours.outputs, reference: theirs.outputs, slices: theirs.slices)
     }
     let trials = ProcessorComparison.candidates.map { profile in
       ProcessorPick.Trial(
-        id: profile.rawValue, title: profile.title, report: reports[profile], outputsMatch: matches[profile],
-        needsOutputCheck: ProcessorComparison.checked.contains(profile), failure: failures[profile])
+        id: profile.rawValue, title: profile.title, report: reports[profile], outputsMatch: profile == checked ? parity?.passed : nil,
+        needsOutputCheck: profile == checked, failure: failures[profile])
     }
     let decision = ProcessorPick.decide(trials)
     settings.automaticPicks[sha256] = decision.pick
-    let text = ProcessorPick.text(trials, decision: decision, parity: parity, chip: chip, model: modelName, sha256: sha256)
+    let text = ProcessorPick.text(
+      trials, decision: decision, parity: parity, reference: reference.title, chip: chip, model: modelName, sha256: sha256)
     server.note(.info, text)
-    outcome = Outcome(sha256: sha256, trials: trials, decision: decision, text: text)
-    phase = decision.pick == nil ? .failed(decision.reason) : .done
+    outcome = Outcome(trials: trials, decision: decision, text: text)
+    phase = .idle
   }
 
   /// Asks for the model and waits until the engine has it.

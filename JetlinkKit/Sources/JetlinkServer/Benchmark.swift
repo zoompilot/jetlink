@@ -108,31 +108,12 @@ extension EngineHost {
   /// main thread. The report is the caller's to show; `logsReport` is
   /// ignored.
   public func benchmark(seconds: Double, run: BenchmarkRun, logsReport: Bool = false) throws -> BenchmarkReport {
-    lock.lock()
-    guard let l = loaded else {
-      lock.unlock()
-      throw HostError.invalid("no model is loaded; prepare one first")
-    }
-    if session != nil {
-      lock.unlock()
-      throw HostError.invalid("a comma is connected; disconnect it to benchmark")
-    }
-    if benchmarking {
-      lock.unlock()
-      throw HostError.invalid("a benchmark is already running")
-    }
-    benchmarking = true
-    lock.unlock()
-    defer {
-      lock.lock()
-      benchmarking = false
-      // The benchmark's own GPU times, before a comma's frames join the block.
-      if loaded === l { l.engine.flushTiming() }
-      loaded?.staging.reset()
-      lock.unlock()
-    }
     do {
-      let report = try measure(l, seconds: seconds, run: run)
+      let report = try withEngineHeld(to: "benchmark") { l in
+        // The benchmark's own GPU times, before a comma's frames join the block.
+        defer { lock.withLock { if loaded === l { l.engine.flushTiming() } } }
+        return try measure(l, seconds: seconds, run: run)
+      }
       emit(
         .benchmark(
           BenchmarkEvent(
@@ -145,6 +126,71 @@ extension EngineHost {
     }
   }
 
+  /// Takes the loaded engine for `body`, a benchmark or a probe: refused
+  /// while a comma is connected or another holds it, and the history is
+  /// reset when it is given back.
+  func withEngineHeld<T>(to purpose: String, _ body: (Loaded) throws -> T) throws -> T {
+    let l = try lock.withLock {
+      guard let l = loaded else { throw HostError.invalid("no model is loaded; prepare one first") }
+      if session != nil { throw HostError.invalid("a comma is connected; disconnect it to \(purpose)") }
+      if benchmarking { throw HostError.invalid("a benchmark is already running") }
+      benchmarking = true
+      return l
+    }
+    defer {
+      lock.withLock {
+        benchmarking = false
+        loaded?.staging.reset()
+      }
+    }
+    return try body(l)
+  }
+
+  /// One frame's times, and whether its output was all finite.
+  struct FrameRun {
+    let queueUs: UInt32
+    let acceleratorUs: UInt32
+    let outputUs: UInt32
+    let totalUs: UInt32
+    let finite: Bool
+  }
+
+  /// One frame on a held engine, as a frame from the comma runs: staged
+  /// through the queues, run, read back into `output` as float32, and its
+  /// hidden state kept for the next when it is finite.
+  func runFrame(_ l: Loaded, warped: [UInt8], packed: [Float], into output: inout [Float]) throws -> FrameRun {
+    guard let io = l.engine.outputs[ModelConstants.drivingOutput], io.type == .float || io.type == .float16 else {
+      throw HostError.failed("the engine's driving output is not float")
+    }
+    let count = l.spec.outputCount
+    return try lock.withLock {
+      guard loaded === l else { throw HostError.failed("the engine was unloaded during the run") }
+      let started = DispatchTime.now().uptimeNanoseconds
+      try warped.withUnsafeBytes { w in
+        try packed.withUnsafeBytes { p in try l.staging.stage(warped: w.baseAddress!, packed: p.baseAddress!) }
+      }
+      let queueUs = microseconds(since: started)
+      try l.engine.run()
+      let readStarted = DispatchTime.now().uptimeNanoseconds
+      let out = l.staging.layout.output!
+      output.withUnsafeMutableBytes { o in
+        if io.type == .float16 {
+          Convert.f16ToF32(out, o.baseAddress!, count: count)
+        } else {
+          o.baseAddress!.copyMemory(from: out, byteCount: count * 4)
+        }
+      }
+      let finite = output.withUnsafeBytes { Convert.allFinite($0.baseAddress!, count: count) }
+      let outputUs = microseconds(since: readStarted)
+      let totalUs = microseconds(since: started)
+      if finite {
+        // the hidden state back into the queues, as a frame from the comma does
+        l.staging.keep(outputs: out, type: io.type)
+      }
+      return FrameRun(queueUs: queueUs, acceleratorUs: l.engine.lastGpuUs, outputUs: outputUs, totalUs: totalUs, finite: finite)
+    }
+  }
+
   private func measure(_ l: Loaded, seconds: Double, run: BenchmarkRun) throws -> BenchmarkReport {
     let spec = l.spec
     let device = backend.describe()["device"] ?? ""
@@ -154,9 +200,6 @@ extension EngineHost {
     let warped = (0..<spec.warpedBytes).map { _ in UInt8.random(in: 0...255, using: &generator) }
     let packed = [Float](repeating: 0, count: spec.packedCount)
     var output = [Float](repeating: 0, count: spec.outputCount)
-    guard let io = l.engine.outputs[ModelConstants.drivingOutput], io.type == .float || io.type == .float16 else {
-      throw HostError.failed("the engine's driving output is not float")
-    }
 
     var frameMs: [Double] = [], accelMs: [Double] = [], queueMs: [Double] = [], outMs: [Double] = []
     var windows: [BenchmarkWindow] = []
@@ -189,49 +232,15 @@ extension EngineHost {
       next += period
 
       let frameAt = ProcessInfo.processInfo.systemUptime - t0
-      lock.lock()
-      guard loaded === l else {
-        lock.unlock()
-        throw HostError.failed("the engine was unloaded during the benchmark")
-      }
-      let started = DispatchTime.now().uptimeNanoseconds
-      var queueUs: UInt32 = 0
-      do {
-        try warped.withUnsafeBytes { w in
-          try packed.withUnsafeBytes { p in try l.staging.stage(warped: w.baseAddress!, packed: p.baseAddress!) }
-        }
-        queueUs = microseconds(since: started)
-        try l.engine.run()
-      } catch {
-        lock.unlock()
-        throw error
-      }
-      let readStarted = DispatchTime.now().uptimeNanoseconds
-      let out = l.staging.layout.output!
-      output.withUnsafeMutableBytes { o in
-        if io.type == .float16 {
-          Convert.f16ToF32(out, o.baseAddress!, count: spec.outputCount)
-        } else {
-          o.baseAddress!.copyMemory(from: out, byteCount: spec.outputCount * 4)
-        }
-      }
-      let finite = output.withUnsafeBytes { Convert.allFinite($0.baseAddress!, count: spec.outputCount) }
-      let outputUs = microseconds(since: readStarted)
-      let totalUs = microseconds(since: started)
-      let accel = l.engine.lastGpuUs
-      if finite {
-        // the hidden state back into the queues, as a frame from the comma does
-        l.staging.keep(outputs: out, type: io.type)
-      }
-      lock.unlock()
+      let frame = try runFrame(l, warped: warped, packed: packed, into: &output)
 
       i += 1
       if i <= warmup && frameAt < EngineHost.benchmarkWarmupSeconds { continue }
-      frameMs.append(Double(totalUs) / 1000)
-      accelMs.append(Double(accel) / 1000)
-      queueMs.append(Double(queueUs) / 1000)
-      outMs.append(Double(outputUs) / 1000)
-      windowFrames.append(Double(totalUs) / 1000)
+      frameMs.append(Double(frame.totalUs) / 1000)
+      accelMs.append(Double(frame.acceleratorUs) / 1000)
+      queueMs.append(Double(frame.queueUs) / 1000)
+      outMs.append(Double(frame.outputUs) / 1000)
+      windowFrames.append(Double(frame.totalUs) / 1000)
       let second = Int(ProcessInfo.processInfo.systemUptime - t0)
       if second - windowStart >= EngineHost.benchmarkWindow {
         let window = BenchmarkWindow(

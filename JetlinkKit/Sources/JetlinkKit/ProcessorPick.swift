@@ -88,13 +88,13 @@ public enum ProcessorPick {
         return Decision(pick: trial.id, reason: reason, passedOver: passedOver)
       }
     }
-    return Decision(pick: nil, reason: "No processor finished the run.", passedOver: passedOver)
+    return Decision(pick: nil, reason: "None was both fast enough and cool enough.", passedOver: passedOver)
   }
 
   private static func hot(_ thermal: String) -> Bool { thermal == "serious" || thermal == "critical" }
 
   /// The runs and the outcome as text, to send to the developers.
-  public static func text(_ trials: [Trial], decision: Decision, parity: OutputParity.Result?, chip: String, model: String, sha256: String) -> String {
+  public static func text(_ trials: [Trial], decision: Decision, parity: OutputParity.Result?, reference: String, chip: String, model: String, sha256: String) -> String {
     var lines = ["Jetlink processor comparison", "\(chip), \(model) (\(sha256.prefix(16)))"]
     for trial in trials {
       if let r = trial.report {
@@ -109,7 +109,7 @@ public enum ProcessorPick {
     let title = trials.first { $0.id == decision.pick }?.title
     lines.append("Pick: \(title ?? "none"). \(decision.reason)")
     if let parity {
-      lines.append("Outputs against \(trials.first { !$0.needsOutputCheck && $0.report != nil }?.title ?? "the default"):")
+      lines.append("Outputs against \(reference):")
       lines.append(parity.text)
     }
     return lines.joined(separator: "\n")

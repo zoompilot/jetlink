@@ -151,7 +151,7 @@ struct ServerHooksTests {
       #expect(eventually(timeout: 10) { server.host.lock.withLock { server.host.session == nil } })
       let first = try server.host.probe(frames: 6)
       let again = try server.host.probe(frames: 6)
-      #expect(first.sha256 == golden.sha256 && first.outputs.count == 6)
+      #expect(first.outputs.count == 6)
       #expect(first.outputs == again.outputs)
       // frames differ, and the history carries: the same frame gives another answer later
       #expect(first.outputs[0] != first.outputs[1])
