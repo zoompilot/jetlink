@@ -141,6 +141,29 @@ struct ServerHooksTests {
     }
   }
 
+  @Test("A probe's frames are the same every run, from a reset, and it waits for the comma to go")
+  func probe() throws {
+    let golden = try Golden("tiny_stateful")
+    try serve(hooks: ServerHooks()) { server, client in
+      _ = try client.ensureEngine(model: golden.model, sha256: golden.sha256)
+      #expect(throws: (any Error).self) { try server.host.probe() }
+      client.close()
+      #expect(eventually(timeout: 10) { server.host.lock.withLock { server.host.session == nil } })
+      let first = try server.host.probe(frames: 6)
+      let again = try server.host.probe(frames: 6)
+      #expect(first.sha256 == golden.sha256 && first.outputs.count == 6)
+      #expect(first.outputs == again.outputs)
+      // frames differ, and the history carries: the same frame gives another answer later
+      #expect(first.outputs[0] != first.outputs[1])
+      let spec = try ModelSpec.from(golden.spec)
+      #expect(first.outputs.allSatisfy { $0.count == spec.outputCount })
+      #expect(Set(first.slices.map(\.name)) == Set(spec.outputSlices.map(\.name)))
+      let same = OutputParity.compare(candidate: again.outputs, reference: first.outputs, slices: first.slices)
+      #expect(same.passed, "\(same.text)")
+      #expect(!server.host.lock.withLock { server.host.benchmarking })
+    }
+  }
+
   /// The sleeper's input: touched while the gadget is on the bus and at each
   /// connection's start and end, idle only while it is gone, and a look for
   /// the gadget at once after a sleep.

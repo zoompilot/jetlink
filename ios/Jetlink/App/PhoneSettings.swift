@@ -22,13 +22,32 @@ final class PhoneSettings {
     didSet { defaults.set(developer, forKey: Keys.developer) }
   }
 
-  /// The trunk on the Neural Engine and the rest on the GPU (14 ms a frame on an
-  /// iPhone 18 Pro; the whole model on the Neural Engine took 100 ms or failed),
-  /// or the whole model on the GPU for when something else holds the Neural Engine.
-  /// Or both halves on the Neural Engine (`ane-both`): faster and steadier on
-  /// an iPad Air (M1), in fp16 where the policy's norms are, so experimental.
-  var device: OrtProfile {
+  /// What runs the model. Automatic until one is chosen by hand.
+  var device: Processor {
     didSet { defaults.set(device.rawValue, forKey: Keys.device) }
+  }
+
+  /// What Compare Processors found best for each model, by its sha256, as
+  /// the profile's name. Automatic runs a model on its entry, and on
+  /// `Processor.fallback` until it has one.
+  var automaticPicks: [String: String] {
+    didSet { defaults.set(automaticPicks, forKey: Keys.automaticPicks) }
+  }
+
+  /// The model the server had last, so a start can choose Automatic's
+  /// processor for it before the server says what it loads.
+  var lastModel: String? {
+    didSet { defaults.set(lastModel, forKey: Keys.lastModel) }
+  }
+
+  /// The profile the server runs `sha256` on.
+  func profile(for sha256: String?) -> OrtProfile {
+    if let profile = device.profile { return profile }
+    #if targetEnvironment(simulator)
+      return Processor.fallback
+    #else
+      return sha256.flatMap { automaticPicks[$0] }.flatMap(OrtProfile.init(rawValue:)) ?? Processor.fallback
+    #endif
   }
 
   /// A small GPU job between frames so the GPU does not clock down in the gaps.
@@ -56,7 +75,10 @@ final class PhoneSettings {
     let port = defaults.integer(forKey: Keys.port)
     self.port = port > 0 && port < 65_536 ? UInt16(port) : 5599
     self.developer = defaults.bool(forKey: Keys.developer)
-    self.device = defaults.string(forKey: Keys.device).flatMap(OrtProfile.init(rawValue:)) ?? .ane
+    // A device stored before Automatic existed was chosen by hand, and stays.
+    self.device = defaults.string(forKey: Keys.device).flatMap(Processor.init(rawValue:)) ?? .automatic
+    self.automaticPicks = defaults.dictionary(forKey: Keys.automaticPicks) as? [String: String] ?? [:]
+    self.lastModel = defaults.string(forKey: Keys.lastModel)
     self.keepGPUAwake = defaults.object(forKey: Keys.keepGPUAwake) as? Bool ?? false
     self.keepCPUWarm = defaults.object(forKey: Keys.keepCPUWarm) as? Bool ?? true
     self.keepScreenOn = defaults.object(forKey: Keys.keepScreenOn) as? Bool ?? true
@@ -73,18 +95,45 @@ final class PhoneSettings {
     static let port = "port"
     static let developer = "developer"
     static let device = "device"
+    static let automaticPicks = "automaticPicks"
+    static let lastModel = "lastModel"
     static let keepGPUAwake = "keepGPUAwake"
     static let keepCPUWarm = "keepCPUWarm"
     static let keepScreenOn = "keepScreenOn"
   }
 }
 
+/// The Processor setting: Automatic, or one of the server's profiles by its
+/// own name, which is also what is stored.
+enum Processor: String, Hashable {
+  case automatic = "auto"
+  case aneBoth = "ane-both"
+  case ane
+  case coreml
+  case cpu
+
+  /// What Automatic runs a model on before a comparison has picked for it:
+  /// the trunk on the Neural Engine and the rest on the GPU (14 ms a frame on
+  /// an iPhone 18 Pro), which has passed the parity check wherever it was run.
+  static let fallback = OrtProfile.ane
+
+  /// The profile chosen by hand, or nil for Automatic.
+  var profile: OrtProfile? {
+    self == .automatic ? nil : OrtProfile(rawValue: rawValue)
+  }
+
+  var title: String {
+    profile?.title ?? "Automatic"
+  }
+}
+
 extension OrtProfile {
+  /// How the Settings picker and the screens name each device.
   var title: String {
     switch self {
     case .ane: "Neural Engine + GPU"
-    case .aneBoth: "Neural Engine (experimental)"
-    case .coreml: "GPU"
+    case .aneBoth: "Neural Engine Only"
+    case .coreml: "GPU Only"
     case .cpu: "CPU"
     // the Mac's and Android's, never offered here
     case .aneWhole, .htp, .htpWhole, .gpu: rawValue

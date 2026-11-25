@@ -9,6 +9,7 @@ final class AppModel {
   let settings: PhoneSettings
   let server: PhoneServer
   let models: ModelStore
+  let comparison: ProcessorComparison
   let device: DeviceMonitor
   let network: NetworkInterfaces
   let localNetwork: LocalNetworkAccess
@@ -24,6 +25,7 @@ final class AppModel {
     self.settings = settings
     self.server = server
     self.models = ModelStore(server: server)
+    self.comparison = ProcessorComparison(server: server, settings: settings)
     self.device = DeviceMonitor()
     self.network = network
     self.localNetwork = LocalNetworkAccess()

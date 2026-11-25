@@ -21,6 +21,11 @@ final class PhoneServer: ServerControlling {
   private(set) var recent: StatsEvent?
   private(set) var lastFailure: String?
   let modelEvents: AsyncStream<ControlEvent>
+  /// The profile the running server was started on.
+  private(set) var profile = Processor.fallback
+  /// A processor comparison runs each candidate in turn: while this is set
+  /// the server runs it, whatever the setting says.
+  @ObservationIgnored var profileOverride: OrtProfile?
 
   /// How far back the dashboard's headline reaches.
   static let recentWindow: TimeInterval = 10
@@ -104,13 +109,15 @@ final class PhoneServer: ServerControlling {
     }
     runState = .starting
     lastFailure = nil
+    let profile = profileOverride ?? settings.profile(for: settings.lastModel)
+    self.profile = profile
     do {
       let root = try PhoneServer.prepareCacheDirectory()
       let embedded = try EmbeddedServer(
         // The listener is only for bench tools over Wi-Fi; the comma never dials the phone.
         configuration: Server.Configuration(port: settings.port, cacheRoot: root, listen: settings.developer, keepPlans: 2),
         backend: OrtBackend(
-          profile: settings.device, preparer: ONNXPreparer(), keepAlive: settings.keepGPUAwake, keepCPUWarm: settings.keepCPUWarm))
+          profile: profile, preparer: ONNXPreparer(), keepAlive: settings.keepGPUAwake, keepCPUWarm: settings.keepCPUWarm))
       self.embedded = embedded
       consumeTask = Task { [weak self] in
         for await event in embedded.events {
@@ -123,7 +130,7 @@ final class PhoneServer: ServerControlling {
       runState = .serving
       startRecentTicker()
       updateDial()
-      log.info("serving\(server.port.map { " on port \($0)" } ?? ", not listening")")
+      log.info("serving on \(profile.rawValue)\(server.port.map { ", port \($0)" } ?? ", not listening")")
     } catch {
       fail("Jetlink could not start its server: \(error)")
     }
@@ -207,6 +214,12 @@ final class PhoneServer: ServerControlling {
     return await embedded.handle(command)
   }
 
+  /// The loaded engine's outputs on the comparison's fixed frames.
+  func probe() async throws -> ProbeCapture {
+    guard let host = server?.host else { throw ServerUnavailable() }
+    return try await Task.detached { try host.probe() }.value
+  }
+
   func startIfNeeded() async throws {
     if runState != .serving {
       start()
@@ -230,6 +243,23 @@ final class PhoneServer: ServerControlling {
     if case .link(let value) = event, value.state != .connected {
       recent = nil
     }
+    if case .engine(let value) = event, let sha256 = value.sha256 {
+      followModel(sha256)
+    }
+  }
+
+  /// Automatic runs each model on what a comparison picked for it, and a
+  /// server runs one profile: a model with another pick takes a restart,
+  /// which loads it again on its own.
+  private func followModel(_ sha256: String) {
+    if settings.lastModel != sha256 {
+      settings.lastModel = sha256
+    }
+    guard profileOverride == nil, runState == .serving else { return }
+    let wanted = settings.profile(for: sha256)
+    guard wanted != profile else { return }
+    note(.info, "this model runs on \(wanted.rawValue) here; restarting the server from \(profile.rawValue)")
+    restart()
   }
 
   private func resetLiveState() {

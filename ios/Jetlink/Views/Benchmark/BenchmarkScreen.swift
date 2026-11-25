@@ -23,6 +23,7 @@ struct BenchmarkScreen: View {
             HStack(alignment: .top, spacing: StatusContent.spacing) {
               VStack(spacing: StatusContent.spacing) {
                 runCard
+                comparisonCard
                 VerdictCard(report: report)
               }
               VStack(spacing: StatusContent.spacing) { results(report) }
@@ -30,6 +31,7 @@ struct BenchmarkScreen: View {
           } else {
             VStack(spacing: StatusContent.spacing) {
               runCard
+              comparisonCard
               if let report {
                 VerdictCard(report: report)
                 if report.frames > 0 { results(report) }
@@ -51,9 +53,9 @@ struct BenchmarkScreen: View {
         }
       }
       .toolbar {
-        if let report {
+        if let text = app.comparison.outcome?.text ?? report?.text {
           ToolbarItem(placement: .topBarTrailing) {
-            ShareLink(item: report.text, preview: SharePreview("Jetlink Benchmark"))
+            ShareLink(item: text, preview: SharePreview("Jetlink Benchmark"))
           }
         }
       }
@@ -85,14 +87,17 @@ struct BenchmarkScreen: View {
   // MARK: the run
 
   private var runCard: some View {
-    SummaryCard(title: "Benchmark", systemImage: "stopwatch.fill", tint: .blue, trailing: app.settings.device.title) {
+    SummaryCard(title: "Benchmark", systemImage: "stopwatch.fill", tint: .blue, trailing: app.server.profile.title) {
       VStack(alignment: .leading, spacing: 14) {
         Text(sha256.flatMap(app.modelName) ?? (sha256 == nil ? "No Model" : "Model"))
           .font(.title2.weight(.bold))
-        if let event, running {
+        if case .running(let title, let step, let index, let count) = app.comparison.phase {
+          comparing(title: title, step: step, index: index, count: count)
+        } else if let event, running {
           progress(event)
         } else {
           buttons
+          compareButton
         }
         if let text = refusal ?? (event?.state == "failed" ? "The benchmark failed. See Logs for details." : nil) {
           Text(text)
@@ -129,6 +134,72 @@ struct BenchmarkScreen: View {
     }
     .controlSize(.large)
     .disabled(blocker != nil || starting)
+  }
+
+  /// Every processor in turn, and Automatic set to the best of them.
+  private var compareButton: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Button {
+        guard let sha256 else { return }
+        refusal = nil
+        app.comparison.start(
+          sha256: sha256, modelName: app.modelName(sha256) ?? "Model",
+          chip: (app.server.state.server?.device).map(SettingsScreen.chip) ?? ThisDevice.name)
+      } label: {
+        Label("Compare Processors", systemImage: "arrow.triangle.branch")
+          .frame(maxWidth: .infinity)
+      }
+      .buttonStyle(.glass)
+      .controlSize(.large)
+      .disabled(blocker != nil || starting)
+      Text(
+        "Runs this model on each processor for \(Int(ProcessorComparison.seconds / 60)) minutes and sets Automatic to the best one. It prepares the model for each, so allow 15 minutes and a few gigabytes."
+      )
+      .font(.footnote)
+      .foregroundStyle(.secondary)
+    }
+  }
+
+  private func comparing(title: String, step: String, index: Int, count: Int) -> some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text(title.isEmpty ? step : "\(title): \(step)")
+        .font(.headline)
+      Text("Processor \(index + 1) of \(count)")
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+      if let event, running {
+        ProgressView(value: min(event.elapsed / max(event.total, 1), 1))
+          .tint(.blue)
+        HStack(spacing: 0) {
+          Figure("P50", ms: event.frame?.p50)
+          Divider().frame(height: 32)
+          Figure("P99", ms: event.frame?.p99)
+        }
+      } else {
+        ProgressView()
+      }
+      Button(role: .destructive) {
+        app.comparison.cancel()
+      } label: {
+        Label("Cancel", systemImage: "stop.fill")
+          .frame(maxWidth: .infinity)
+      }
+      .buttonStyle(.glass)
+      .controlSize(.large)
+    }
+  }
+
+  /// What the last comparison found, or why it found nothing.
+  @ViewBuilder
+  private var comparisonCard: some View {
+    if let outcome = app.comparison.outcome {
+      ComparisonCard(outcome: outcome, automatic: app.settings.device == .automatic)
+    } else if case .failed(let text) = app.comparison.phase {
+      SummaryCard(title: "Comparison", systemImage: "arrow.triangle.branch", tint: .orange) {
+        Text(text)
+          .font(.subheadline)
+      }
+    }
   }
 
   private func progress(_ event: BenchmarkEvent) -> some View {
@@ -216,6 +287,59 @@ struct VerdictCard: View {
     let verdict = BenchmarkVerdict(report)
     SummaryCard(title: "Verdict", systemImage: verdict.symbol, tint: verdict.tone, trailing: report.cancelled ? "Stopped Early" : nil) {
       BenchmarkVerdictSummary(report: report)
+    }
+  }
+}
+
+/// Each processor's run side by side, and the one Automatic now uses.
+struct ComparisonCard: View {
+  let outcome: ProcessorComparison.Outcome
+  /// Whether the Processor setting is Automatic, so the pick is in use.
+  let automatic: Bool
+
+  var body: some View {
+    let picked = outcome.trials.first { $0.id == outcome.decision.pick }
+    SummaryCard(title: "Comparison", systemImage: "arrow.triangle.branch", tint: .teal, trailing: picked?.title) {
+      VStack(alignment: .leading, spacing: 12) {
+        ForEach(outcome.trials, id: \.id) { trial in
+          VStack(alignment: .leading, spacing: 2) {
+            HStack {
+              Label(trial.title, systemImage: trial.id == outcome.decision.pick ? "checkmark.circle.fill" : "circle")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(trial.id == outcome.decision.pick ? .green : .primary)
+              Spacer()
+              if let report = trial.report, report.frames > 0 {
+                Text("P99 \(report.frame.p99.formatted(.number.precision(.fractionLength(1)))) ms")
+                  .font(.subheadline.monospacedDigit())
+              }
+            }
+            if let report = trial.report, report.frames > 0 {
+              Text(
+                "P50 \(report.frame.p50.formatted(.number.precision(.fractionLength(1)))) ms, \(report.over50.formatted()) over budget, \(ThermalLevel(label: report.thermalAtEnd).title.lowercased()) at the end"
+              )
+              .font(.footnote.monospacedDigit())
+              .foregroundStyle(.secondary)
+            }
+            if let why = outcome.decision.passedOver[trial.id] {
+              Text(why)
+                .font(.footnote)
+                .foregroundStyle(.orange)
+            }
+          }
+        }
+        Divider()
+        Text(outcome.decision.reason)
+          .font(.subheadline)
+        if let picked {
+          Text(
+            automatic
+              ? "Automatic now runs this model on \(picked.title)."
+              : "Set Processor to Automatic in Settings to run this model on \(picked.title)."
+          )
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+        }
+      }
     }
   }
 }

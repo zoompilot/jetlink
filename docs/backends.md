@@ -31,9 +31,11 @@ model. On a Mac:
 | `ane-whole` | one CoreML program, every compute unit allowed (policy LayerNormalization inputs scaled by 1/8 so their fp16 squares do not overflow; heads after the trunk in fp32). For comparing against the default, not daily use; see [how the default runs](mac-performance.md#how-the-default-runs). |
 | `cpu` | ONNX Runtime's CPU provider, for tests |
 
-The iPhone app's **Processor** offers `ane` (**Neural Engine + GPU**, the
-default: 14 ms a frame on an iPhone 18 Pro) and `coreml` (**GPU**); `cpu` in
-the Simulator.
+The iPhone app's **Processor** offers **Automatic** (the default), `ane-both`
+(**Neural Engine Only**), `ane` (**Neural Engine + GPU**: 14 ms a frame on an
+iPhone 18 Pro) and `coreml` (**GPU Only**); `cpu` in the Simulator. Automatic
+runs a model on `ane` until [Compare Processors](iphone-app.md#compare-processors)
+has picked for it.
 
 The Android app's **Processor**, on the same preparation:
 

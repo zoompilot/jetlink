@@ -25,6 +25,7 @@
 		A5E4E102CDE0D258167999C2 /* LocalNetworkAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0770C4D38956ECDB36EA481C /* LocalNetworkAccess.swift */; };
 		AB2684B23066DDD9F23FD099 /* ModelsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = D35A2D25446BA8901A1ACC8B /* ModelsScreen.swift */; };
 		ADFB4A5A28CCC9EF06EB05C0 /* PhoneServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8965401CE0D537AAE299392 /* PhoneServer.swift */; };
+		AFB4B73EAECBC56D4224DC6D /* ProcessorComparison.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EE9E1E4218FD579D19000B6 /* ProcessorComparison.swift */; };
 		BC2C8BEE97C8C36333DCE538 /* JetlinkRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = 274CFEF8A0044F990232F4AE /* JetlinkRegistry */; };
 		C17ECDB8A4833CBCF16B9746 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6B71A2709AC0F259D4486CB6 /* Assets.xcassets */; };
 		C5A26CB41E0083A447B027D2 /* JetlinkORT in Frameworks */ = {isa = PBXBuildFile; productRef = 278B898DF1DED4B7671FF5F5 /* JetlinkORT */; };
@@ -49,6 +50,7 @@
 		4B61B41EBDB9F3F6A507D23F /* NetworkInterfaces.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkInterfaces.swift; sourceTree = "<group>"; };
 		6054CA347A624AC4AB57AB2D /* StatusContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusContent.swift; sourceTree = "<group>"; };
 		6B71A2709AC0F259D4486CB6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		6EE9E1E4218FD579D19000B6 /* ProcessorComparison.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessorComparison.swift; sourceTree = "<group>"; };
 		7BBD8FD990F83901290E13A3 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		86FE22C9FCEB4AE5394474E7 /* LogsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsScreen.swift; sourceTree = "<group>"; };
 		97D183B499FE3A9E2A1F1C6C /* DeviceHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceHealth.swift; sourceTree = "<group>"; };
@@ -132,6 +134,7 @@
 			isa = PBXGroup;
 			children = (
 				A8965401CE0D537AAE299392 /* PhoneServer.swift */,
+				6EE9E1E4218FD579D19000B6 /* ProcessorComparison.swift */,
 			);
 			path = Server;
 			sourceTree = "<group>";
@@ -326,6 +329,7 @@
 				4F73EECC86A909ED778A1FE6 /* NetworkInterfaces.swift in Sources */,
 				ADFB4A5A28CCC9EF06EB05C0 /* PhoneServer.swift in Sources */,
 				E1F9CD7E83F269C2600CF610 /* PhoneSettings.swift in Sources */,
+				AFB4B73EAECBC56D4224DC6D /* ProcessorComparison.swift in Sources */,
 				3621BC8C8E848D685FB21407 /* RootView.swift in Sources */,
 				343E2DEDC2FA6A0FA1C3CD9F /* SettingsScreen.swift in Sources */,
 				E7EB4D4A712E9336D41D327B /* StatusContent.swift in Sources */,

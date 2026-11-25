@@ -31,20 +31,27 @@ struct SettingsScreen: View {
         connection
         Section {
           Picker("Processor", selection: $settings.device) {
-            Text(OrtProfile.ane.title).tag(OrtProfile.ane)
-            Text(OrtProfile.aneBoth.title).tag(OrtProfile.aneBoth)
-            Text(OrtProfile.coreml.title).tag(OrtProfile.coreml)
+            Text(Processor.automatic.title).tag(Processor.automatic)
+            Text(Processor.aneBoth.title).tag(Processor.aneBoth)
+            Text(Processor.ane.title).tag(Processor.ane)
+            Text(Processor.coreml.title).tag(Processor.coreml)
             #if targetEnvironment(simulator)
               // The simulator has no Neural Engine and runs CoreML on the CPU anyway.
-              Text(OrtProfile.cpu.title).tag(OrtProfile.cpu)
+              Text(Processor.cpu.title).tag(Processor.cpu)
             #endif
+          }
+          .disabled(app.comparison.running)
+          if settings.device == .automatic {
+            LabeledContent("Running On", value: app.server.profile.title)
           }
           Toggle("Keep CPU Awake", isOn: $settings.keepCPUWarm)
           Toggle("Keep GPU Awake", isOn: $settings.keepGPUAwake)
         } header: {
           Text("Performance")
         } footer: {
-          Text("Changing the processor prepares models again. Neural Engine (experimental) runs in lower precision: check a model's parity before driving it.")
+          Text(
+            "Automatic uses Neural Engine + GPU until Compare Processors on the Benchmark tab finds the best one for a model. Neural Engine Only runs in lower precision, and chosen here nothing checks its outputs. Changing the processor prepares models again."
+          )
         }
         Section {
           Toggle("Keep Screen On", isOn: $settings.keepScreenOn)

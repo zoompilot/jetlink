@@ -117,8 +117,28 @@ Sources: [Apple, iPhone](https://support.apple.com/en-us/105099),
 
 ## Settings
 
-Keep **Processor** on **Neural Engine + GPU**. **GPU** is an alternative when
-another app keeps the Neural Engine busy. Changing it prepares the model again.
+Keep **Processor** on **Automatic**. It runs a model on **Neural Engine + GPU**
+until **Compare Processors** on the Benchmark tab has found the best one for
+it. The others are there to choose by hand:
+
+| Processor | Runs the model on |
+| --- | --- |
+| **Neural Engine Only** | the Neural Engine, in lower precision. The coolest. Chosen by hand, nothing checks its outputs. |
+| **Neural Engine + GPU** | the camera half on the Neural Engine, the rest on the GPU |
+| **GPU Only** | the GPU, for when another app keeps the Neural Engine busy |
+
+Changing it prepares the model again.
+
+<a id="compare-processors"></a>
+**Compare Processors** runs the loaded model on each processor for 3 minutes,
+least preferred first, and sets Automatic to the first of Neural Engine Only,
+Neural Engine + GPU and GPU Only whose P99 is within 2 ms of the fastest with
+no more frames over the 50 ms budget. Neural Engine Only is taken only if its
+outputs match Neural Engine + GPU's on 32 fixed frames, by the rules of
+`scripts/verify_parity.py`. The pick is kept per model. Allow 15 minutes and a
+few gigabytes: each processor prepares the model for itself. Run it with the
+comma unplugged, charging, in the mount, and share the result from the
+toolbar if you can: it tells us what to make the default on your device.
 
 Keep **Keep Screen On** enabled. **Keep CPU Awake** can reduce delays between
 frames but uses more power. **Keep GPU Awake** is off by default: on an iPad
