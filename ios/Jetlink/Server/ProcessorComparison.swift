@@ -9,8 +9,9 @@ import Observation
 ///
 /// Each candidate takes a server of its own, so the server is restarted on
 /// it, the model prepared there and a benchmark run, with the outputs of the
-/// two that are compared captured on fixed frames first. The least preferred goes first: the device warms as the
-/// runs go, so the one preferred has to hold up warm, as on a drive.
+/// two that are compared captured on fixed frames first. The runs are short
+/// and each starts no warmer than the first did, so the heat one leaves does
+/// not count against the next.
 @MainActor
 @Observable
 final class ProcessorComparison {
@@ -43,9 +44,12 @@ final class ProcessorComparison {
   /// The one that runs part of the model in lower precision than the
   /// reference, and is taken only when its outputs match it.
   static let checked = OrtProfile.aneBoth
-  /// Each benchmark's length. A minute misleads: on an iPad Air (M1) one
-  /// 60 s run read 30.0 ms median where three minutes read 33.5.
-  static let seconds = 180.0
+  /// Each benchmark's length: 1,200 frames, enough for a P99, and short
+  /// enough that the device does not heat through it.
+  static let seconds = 60.0
+  /// The longest a run waits for the device to cool to where the first run
+  /// started. Past it the run goes ahead, and its report says how warm it was.
+  static let cooldownTimeout: TimeInterval = 120
   /// A first preparation is minutes; one that takes this long is stuck.
   static let prepareTimeout: TimeInterval = 30 * 60
 
@@ -75,12 +79,14 @@ final class ProcessorComparison {
   }
 
   private func run(sha256: String, modelName: String, chip: String) async {
+    // least preferred first: what heat is left over counts against the one preferred
     let order = Array(ProcessorComparison.candidates.reversed())
     let reference = ProcessorComparison.reference
     let checked = ProcessorComparison.checked
     var reports: [OrtProfile: BenchmarkReport] = [:]
     var captures: [OrtProfile: ProbeCapture] = [:]
     var failures: [OrtProfile: String] = [:]
+    let startedAt = ProcessInfo.processInfo.thermalState.rawValue
     defer {
       // back to what the setting says, with the pick this run made
       server.restart(on: nil)
@@ -103,6 +109,10 @@ final class ProcessorComparison {
         if profile == reference || profile == checked {
           step("Checking its outputs")
           captures[profile] = try await server.probe()
+        }
+        if ProcessInfo.processInfo.thermalState.rawValue > startedAt {
+          step("Cooling down")
+          try await cool(to: startedAt)
         }
         step("Measuring")
         reports[profile] = try await benchmark()
@@ -158,6 +168,14 @@ final class ProcessorComparison {
       if case .failed = server.runState { throw Failure(text: "The server stopped.") }
     }
     throw Failure(text: "Preparing took too long.")
+  }
+
+  /// Waits for the device to be no warmer than `level`, a thermal state.
+  private func cool(to level: Int) async throws {
+    let deadline = Date().addingTimeInterval(ProcessorComparison.cooldownTimeout)
+    while ProcessInfo.processInfo.thermalState.rawValue > level, Date() < deadline {
+      try await Task.sleep(for: .seconds(1))
+    }
   }
 
   /// Runs one benchmark and waits for its report.

@@ -153,7 +153,7 @@ struct BenchmarkScreen: View {
       .controlSize(.large)
       .disabled(blocker != nil || starting)
       Text(
-        "Runs this model on each processor for \(Int(ProcessorComparison.seconds / 60)) minutes and sets Automatic to the best one. It prepares the model for each, so allow 15 minutes and a few gigabytes."
+        "Runs this model on each processor for a minute and sets Automatic to the best one. It prepares the model for each, so allow 10 minutes the first time and a few gigabytes."
       )
       .font(.footnote)
       .foregroundStyle(.secondary)
