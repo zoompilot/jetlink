@@ -18,9 +18,11 @@ public enum OrtProfile: String, CaseIterable, Sendable {
   /// 53.7 (159 frames over 46 ms) with it on.
   /// The policy's LayerNormalizations then run in the Neural Engine's fp16,
   /// which on another model took road_transform below the parity gate
-  /// (docs/mac-performance.md): on Light Speed 2 over 300 real night frames
-  /// every output correlated with `ane`'s at 0.9994 or better, lead_prob
-  /// lowest. Check a model's parity on this profile before driving it.
+  /// (docs/mac-performance.md). Light Speed 2 on that iPad passes
+  /// scripts/verify_parity.py against the CPU, hidden state included, on its
+  /// 32 frames and on 300 real night frames; lead_prob is closest to its bound
+  /// (0.18 of 0.68), and the policy's mean errors are 1.5 to 8 times `ane`'s.
+  /// Check a model's parity on this profile before driving it.
   case aneBoth = "ane-both"
   /// The whole graph on the GPU, for when something else holds the Neural Engine.
   case coreml

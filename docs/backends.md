@@ -26,7 +26,7 @@ model. On a Mac:
 | `--device` | Layout |
 | --- | --- |
 | `ane` (default) | vision trunk on the Neural Engine, the rest on the GPU |
-| `ane-both` | the `ane` cut with the policy on the Neural Engine too, nothing on the GPU. Experimental: the policy's LayerNormalizations run in fp16 (see [how the default runs](mac-performance.md#how-the-default-runs)), so check a model's parity on it before driving. In the iPhone app on an iPad Air (M1) with Light Speed 2: 25.1 ms median and 26.5 worst over 3,600 frames at 20 Hz (`ane`: 32.2 and 44.6), every output at correlation 0.9994 or better against `ane` over 300 night frames. |
+| `ane-both` | the `ane` cut with the policy on the Neural Engine too, nothing on the GPU. Experimental: the policy's LayerNormalizations run in fp16 (see [how the default runs](mac-performance.md#how-the-default-runs)), so check a model's parity on it before driving. In the iPhone app on an iPad Air (M1) with Light Speed 2: 25.1 ms median and 26.5 worst over 3,600 frames at 20 Hz (`ane`: 32.2 and 44.6). It passes `scripts/verify_parity.py` against the CPU, hidden state included, on its 32 frames and on 300 real night frames, the policy's mean errors 1.5 to 8 times `ane`'s. |
 | `coreml` | everything on the GPU |
 | `ane-whole` | one CoreML program, every compute unit allowed (policy LayerNormalization inputs scaled by 1/8 so their fp16 squares do not overflow; heads after the trunk in fp32). For comparing against the default, not daily use; see [how the default runs](mac-performance.md#how-the-default-runs). |
 | `cpu` | ONNX Runtime's CPU provider, for tests |
