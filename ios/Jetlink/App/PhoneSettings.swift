@@ -25,6 +25,8 @@ final class PhoneSettings {
   /// The trunk on the Neural Engine and the rest on the GPU (14 ms a frame on an
   /// iPhone 18 Pro; the whole model on the Neural Engine took 100 ms or failed),
   /// or the whole model on the GPU for when something else holds the Neural Engine.
+  /// Or both halves on the Neural Engine (`ane-both`): faster and steadier on
+  /// an iPad Air (M1), in fp16 where the policy's norms are, so experimental.
   var device: OrtProfile {
     didSet { defaults.set(device.rawValue, forKey: Keys.device) }
   }
@@ -78,6 +80,7 @@ extension OrtProfile {
   var title: String {
     switch self {
     case .ane: "Neural Engine + GPU"
+    case .aneBoth: "Neural Engine (experimental)"
     case .coreml: "GPU"
     case .cpu: "CPU"
     // the Mac's and Android's, never offered here

@@ -32,6 +32,7 @@ struct SettingsScreen: View {
         Section {
           Picker("Processor", selection: $settings.device) {
             Text(OrtProfile.ane.title).tag(OrtProfile.ane)
+            Text(OrtProfile.aneBoth.title).tag(OrtProfile.aneBoth)
             Text(OrtProfile.coreml.title).tag(OrtProfile.coreml)
             #if targetEnvironment(simulator)
               // The simulator has no Neural Engine and runs CoreML on the CPU anyway.
@@ -43,7 +44,7 @@ struct SettingsScreen: View {
         } header: {
           Text("Performance")
         } footer: {
-          Text("Changing the processor prepares models again.")
+          Text("Changing the processor prepares models again. Neural Engine (experimental) runs in lower precision: check a model's parity before driving it.")
         }
         Section {
           Toggle("Keep Screen On", isOn: $settings.keepScreenOn)
