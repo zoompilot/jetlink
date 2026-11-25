@@ -44,9 +44,9 @@ final class ProcessorComparison {
   /// The one that runs part of the model in lower precision than the
   /// reference, and is taken only when its outputs match it.
   static let checked = OrtProfile.aneBoth
-  /// Each benchmark's length: 1,200 frames, enough for a P99, and short
-  /// enough that the device does not heat through it.
-  static let seconds = 60.0
+  /// Each benchmark's length: 400 frames, enough for the median the pick
+  /// goes by (`ProcessorPick`), and too short to heat the device.
+  static let seconds = 20.0
   /// The longest a run waits for the device to cool to where the first run
   /// started. Past it the run goes ahead, and its report says how warm it was.
   static let cooldownTimeout: TimeInterval = 120

@@ -59,10 +59,13 @@ struct ProcessorComparisonTests {
     #expect(!OutputParity.compare(candidate: reference, reference: reference, slices: []).passed)
   }
 
-  static func report(_ p99: Double, over50: Int = 0, frames: Int = 3600, thermal: String = "nominal", cancelled: Bool = false) -> BenchmarkReport {
-    let stats = BenchmarkStats(mean: p99 - 2, p50: p99 - 2, p90: p99 - 1, p99: p99, max: p99 + 1)
+  /// A run by its median.
+  static func report(_ p50: Double, p99: Double? = nil, over50: Int = 0, frames: Int = 400, thermal: String = "nominal", cancelled: Bool = false)
+    -> BenchmarkReport
+  {
+    let stats = BenchmarkStats(mean: p50, p50: p50, p90: p50 + 1, p99: p99 ?? p50 + 3, max: (p99 ?? p50 + 3) + 5)
     return BenchmarkReport(
-      sha256: "ab", device: "d", seconds: 180, frames: frames, frame: stats, accelerator: stats, queues: .empty, output: .empty, build: "", over35: 0,
+      sha256: "ab", device: "d", seconds: 20, frames: frames, frame: stats, accelerator: stats, queues: .empty, output: .empty, build: "", over35: 0,
       over50: over50, windows: [], thermalAtStart: "nominal", thermalAtEnd: thermal, cancelled: cancelled)
   }
 
@@ -84,10 +87,13 @@ struct ProcessorComparisonTests {
     #expect(ProcessorPick.decide(Self.trials(Self.report(40), Self.report(28), Self.report(29))).pick == "ane")
     // this Mac's M1 Pro: 3 ms and more behind is not the same room
     let slower = ProcessorPick.decide(Self.trials(Self.report(35.1), Self.report(29.2), Self.report(44)))
-    #expect(slower.pick == "ane" && slower.passedOver["ane-both"] == "5.9 ms slower at P99.")
+    #expect(slower.pick == "ane" && slower.passedOver["ane-both"] == "5.9 ms slower at the median.")
     // the GPU alone only when it beats both, as with the Neural Engine busy elsewhere
     #expect(ProcessorPick.decide(Self.trials(Self.report(65), Self.report(52.5), Self.report(43.5))).pick == "coreml")
-    // frames over the budget count before P99
+    // a short run's P99 is a few frames: it does not move the pick either way
+    #expect(ProcessorPick.decide(Self.trials(Self.report(29, p99: 49), Self.report(28, p99: 30), Self.report(40))).pick == "ane-both")
+    #expect(ProcessorPick.decide(Self.trials(Self.report(33, p99: 34), Self.report(28, p99: 45), Self.report(40))).pick == "ane")
+    // frames over the budget count before the median
     #expect(ProcessorPick.decide(Self.trials(Self.report(30, over50: 4), Self.report(31), Self.report(45))).pick == "ane")
     #expect(ProcessorPick.decide(Self.trials(Self.report(30, thermal: "serious"), Self.report(31), Self.report(45))).pick == "ane")
     #expect(

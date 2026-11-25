@@ -130,16 +130,16 @@ it. The others are there to choose by hand:
 Changing it prepares the model again.
 
 <a id="compare-processors"></a>
-**Compare Processors** runs the loaded model on each processor for a minute,
+**Compare Processors** runs the loaded model on each processor for 20 seconds,
 waiting between runs until the device is no warmer than when it started, and
 sets Automatic to the first of Neural Engine Only,
-Neural Engine + GPU and GPU Only whose P99 is within 2 ms of the fastest with
+Neural Engine + GPU and GPU Only whose median frame is within 2 ms of the fastest with
 no more frames over the 50 ms budget. Neural Engine Only is taken only if its
 outputs match Neural Engine + GPU's on 32 fixed frames, by the rules of
-`scripts/verify_parity.py`. The pick is kept per model. Allow 10 minutes the
-first time and a few gigabytes: each processor prepares the model for itself.
-A minute does not show how a processor holds up once the device is hot; run
-**10 Minutes** on the pick for that. Run it with the
+`scripts/verify_parity.py`. The pick is kept per model. The runs take a
+minute; preparing the model for each processor takes minutes more and a few
+gigabytes the first time. Twenty seconds does not show how a processor holds
+up once the device is hot; run **10 Minutes** on the pick for that. Run it with the
 comma unplugged, charging, in the mount, and share the result from the
 toolbar if you can: it tells us what to make the default on your device.
 

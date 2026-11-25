@@ -153,7 +153,7 @@ struct BenchmarkScreen: View {
       .controlSize(.large)
       .disabled(blocker != nil || starting)
       Text(
-        "Runs this model on each processor for a minute and sets Automatic to the best one. It prepares the model for each, so allow 10 minutes the first time and a few gigabytes."
+        "Runs this model on each processor for 20 seconds and sets Automatic to the best one. It prepares the model for each first, which takes minutes and a few gigabytes the first time."
       )
       .font(.footnote)
       .foregroundStyle(.secondary)
@@ -306,13 +306,13 @@ struct ComparisonCard: View {
                 .foregroundStyle(isPick ? .green : .primary)
               Spacer()
               if let report {
-                Text("P99 \(FrameBudgetView.ms(report.frame.p99))")
+                Text("P50 \(FrameBudgetView.ms(report.frame.p50))")
                   .font(.subheadline.monospacedDigit())
               }
             }
             if let report {
               Text(
-                "P50 \(FrameBudgetView.ms(report.frame.p50)), \(report.over50.formatted()) over budget, \(ThermalLevel(label: report.thermalAtEnd).title.lowercased()) at the end"
+                "P99 \(FrameBudgetView.ms(report.frame.p99)), \(report.over50.formatted()) over budget, \(ThermalLevel(label: report.thermalAtEnd).title.lowercased()) at the end"
               )
               .font(.footnote.monospacedDigit())
               .foregroundStyle(.secondary)

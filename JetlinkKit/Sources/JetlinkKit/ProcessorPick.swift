@@ -9,9 +9,14 @@ import Foundation
 /// as much room in the frame budget as the fastest is taken, not the fastest
 /// itself.
 public enum ProcessorPick {
-  /// A processor may be this much slower at P99 than the fastest and still
+  /// The runs are short, 20 seconds each, so they are judged on the median
+  /// frame: on an M1 Pro every 10 s window put the two Neural Engine
+  /// processors' means 4 ms apart, while their P99s moved 7 and 14 ms from
+  /// window to window. The tail is held to the count of frames over budget.
+  ///
+  /// A processor's median may be this much slower than the fastest and still
   /// count as leaving the same room: 2 ms of a 50 ms budget.
-  public static let similarP99Ms = 2.0
+  public static let similarMedianMs = 2.0
 
   /// One processor's run.
   public struct Trial: Sendable, Equatable {
@@ -70,16 +75,16 @@ public enum ProcessorPick {
     guard let fewestOver = ran.map(\.report.over50).min() else {
       return Decision(pick: nil, reason: "No processor finished the run.", passedOver: passedOver)
     }
-    let fastest = ran.filter { $0.report.over50 == fewestOver }.map(\.report.frame.p99).min()!
+    let fastest = ran.filter { $0.report.over50 == fewestOver }.map(\.report.frame.p50).min()!
     let someCool = ran.contains { !hot($0.report.thermalAtEnd) }
     for (trial, report) in ran {
-      let slower = report.frame.p99 - fastest
+      let slower = report.frame.p50 - fastest
       if report.over50 > fewestOver {
         passedOver[trial.id] = "More frames over the 50 ms budget."
       } else if hot(report.thermalAtEnd) && someCool {
         passedOver[trial.id] = "It ended the run hot."
-      } else if slower > similarP99Ms {
-        passedOver[trial.id] = "\(String(format: "%.1f", slower)) ms slower at P99."
+      } else if slower > similarMedianMs {
+        passedOver[trial.id] = "\(String(format: "%.1f", slower)) ms slower at the median."
       } else {
         let reason =
           slower <= 0
