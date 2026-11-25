@@ -94,7 +94,9 @@ public enum ProcessorPick {
   private static func hot(_ thermal: String) -> Bool { thermal == "serious" || thermal == "critical" }
 
   /// The runs and the outcome as text, to send to the developers.
-  public static func text(_ trials: [Trial], decision: Decision, parity: OutputParity.Result?, reference: String, chip: String, model: String, sha256: String) -> String {
+  public static func text(_ trials: [Trial], decision: Decision, parity: OutputParity.Result?, reference: String, chip: String, model: String, sha256: String)
+    -> String
+  {
     var lines = ["Jetlink processor comparison", "\(chip), \(model) (\(sha256.prefix(16)))"]
     for trial in trials {
       if let r = trial.report {
