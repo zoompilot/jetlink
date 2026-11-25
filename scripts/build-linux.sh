@@ -57,15 +57,18 @@ JETSON=https://repo.download.nvidia.com/jetson/common/pool/main
 CUDA_X86=https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64
 # the release fixture-pins.txt names, as everything else does
 ORT_VERSION=$(sed -n 's/^onnxruntime==//p' "$ROOT/JetlinkKit/Scripts/fixture-pins.txt")
-ORT_RELEASES=https://github.com/microsoft/onnxruntime/releases/download/v$ORT_VERSION
+# jetlink's own copy: microsoft/onnxruntime and its release downloads went 404
+# on 2026-11-25. The headers and libraries of the NuGet package
+# Microsoft.ML.OnnxRuntime, repacked in the layout of the official tarball.
+ORT_RELEASES=https://github.com/zoompilot/jetlink/releases/download/onnxruntime-$ORT_VERSION
 
 # Sets BUNDLE (its cache directory's name) and DEBS ("url sha256" each), and
-# ORT: onnxruntime's official tarball ("url sha256"), whose C headers COrt
+# ORT: onnxruntime's tarball ("url sha256"), whose C headers COrt
 # compiles against; the server opens the library at run time.
 pins() {
   case $FLAVOR in
   aarch64)
-    ORT="$ORT_RELEASES/onnxruntime-linux-aarch64-$ORT_VERSION.tgz e1799098ebc054b370f6176a450f158720f297818c613e5dc99b92e2ec82346f"
+    ORT="$ORT_RELEASES/onnxruntime-linux-aarch64-$ORT_VERSION.tgz 648e7019bf746e86105c2cf934673c4bb5e2f6d4dc2ecc8367159bd447fed232"
     BUNDLE=trt10.3.0.30-cuda12.6-aarch64
     DEBS=(
       "$JETSON/t/tensorrt/libnvinfer-headers-dev_10.3.0.30-1+cuda12.5_arm64.deb 40a4fa566218f71176144a0eafa5aef8cf0af7ee9211b20487f1970d5344bbb8"
@@ -75,7 +78,7 @@ pins() {
     )
     ;;
   x86_64)
-    ORT="$ORT_RELEASES/onnxruntime-linux-x64-$ORT_VERSION.tgz c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba"
+    ORT="$ORT_RELEASES/onnxruntime-linux-x64-$ORT_VERSION.tgz 8378a201a9081f5f203242589f8897aa4bcfc0f5f1da05253b682f80ac4cb884"
     # 11.x keeps NvOnnxParser.h in libnvonnxparsers-dev, not the headers package
     BUNDLE=trt11.3.0.99-cuda13.4-x86_64
     DEBS=(

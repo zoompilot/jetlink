@@ -62,10 +62,12 @@ let package = Package(
     .target(name: "JetlinkRegistry", dependencies: ["JetlinkKit", "JetlinkLog", crypto]),
     // onnxruntime's own iOS/macOS build, the archive its CocoaPods pod and Swift
     // package ship: a static xcframework with device, simulator and macOS
-    // slices, of the release Pinned names (1.29.0).
+    // slices, of the release Pinned names (1.29.0). Served from jetlink's own
+    // copy, the same bytes: download.onnxruntime.ai stopped serving it on
+    // 2026-11-21.
     .binaryTarget(
       name: "onnxruntime",
-      url: "https://download.onnxruntime.ai/pod-archive-onnxruntime-c-1.29.0.zip",
+      url: "https://github.com/zoompilot/jetlink/releases/download/onnxruntime-1.29.0/pod-archive-onnxruntime-c-1.29.0.zip",
       checksum: "ab89ea27b074201b83c12526d7f7206b916ecd5315174d372d6c27b659e49860"),
     .target(
       name: "COrt",
