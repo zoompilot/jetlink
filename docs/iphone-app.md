@@ -120,8 +120,9 @@ Sources: [Apple, iPhone](https://support.apple.com/en-us/105099),
 Keep **Processor** on **Neural Engine + GPU**. **GPU** is an alternative when
 another app keeps the Neural Engine busy. Changing it prepares the model again.
 
-Keep **Keep Screen On** enabled. **Keep CPU Awake** and **Keep GPU Awake** can
-reduce delays between frames but use more power.
+Keep **Keep Screen On** enabled. **Keep CPU Awake** can reduce delays between
+frames but uses more power. **Keep GPU Awake** is off by default: on an iPad
+Air (M1) it made frames slower and less steady. Try it if frames run late.
 
 Tap **Version** under **About** seven times to show **Developer** settings: a
 port that bench tools on a Mac can reach the phone on over Wi-Fi. Driving does

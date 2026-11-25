@@ -32,6 +32,9 @@ final class PhoneSettings {
   }
 
   /// A small GPU job between frames so the GPU does not clock down in the gaps.
+  /// Off unless chosen: on an iPad Air (M1) with Light Speed 2 over 3,600
+  /// frames at 20 Hz it cost more than it saved, 159 frames over 46 ms and a
+  /// p99 of 49.4 ms with it on against none and 41.9 ms with it off.
   var keepGPUAwake: Bool {
     didSet { defaults.set(keepGPUAwake, forKey: Keys.keepGPUAwake) }
   }
@@ -54,7 +57,7 @@ final class PhoneSettings {
     self.port = port > 0 && port < 65_536 ? UInt16(port) : 5599
     self.developer = defaults.bool(forKey: Keys.developer)
     self.device = defaults.string(forKey: Keys.device).flatMap(OrtProfile.init(rawValue:)) ?? .ane
-    self.keepGPUAwake = defaults.object(forKey: Keys.keepGPUAwake) as? Bool ?? true
+    self.keepGPUAwake = defaults.object(forKey: Keys.keepGPUAwake) as? Bool ?? false
     self.keepCPUWarm = defaults.object(forKey: Keys.keepCPUWarm) as? Bool ?? true
     self.keepScreenOn = defaults.object(forKey: Keys.keepScreenOn) as? Bool ?? true
   }
