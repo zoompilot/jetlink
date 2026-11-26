@@ -106,7 +106,7 @@ struct ToolbarActivityView: View {
 
   /// Short enough for the crumb; Status has the full description.
   private var backendName: String {
-    (server.info?.choice ?? settings.backend).shortTitle
+    (server.info?.choice ?? settings.backend).title
   }
 
   private var statusColor: Color {

@@ -83,7 +83,7 @@ time you open Jetlink with the comma disconnected.
 <a id="the-server"></a>
 
 Keep **Backend** on **Automatic**. If another app keeps the Neural Engine busy,
-try **CoreML (GPU)**. **CoreML with Neural Engine Only** keeps the GPU idle for
+try **GPU Only**. **Neural Engine Only** keeps the GPU idle for
 the least power and heat; it runs part of the model in lower precision and
 nothing checks its outputs. Click **Restart Server** after changing settings.
 

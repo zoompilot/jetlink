@@ -162,7 +162,7 @@ struct ServerSettingsView: View {
     case .aneBoth:
       "Nothing on the GPU: the least power and heat. Runs part of the model in lower precision, and nothing checks its outputs. Slower than the default on an M1 Pro."
     case .coreml:
-      "Less efficient than using ANE, runs inference using the GPU. Use if CoreML with Neural Engine is too slow."
+      "Less efficient than the Neural Engine. Use it if another app keeps the Neural Engine busy."
     }
   }
 }

@@ -111,7 +111,7 @@ split measured 46.4 ms mean, 53.5 ms p99.
 
 Other apps on the Neural Engine slow the default: with another process running
 a model on it back to back, the split measured 52.5 ms mean and 65 ms p99, GPU
-only 43.5 ms. Then use `--device coreml` (**CoreML (GPU)** in the Mac app).
+only 43.5 ms. Then use `--device coreml` (**GPU Only** in the Mac app).
 
 ## How to measure
 
