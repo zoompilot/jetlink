@@ -85,7 +85,8 @@ time you open Jetlink with the comma disconnected.
 Keep **Backend** on **Automatic**. If another app keeps the Neural Engine busy,
 try **GPU Only**. **Neural Engine Only** keeps the GPU idle for
 the least power and heat; it runs part of the model in lower precision and
-nothing checks its outputs. Click **Restart Server** after changing settings.
+nothing checks its outputs. Changing it restarts the server, unless a comma is
+connected: then click **Restart Server** when the drive is over.
 
 **Benchmark** (Command-3) tests the loaded model without a comma connected.
 

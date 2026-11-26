@@ -126,6 +126,17 @@ struct ServerSettingsView: View {
   @Environment(AppSettings.self) private var settings
   @Environment(ServerStore.self) private var server
 
+  /// The server is still on the backend chosen before.
+  private var pending: Bool {
+    server.runState == .serving && server.info.map { $0.choice != settings.backend } ?? false
+  }
+
+  /// Restarts the server onto the backend chosen. A comma's frames come
+  /// first: with one connected the change waits for Restart Server.
+  private func applyBackend() {
+    if pending, server.link.state != .connected { server.restart() }
+  }
+
   var body: some View {
     @Bindable var settings = settings
     Form {
@@ -136,6 +147,9 @@ struct ServerSettingsView: View {
               Text(choice == .auto ? "Automatic (\(choice.title))" : choice.title).tag(choice)
             }
           }
+          // Also once a restart lands, for a second change made during it.
+          .onChange(of: settings.backend) { applyBackend() }
+          .onChange(of: server.runState) { applyBackend() }
           Text(ServerSettingsView.backendCaption(settings.backend))
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -143,9 +157,13 @@ struct ServerSettingsView: View {
         }
       } footer: {
         HStack {
-          Text("Changes apply when the server restarts.")
-            .font(.callout)
-            .foregroundStyle(.secondary)
+          Text(
+            pending
+              ? "A comma is connected, so this applies when the server restarts."
+              : "Changing the backend restarts the server, unless a comma is connected."
+          )
+          .font(.callout)
+          .foregroundStyle(.secondary)
           Spacer()
           Button("Restart Server") { server.restart() }
             .disabled(server.runState != .serving)
