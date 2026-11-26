@@ -48,6 +48,12 @@ struct StatusContent: View {
           "Keep Jetlink on Screen", "The big model stops while Jetlink is in the background.",
           symbol: "exclamationmark.triangle.fill")
       }
+      if let warning = state.slowWarning {
+        banner("Big Model Running Slowly", warning, symbol: "exclamationmark.triangle.fill")
+      }
+      if let warning = state.storageWarning {
+        banner("Low Storage", warning, symbol: "externaldrive.badge.exclamationmark")
+      }
       // in every arrangement: the Link tile's note sits below the fold upright
       // and is not drawn on a phone on its side, so a USB 2 cable, hub or
       // phone read as Connected and nothing more

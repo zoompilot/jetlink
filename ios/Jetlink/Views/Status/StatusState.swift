@@ -32,6 +32,10 @@ struct StatusState: Equatable {
   var localNetworkDenied = false
   /// The scene is not in front while serving: iOS will suspend the app.
   var needsForeground = false
+  /// Too little free space to keep the model in use on the Neural Engine.
+  var storageWarning: String?
+  /// Frames far over the budget: the Neural Engine is not running the model.
+  var slowWarning: String?
 
   /// The comma's frames, while the main card shows them.
   var servedStats: StatsEvent? {

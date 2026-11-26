@@ -9,6 +9,19 @@ struct BenchmarkScreen: View {
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @State private var refusal: String?
   @State private var starting = false
+  /// What Compare Processors would add on disk, asked before it starts.
+  @State private var comparePrompt: ComparePrompt?
+
+  struct ComparePrompt: Identifiable {
+    let id = UUID()
+    let sha256: String
+    let modelName: String
+    /// Processors the model is not prepared for yet.
+    let missing: Int
+    let need: Int64
+    let free: Int64
+    var fits: Bool { free >= need }
+  }
   /// `-benchmark 60` on the command line runs one once a model is loaded,
   /// for screenshots from the simulator.
   @State private var scripted: Double? = UserDefaults.standard.double(forKey: "benchmark") > 0 ? UserDefaults.standard.double(forKey: "benchmark") : nil
@@ -51,6 +64,23 @@ struct BenchmarkScreen: View {
           scripted = nil
           start(seconds: seconds)
         }
+      }
+      .alert(
+        comparePrompt.map { $0.fits ? "Compare Processors?" : "Not Enough Space to Compare" } ?? "",
+        isPresented: Binding(get: { comparePrompt != nil }, set: { if !$0 { comparePrompt = nil } }), presenting: comparePrompt
+      ) { prompt in
+        if prompt.fits {
+          Button("Compare") { startComparison(sha256: prompt.sha256) }
+          Button("Cancel", role: .cancel) {}
+        } else {
+          Button("OK", role: .cancel) {}
+        }
+      } message: { prompt in
+        let more =
+          "It prepares \(prompt.modelName) for \(prompt.missing) more processor\(prompt.missing == 1 ? "" : "s"), "
+          + "and the Neural Engine compiles it once more for each: about \(StorageNeed.gigabytes(prompt.need)) free "
+          + "with room left for the system. \(StorageNeed.gigabytes(prompt.free)) is free."
+        Text(prompt.fits ? more : more + " Free some space first.")
       }
       .toolbar {
         if let text = app.comparison.outcome?.text ?? report?.text {
@@ -142,9 +172,7 @@ struct BenchmarkScreen: View {
       Button {
         guard let sha256 else { return }
         refusal = nil
-        app.comparison.start(
-          sha256: sha256, modelName: app.modelName(sha256) ?? "Model",
-          chip: (app.server.state.server?.device).map(SettingsScreen.chip) ?? ThisDevice.name)
+        askToCompare(sha256: sha256)
       } label: {
         Label("Compare Processors", systemImage: "arrow.triangle.branch")
           .frame(maxWidth: .infinity)
@@ -153,7 +181,7 @@ struct BenchmarkScreen: View {
       .controlSize(.large)
       .disabled(blocker != nil || starting)
       Text(
-        "Runs this model on each processor for 20 seconds and sets Automatic to the best one. It prepares the model for each first, which takes minutes and a few gigabytes the first time."
+        "Runs this model on each processor for 20 seconds and sets Automatic to the best one. It prepares the model for each first, which takes minutes, and asks first how much space that needs."
       )
       .font(.footnote)
       .foregroundStyle(.secondary)
@@ -239,6 +267,29 @@ struct BenchmarkScreen: View {
   }
 
   /// A short line on the card, and the server's reason in Logs.
+  /// Compare Processors prepares and compiles the model once for each
+  /// processor it is not prepared for: say what that takes first, and refuse
+  /// it when the disk has no room, as a build would.
+  private func askToCompare(sha256: String) {
+    let prepared = Set(
+      (app.models.inventory?.artifacts ?? []).filter { $0.sha256 == sha256 }.compactMap { artifact in
+        ProcessorComparison.candidates.filter { artifact.device.hasPrefix("\($0.rawValue)-") }.max { $0.rawValue.count < $1.rawValue.count }
+      })
+    let missing = ProcessorComparison.candidates.filter { !prepared.contains($0) }
+    guard !missing.isEmpty, let bytes = app.models.row(for: sha256)?.bytes, let free = app.models.inventory?.disk.freeBytes else {
+      startComparison(sha256: sha256)
+      return
+    }
+    let need = StorageNeed.coreML(modelBytes: bytes).toPrepare(profiles: missing.count, onNeuralEngine: missing.filter { $0 != .coreml }.count)
+    comparePrompt = ComparePrompt(sha256: sha256, modelName: app.modelName(sha256) ?? "this model", missing: missing.count, need: need, free: free)
+  }
+
+  private func startComparison(sha256: String) {
+    app.comparison.start(
+      sha256: sha256, modelName: app.modelName(sha256) ?? "Model",
+      chip: (app.server.state.server?.device).map(SettingsScreen.chip) ?? ThisDevice.name)
+  }
+
   private func refuse(_ reason: String?) {
     refusal = "Couldn't start the benchmark. See Logs for details."
     app.server.note(.warning, "the benchmark could not start: \(reason ?? "no reason given")")

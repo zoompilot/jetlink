@@ -145,10 +145,20 @@ struct SettingsScreen: View {
   @ViewBuilder
   private var storage: some View {
     if let disk = app.models.inventory?.disk {
-      Section("Storage") {
+      Section {
         LabeledContent("Downloaded", value: ByteCount.string(disk.modelsBytes))
         LabeledContent("Prepared", value: ByteCount.string(disk.enginesBytes))
+        // CoreML's compiled copies in the app's caches, which iOS counts as Jetlink's data
+        if disk.neuralEngineBytes > 0 {
+          LabeledContent("Neural Engine Copies", value: ByteCount.string(disk.neuralEngineBytes))
+        }
         LabeledContent("Available", value: ByteCount.string(disk.freeBytes))
+      } header: {
+        Text("Storage")
+      } footer: {
+        if let short = app.models.runningShortfall {
+          Text(short.message)
+        }
       }
     }
   }
