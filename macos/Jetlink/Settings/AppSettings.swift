@@ -42,12 +42,27 @@ final class AppSettings {
     static let startServerOnLaunch = "startServerOnLaunch"
     static let keepAwakeWhileServing = "keepAwakeWhileServing"
     static let keepAwakeLidClosed = "keepAwakeLidClosed"
+    static let keepGPUAwake = "keepGPUAwake"
+    static let keepCPUWarm = "keepCPUWarm"
   }
 
   @ObservationIgnored private let defaults: UserDefaults
 
   var backend: BackendChoice {
     didSet { defaults.set(backend.rawValue, forKey: Key.backend) }
+  }
+
+  /// A small GPU job between frames so the GPU does not clock down in the
+  /// gaps. On unless turned off: on an M1 Pro the split ran 36.5 ms a frame
+  /// with it against 43.3 without.
+  var keepGPUAwake: Bool {
+    didSet { defaults.set(keepGPUAwake, forKey: Key.keepGPUAwake) }
+  }
+
+  /// A CPU core kept busy between frames, so the next frame is not waiting on
+  /// a core that went to sleep. It shows as one whole core in Activity Monitor.
+  var keepCPUWarm: Bool {
+    didSet { defaults.set(keepCPUWarm, forKey: Key.keepCPUWarm) }
   }
 
   /// Read once at launch, never written: only `defaults write` or a launch
@@ -92,6 +107,8 @@ final class AppSettings {
     startServerOnLaunch = defaults.object(forKey: Key.startServerOnLaunch) == nil ? true : defaults.bool(forKey: Key.startServerOnLaunch)
     keepAwakeWhileServing = defaults.object(forKey: Key.keepAwakeWhileServing) == nil ? true : defaults.bool(forKey: Key.keepAwakeWhileServing)
     keepAwakeLidClosed = defaults.bool(forKey: Key.keepAwakeLidClosed)
+    keepGPUAwake = defaults.object(forKey: Key.keepGPUAwake) == nil ? true : defaults.bool(forKey: Key.keepGPUAwake)
+    keepCPUWarm = defaults.object(forKey: Key.keepCPUWarm) == nil ? true : defaults.bool(forKey: Key.keepCPUWarm)
   }
 
   nonisolated static let defaultTCPPort = 5599

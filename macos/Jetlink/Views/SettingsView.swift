@@ -126,12 +126,13 @@ struct ServerSettingsView: View {
   @Environment(AppSettings.self) private var settings
   @Environment(ServerStore.self) private var server
 
-  /// The server is still on the backend chosen before.
+  /// The server is still on the settings chosen before.
   private var pending: Bool {
-    server.runState == .serving && server.info.map { $0.choice != settings.backend } ?? false
+    guard server.runState == .serving, let info = server.info else { return false }
+    return info.choice != settings.backend || info.keepGPUAwake != settings.keepGPUAwake || info.keepCPUWarm != settings.keepCPUWarm
   }
 
-  /// Restarts the server onto the backend chosen. A comma's frames come
+  /// Restarts the server onto the settings chosen. A comma's frames come
   /// first: with one connected the change waits for Restart Server.
   private func applyBackend() {
     if pending, server.link.state != .connected { server.restart() }
@@ -148,19 +149,20 @@ struct ServerSettingsView: View {
             }
           }
           // Also once a restart lands, for a second change made during it.
-          .onChange(of: settings.backend) { applyBackend() }
-          .onChange(of: server.runState) { applyBackend() }
+          .onChange(of: pending) { applyBackend() }
           Text(ServerSettingsView.backendCaption(settings.backend))
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
+        Toggle("Keep CPU Awake", isOn: $settings.keepCPUWarm)
+        Toggle("Keep GPU Awake", isOn: $settings.keepGPUAwake)
       } footer: {
         HStack {
           Text(
             pending
               ? "A comma is connected, so this applies when the server restarts."
-              : "Changing the backend restarts the server, unless a comma is connected."
+              : "Changing these restarts the server, unless a comma is connected."
           )
           .font(.callout)
           .foregroundStyle(.secondary)

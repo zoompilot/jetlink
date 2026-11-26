@@ -11,6 +11,8 @@ import os
 struct ServerInfo: Equatable, Sendable {
   let version: String
   let choice: BackendChoice
+  var keepGPUAwake = true
+  var keepCPUWarm = true
   var runtimeVersion: String
   var device: String
   let cache: String
@@ -105,17 +107,19 @@ final class ServerStore: ServerControlling {
       }
     }
     let configuration = ServerStore.configuration(transport: settings.transport, tcpPort: settings.tcpPort, cacheDirectory: settings.cacheDirectory)
-    let choice = settings.backend
+    let (choice, keepGPUAwake, keepCPUWarm) = (settings.backend, settings.keepGPUAwake, settings.keepCPUWarm)
     // The controller's first .server event fills in the backend fields.
     let seed = ServerInfo(
-      version: ServerStore.appVersion, choice: settings.backend, runtimeVersion: "", device: "", cache: settings.cacheDirectory.path(percentEncoded: false),
+      version: ServerStore.appVersion, choice: choice, keepGPUAwake: keepGPUAwake, keepCPUWarm: keepCPUWarm, runtimeVersion: "", device: "",
+      cache: settings.cacheDirectory.path(percentEncoded: false),
       port: configuration.listen ? Int(configuration.port) : nil)
     // Creating the cache, the engine cache's first look at the disk and the
     // first inventory are file work the main thread should not wait on.
     startTask = Task { [weak self] in
       let started = await Task.detached(priority: .userInitiated) {
         Result {
-          let embedded = try EmbeddedServer(configuration: configuration, backend: ServerStore.backend(for: choice), gadget: USBGadget())
+          let embedded = try EmbeddedServer(
+            configuration: configuration, backend: ServerStore.backend(for: choice, keepGPUAwake: keepGPUAwake, keepCPUWarm: keepCPUWarm), gadget: USBGadget())
           try embedded.start()
           return embedded
         }
@@ -241,9 +245,9 @@ final class ServerStore: ServerControlling {
   }
 
   /// What runs the model: CoreML on the device the setting names, with the
-  /// GPU and a CPU core kept up between frames.
-  nonisolated static func backend(for choice: BackendChoice) -> OrtBackend {
-    OrtBackend(profile: choice.profile, preparer: ONNXPreparer(), keepAlive: true, keepCPUWarm: true)
+  /// GPU and a CPU core kept up between frames unless turned off.
+  nonisolated static func backend(for choice: BackendChoice, keepGPUAwake: Bool = true, keepCPUWarm: Bool = true) -> OrtBackend {
+    OrtBackend(profile: choice.profile, preparer: ONNXPreparer(), keepAlive: keepGPUAwake, keepCPUWarm: keepCPUWarm)
   }
 
   nonisolated static var appVersion: String {

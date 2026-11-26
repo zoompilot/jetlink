@@ -76,6 +76,8 @@ struct ServerStoreTests {
     let backend = ServerStore.backend(for: choice)
     #expect(backend.profile == profile)
     #expect(backend.keepAlive && backend.keepCPUWarm)
+    let quiet = ServerStore.backend(for: choice, keepGPUAwake: false, keepCPUWarm: false)
+    #expect(!quiet.keepAlive && !quiet.keepCPUWarm)
   }
 
   @Test func logLinesReadLikePythons() throws {
