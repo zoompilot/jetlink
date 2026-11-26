@@ -1,6 +1,7 @@
 import Foundation
 import JetlinkKit
 import JetlinkORT
+import JetlinkRegistry
 import JetlinkServer
 import Observation
 import os
@@ -177,10 +178,15 @@ final class ServerStore: ServerControlling {
     resetLiveState()
   }
 
+  /// Restarts the server and asks it for the model in use. At its start a
+  /// server loads that model only if it is already prepared for its backend,
+  /// which after a change of backend it may not be.
   func restart() {
     Task {
       await stopAndWait()
-      start()
+      guard (try? await startIfNeeded()) != nil else { return }
+      guard let last = CacheLayout(root: settings.cacheDirectory).lastLoaded() else { return }
+      _ = try? await send(.prepare(sha256: last.sha256, frameSkip: last.frameSkip))
     }
   }
 

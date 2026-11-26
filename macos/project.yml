@@ -43,7 +43,7 @@ targets:
     # app shares, and the Swift server it runs, in process, on onnxruntime.
     dependencies:
       - package: JetlinkKit
-        products: [JetlinkKit, JetlinkUI, JetlinkServer, JetlinkORT]
+        products: [JetlinkKit, JetlinkUI, JetlinkRegistry, JetlinkServer, JetlinkORT]
       - package: Sparkle
     info:
       path: Resources/Info.plist

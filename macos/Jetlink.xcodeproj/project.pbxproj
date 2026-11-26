@@ -27,13 +27,14 @@
 		8B167F9986DACB4E316DC397 /* JetlinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 868D0C6D327E8A2A54106C5C /* JetlinkApp.swift */; };
 		94AF22CB55B2A7E5A27FE804 /* ServerStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E1CDBA7777C9F3DFCE54F56 /* ServerStoreTests.swift */; };
 		A16EA313C504C7BBDDCED9CC /* StatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3047F8C242F98154043E594 /* StatusView.swift */; };
+		AA4278F875C641962A020384 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 44FD00D75D4A6091AC78684E /* Sparkle */; };
 		AD3E2507E4A2AF42BAE2468D /* MainWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF0AFDE7D421142462A1EAC2 /* MainWindow.swift */; };
 		B3053E7EB6D907079B40FBE5 /* MenuBarGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = B65A2518EE35072CBA30DA60 /* MenuBarGlyph.swift */; };
-		BC2C8BEE97C8C36333DCE538 /* JetlinkServer in Frameworks */ = {isa = PBXBuildFile; productRef = 18188F707063EC9D73EC6510 /* JetlinkServer */; };
+		BC2C8BEE97C8C36333DCE538 /* JetlinkRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = 274CFEF8A0044F990232F4AE /* JetlinkRegistry */; };
 		C17ECDB8A4833CBCF16B9746 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6B71A2709AC0F259D4486CB6 /* Assets.xcassets */; };
-		C5A26CB41E0083A447B027D2 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 44FD00D75D4A6091AC78684E /* Sparkle */; };
+		C5A26CB41E0083A447B027D2 /* JetlinkORT in Frameworks */ = {isa = PBXBuildFile; productRef = 278B898DF1DED4B7671FF5F5 /* JetlinkORT */; };
 		C5BD297534DB35414E8EE4A4 /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C8A278FA961C026335DCFD8 /* LogsView.swift */; };
-		C97C593B2028CC112617A42C /* JetlinkORT in Frameworks */ = {isa = PBXBuildFile; productRef = 278B898DF1DED4B7671FF5F5 /* JetlinkORT */; };
+		C97C593B2028CC112617A42C /* JetlinkServer in Frameworks */ = {isa = PBXBuildFile; productRef = 18188F707063EC9D73EC6510 /* JetlinkServer */; };
 		D670F7279D6E2E827E607299 /* JetlinkUI in Frameworks */ = {isa = PBXBuildFile; productRef = 95031BC76E32EFCF41AB88C6 /* JetlinkUI */; };
 		E2541FEB05BB69B0D4ED86FD /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B668BFB7A68D7E8F0B5F93E2 /* ActivityView.swift */; };
 		E3E5E81C9DDEEE6634A62A34 /* BenchmarkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95935759392B054144F7DC96 /* BenchmarkView.swift */; };
@@ -87,9 +88,10 @@
 			files = (
 				15023ACD3AC6BCE6E2D2CD0A /* JetlinkKit in Frameworks */,
 				D670F7279D6E2E827E607299 /* JetlinkUI in Frameworks */,
-				BC2C8BEE97C8C36333DCE538 /* JetlinkServer in Frameworks */,
-				C97C593B2028CC112617A42C /* JetlinkORT in Frameworks */,
-				C5A26CB41E0083A447B027D2 /* Sparkle in Frameworks */,
+				BC2C8BEE97C8C36333DCE538 /* JetlinkRegistry in Frameworks */,
+				C97C593B2028CC112617A42C /* JetlinkServer in Frameworks */,
+				C5A26CB41E0083A447B027D2 /* JetlinkORT in Frameworks */,
+				AA4278F875C641962A020384 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -237,6 +239,7 @@
 			packageProductDependencies = (
 				EE168AFAF92FF522E4DD799C /* JetlinkKit */,
 				95031BC76E32EFCF41AB88C6 /* JetlinkUI */,
+				274CFEF8A0044F990232F4AE /* JetlinkRegistry */,
 				18188F707063EC9D73EC6510 /* JetlinkServer */,
 				278B898DF1DED4B7671FF5F5 /* JetlinkORT */,
 				44FD00D75D4A6091AC78684E /* Sparkle */,
@@ -633,6 +636,10 @@
 		18188F707063EC9D73EC6510 /* JetlinkServer */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = JetlinkServer;
+		};
+		274CFEF8A0044F990232F4AE /* JetlinkRegistry */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = JetlinkRegistry;
 		};
 		278B898DF1DED4B7671FF5F5 /* JetlinkORT */ = {
 			isa = XCSwiftPackageProductDependency;
