@@ -34,8 +34,9 @@ model. On a Mac:
 The iPhone app's **Processor** offers **Automatic** (the default), `ane-both`
 (**Neural Engine Only**), `ane` (**Neural Engine + GPU**: 14 ms a frame on an
 iPhone 18 Pro) and `coreml` (**GPU Only**); `cpu` in the Simulator. Automatic
-runs a model on `ane` until [Compare Processors](iphone-app.md#compare-processors)
-has picked for it.
+runs a model on `ane-both` unless [Compare Processors](iphone-app.md#compare-processors)
+has picked another for it. The Mac app's **Backend** offers `ane` (the
+default), `ane-both` and `coreml`.
 
 The Android app's **Processor**, on the same preparation:
 

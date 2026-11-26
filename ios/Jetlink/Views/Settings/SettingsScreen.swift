@@ -50,7 +50,7 @@ struct SettingsScreen: View {
           Text("Performance")
         } footer: {
           Text(
-            "Automatic uses Neural Engine + GPU until Compare Processors on the Benchmark tab finds the best one for a model. Neural Engine Only runs in lower precision, and chosen here nothing checks its outputs. Changing the processor prepares models again."
+            "Automatic uses Neural Engine Only, the coolest, unless Compare Processors on the Benchmark tab finds another best for a model. It runs in lower precision, and Compare Processors checks a model's outputs on it. Changing the processor prepares models again."
           )
         }
         Section {

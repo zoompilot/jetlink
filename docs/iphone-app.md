@@ -117,13 +117,13 @@ Sources: [Apple, iPhone](https://support.apple.com/en-us/105099),
 
 ## Settings
 
-Keep **Processor** on **Automatic**. It runs a model on **Neural Engine + GPU**
-until **Compare Processors** on the Benchmark tab has found the best one for
+Keep **Processor** on **Automatic**. It runs a model on **Neural Engine Only**
+unless **Compare Processors** on the Benchmark tab has found another best for
 it. The others are there to choose by hand:
 
 | Processor | Runs the model on |
 | --- | --- |
-| **Neural Engine Only** | the Neural Engine, in lower precision. The coolest. Chosen by hand, nothing checks its outputs. |
+| **Neural Engine Only** | the Neural Engine, in lower precision. The coolest, and what Automatic uses. Only Compare Processors checks a model's outputs on it. |
 | **Neural Engine + GPU** | the camera half on the Neural Engine, the rest on the GPU |
 | **GPU Only** | the GPU, for when another app keeps the Neural Engine busy |
 

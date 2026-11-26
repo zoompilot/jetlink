@@ -2,15 +2,17 @@ import Foundation
 import JetlinkORT
 import Observation
 
-/// Where the server runs the model. The Swift server has the two the Python
-/// server's CoreML backend had; tinygrad went with the Python server.
+/// Where the server runs the model, in the picker's order.
 enum BackendChoice: String, CaseIterable, Codable, Sendable {
-  case auto, coreml
+  case auto
+  case aneBoth = "ane-both"
+  case coreml
 
   /// What the Swift server is asked to be.
   var profile: OrtProfile {
     switch self {
     case .auto: .ane
+    case .aneBoth: .aneBoth
     case .coreml: .coreml
     }
   }
@@ -18,6 +20,7 @@ enum BackendChoice: String, CaseIterable, Codable, Sendable {
   var title: String {
     switch self {
     case .auto: "CoreML with Neural Engine"
+    case .aneBoth: "CoreML with Neural Engine Only"
     case .coreml: "CoreML (GPU)"
     }
   }
@@ -25,6 +28,7 @@ enum BackendChoice: String, CaseIterable, Codable, Sendable {
   var shortTitle: String {
     switch self {
     case .auto: "Neural Engine"
+    case .aneBoth: "Neural Engine Only"
     case .coreml: "CoreML GPU"
     }
   }

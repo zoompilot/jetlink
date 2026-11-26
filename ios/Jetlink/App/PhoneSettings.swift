@@ -37,11 +37,7 @@ final class PhoneSettings {
   /// The profile the server runs `sha256` on.
   func profile(for sha256: String?) -> OrtProfile {
     if let profile = device.profile { return profile }
-    #if targetEnvironment(simulator)
-      return Processor.fallback
-    #else
-      return sha256.flatMap { automaticPicks[$0] }.flatMap(OrtProfile.init(rawValue:)) ?? Processor.fallback
-    #endif
+    return sha256.flatMap { automaticPicks[$0] }.flatMap(OrtProfile.init(rawValue:)) ?? Processor.fallback
   }
 
   /// A small GPU job between frames so the GPU does not clock down in the gaps.
@@ -104,10 +100,17 @@ enum Processor: String, Hashable {
   case coreml
   case cpu
 
-  /// What Automatic runs a model on before a comparison has picked for it:
-  /// the trunk on the Neural Engine and the rest on the GPU (14 ms a frame on
-  /// an iPhone 18 Pro), which has passed the parity check wherever it was run.
-  static let fallback = OrtProfile.ane
+  /// What Automatic runs a model on unless a comparison has picked another
+  /// for it: the Neural Engine alone, which draws the least power and heats
+  /// the device least (iPad Air M1, Light Speed 2: 25.1 ms median against
+  /// 32.2 with the GPU). Its policy runs in lower precision, and only a
+  /// comparison checks a model's outputs on it.
+  #if targetEnvironment(simulator)
+    // No Neural Engine there: the split it has always run, on the CPU.
+    static let fallback = OrtProfile.ane
+  #else
+    static let fallback = OrtProfile.aneBoth
+  #endif
 
   /// The profile chosen by hand, or nil for Automatic.
   var profile: OrtProfile? {

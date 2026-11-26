@@ -143,7 +143,9 @@ final class ProcessorComparison {
         needsOutputCheck: profile == checked, failure: failures[profile])
     }
     let decision = ProcessorPick.decide(trials)
-    settings.automaticPicks[sha256] = decision.pick
+    // With no pick Automatic goes back to its own default, the checked one,
+    // so not when this run found its outputs differ.
+    settings.automaticPicks[sha256] = decision.pick ?? (parity?.passed == false ? reference.rawValue : nil)
     let text = ProcessorPick.text(
       trials, decision: decision, parity: parity, reference: reference.title, chip: chip, model: modelName, sha256: sha256)
     server.note(.info, text)

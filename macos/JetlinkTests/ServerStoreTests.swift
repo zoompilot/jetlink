@@ -69,6 +69,7 @@ struct ServerStoreTests {
 
   @Test(arguments: [
     (BackendChoice.auto, OrtProfile.ane),
+    (BackendChoice.aneBoth, OrtProfile.aneBoth),
     (BackendChoice.coreml, OrtProfile.coreml),
   ])
   func backendMapping(choice: BackendChoice, profile: OrtProfile) {

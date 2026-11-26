@@ -18,6 +18,7 @@ struct FormattingTests {
   @Test("Backends are named the way the Settings picker names them")
   func backendTitles() {
     #expect(BackendChoice.auto.title == "CoreML with Neural Engine")
+    #expect(BackendChoice.aneBoth.title == "CoreML with Neural Engine Only")
     #expect(BackendChoice.coreml.title == "CoreML (GPU)")
     #expect(BackendChoice.auto.shortTitle == "Neural Engine")
   }
