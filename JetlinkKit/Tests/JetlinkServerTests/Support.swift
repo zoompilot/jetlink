@@ -1,4 +1,5 @@
 import Foundation
+import JetlinkKit
 import JetlinkORT
 import JetlinkTestSupport
 import Testing
@@ -57,6 +58,7 @@ final class FlakyBackend: EngineBackend, @unchecked Sendable {
   private var loaded = 0
   private let fields: [String: String]
   private let coolsWhenIdle: Bool
+  private var storage: StorageNeed?
 
   /// `coolsWhenIdle`: its engines say they do, as a Neural Engine one does.
   init(describing fields: [String: String] = [:], coolsWhenIdle: Bool = false) {
@@ -87,6 +89,14 @@ final class FlakyBackend: EngineBackend, @unchecked Sendable {
   }
 
   var counts: (builds: Int, loads: Int) { lock.withLock { (built, loaded) } }
+
+  /// What it says a model takes on disk; nil, the default, makes no estimate.
+  var need: StorageNeed? {
+    get { lock.withLock { storage } }
+    set { lock.withLock { storage = newValue } }
+  }
+
+  func storageNeed(modelBytes: Int64) -> StorageNeed? { need }
 
   func deriveSpec(model: URL, sha256: String, nbytes: Int64, frameSkip: Int) throws -> ModelSpec {
     try inner.deriveSpec(model: model, sha256: sha256, nbytes: nbytes, frameSkip: frameSkip)

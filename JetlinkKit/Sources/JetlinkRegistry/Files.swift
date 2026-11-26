@@ -92,16 +92,18 @@ package enum Files {
     }
   }
 
-  /// What a volume has free for a download. On iOS that is the capacity for
-  /// important usage, which counts what the system would purge to make room;
-  /// the plain figure is the fallback and the rule elsewhere, as it is what
-  /// Python's `shutil.disk_usage` reports.
-  static func freeBytes(at url: URL) -> Int64? {
+  /// What a volume has free for a download. On iOS that is the smaller of
+  /// the capacity for important usage and the plain free space: the first
+  /// counts what the system could purge, and on a full iPad it stayed large
+  /// while writes failed for want of space and the Neural Engine could not
+  /// write its copy of a model. The plain figure is the rule elsewhere, as it
+  /// is what Python's `shutil.disk_usage` reports.
+  package static func freeBytes(at url: URL) -> Int64? {
     #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
-      if let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+      if let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey]),
         let important = values.volumeAvailableCapacityForImportantUsage
       {
-        return important
+        return values.volumeAvailableCapacity.map { min(important, Int64($0)) } ?? important
       }
     #endif
     if let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityKey]),

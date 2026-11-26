@@ -29,10 +29,12 @@ public struct PreparedModel: Sendable {
 public protocol ModelPreparer: Sendable {
   func readSpec(model: URL, sha256: String, nbytes: Int64, frameSkip: Int) throws -> ModelSpec
   /// Writes the parts into `directory` in the device's layout, with the
-  /// rewrites the Neural Engine needs to take the policy when it runs there.
+  /// rewrites the Neural Engine needs to take the policy when it runs there,
+  /// and the vision trunk in pieces of at most `visionWeightLimit` weight
+  /// bytes when one is given.
   func prepare(
     model: URL, into directory: URL, layout: CoreMLPreparation.Layout, policyOnNeuralEngine: Bool,
-    cacheKey: @escaping (String) -> String
+    visionWeightLimit: Int64?, cacheKey: @escaping (String) -> String
   ) throws -> PreparedModel
 }
 
@@ -56,10 +58,11 @@ public struct ONNXPreparer: ModelPreparer {
 
   public func prepare(
     model: URL, into directory: URL, layout: CoreMLPreparation.Layout, policyOnNeuralEngine: Bool,
-    cacheKey: @escaping (String) -> String
+    visionWeightLimit: Int64?, cacheKey: @escaping (String) -> String
   ) throws -> PreparedModel {
     let report = try CoreMLPreparation.prepare(
-      source: model, into: directory, layout: layout, policyOnNeuralEngine: policyOnNeuralEngine, cacheKey: cacheKey)
+      source: model, into: directory, layout: layout, policyOnNeuralEngine: policyOnNeuralEngine,
+      visionWeightLimit: visionWeightLimit, cacheKey: cacheKey)
     var summary =
       "stripped \(report.stripped) tinygrad op(s), \(report.retypedImages ? "images retyped to fp16" : "inputs left as declared"), "
       + "\(report.gathers) negative Gather index(es) normalized, \(report.gemms) MatMul+Add rewritten as Gemm(transB=1), \(report.tiles) Expand(s) as Tile"
@@ -67,7 +70,12 @@ public struct ONNXPreparer: ModelPreparer {
       summary += "; for the whole Neural Engine: \(report.norms) policy LayerNormalization(s) prescaled, \(report.heads) vision head node(s) in fp32"
     }
     if policyOnNeuralEngine {
-      summary += "; for the policy on the Neural Engine: \(report.masks) attention mask(s) as Add, \(report.folds) MatMul(s) folded to three axes"
+      summary += "; for the policy on the Neural Engine: \(report.masks) attention mask(s) as Add, \(report.folds) MatMul(s) folded to three axes, \(report.slices) constant Gather(s) as Slice"
+    }
+    let vision = report.parts.filter { $0.name.hasPrefix("vision") }
+    if vision.count > 1 {
+      summary += "; the vision trunk in \(vision.count) pieces for the Neural Engine, "
+        + vision.map { "\($0.weightBytes / 1_000_000) MB" }.joined(separator: ", ")
     }
     return PreparedModel(
       parts: report.parts.map { PreparedModel.Part(name: $0.name, file: $0.url.lastPathComponent, weightBytes: $0.weightBytes) },

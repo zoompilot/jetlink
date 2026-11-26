@@ -140,6 +140,29 @@ public final class ModelStore {
     }
   }
 
+  /// What using this model needs free that the disk does not have, where
+  /// models are prepared for CoreML: room to download and prepare it, to
+  /// prepare it, or, once prepared, to keep it on the Neural Engine. Nil when
+  /// there is room or nothing to go by.
+  public func storageShortfall(for row: ModelRow) -> StorageShortfall? {
+    #if canImport(CoreML)
+      guard let sha = row.sha256, let bytes = row.bytes, bytes > 0, let inventory else { return nil }
+      let step: StorageNeed.Step =
+        row.preparedFor.contains(where: \.current)
+        ? .run : inventory.models.contains { $0.sha256 == sha } ? .prepare : .download
+      return StorageNeed.coreML(modelBytes: bytes).shortfall(for: step, free: inventory.disk.freeBytes, name: row.displayName)
+    #else
+      return nil
+    #endif
+  }
+
+  /// The shortfall of the model in use, or the one last used, to keep it on
+  /// the Neural Engine.
+  public var runningShortfall: StorageShortfall? {
+    guard let row = row(for: inventory?.loaded ?? inventory?.lastLoaded), row.preparedFor.contains(where: \.current) else { return nil }
+    return storageShortfall(for: row)
+  }
+
   /// True when using this model would interrupt the comma that is driving:
   /// a comma is connected and a different model is in use or being prepared.
   public func useNeedsConfirmation(_ row: ModelRow) -> Bool {

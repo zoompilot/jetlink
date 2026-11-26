@@ -31,6 +31,20 @@ model. On a Mac:
 | `ane-whole` | one CoreML program, every compute unit allowed (policy LayerNormalization inputs scaled by 1/8 so their fp16 squares do not overflow; heads after the trunk in fp32). For comparing against the default, not daily use; see [how the default runs](mac-performance.md#how-the-default-runs). |
 | `cpu` | ONNX Runtime's CPU provider, for tests |
 
+On iPhone and iPad, `ane` and `ane-both` cut a vision trunk of more than
+950 MB of weights into pieces within that, at points where one tensor
+crosses: Apple documents that the Neural Engine there needs models of under
+1 GB of weights (ml-stable-diffusion's `--chunk-unet`), and CoreML runs what
+it does not take on the CPU. Lebowski's 1.7 GB trunk becomes two pieces of
+854 and 836 MB; on an iPad Air (M1) CoreML puts all 391 and 173 of their
+operations on the Neural Engine, at about 40 ms a frame. The pieces run in
+turn, and on a Mac's Neural Engine their outputs are bit for bit the uncut
+model's. Every 766 MB model's trunk is
+within the limit and is prepared as before. With the policy on the Neural
+Engine (`ane-both`, `ane-whole`) its constant Gathers are written as Slices
+(prepare 8), which the Neural Engine takes: Light Speed 2 23.2 ms against
+24.5, its outputs unchanged.
+
 The iPhone app's **Processor** offers **Automatic** (the default), `ane-both`
 (**Neural Engine Only**), `ane` (**Neural Engine + GPU**: 14 ms a frame on an
 iPhone 18 Pro) and `coreml` (**GPU Only**); `cpu` in the Simulator. Automatic

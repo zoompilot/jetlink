@@ -232,6 +232,31 @@ struct RemoveTests {
     try registry.remove(sha256: fakeSHA, artifacts: true, model: true)  // nothing left to remove is not an error
   }
 
+  /// An artifact's Neural Engine copies, as its sidecar lists them, go with
+  /// it; another model's stay, so it is not compiled again.
+  @Test func takesOnlyTheModelsNeuralEngineCopies() throws {
+    let tmp = try TemporaryDirectory()
+    let (fakeSHA, _) = try buildCache(tmp)
+    let directory = tmp.url.appending(path: "Caches/app/com.apple.e5rt.e5bundlecache")
+    let registry = Registry(layout: tmp.layout, neuralEngineCaches: [directory])
+    for hash in ["ours", "theirs"] {
+      let bundle = directory.appending(path: "24A5390f/\(hash)/model.bundle")
+      try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+      try Data(count: 4096).write(to: bundle.appending(path: "weights.bin"))
+    }
+    #expect(NeuralEngineCache.bundles(in: [directory]) == ["24A5390f/ours", "24A5390f/theirs"])
+    let sidecar = try EngineCache(layout: tmp.layout, tag: "fake0.1.test", suffix: ".fake", backend: "fake").entry(fakeSHA).metaPath
+    var meta = try #require(Files.readJSON(sidecar)?.object)
+    meta[NeuralEngineCache.sidecarKey] = .array([.string("24A5390f/ours")])
+    try JSON.object(meta).data().write(to: sidecar)
+    #expect(registry.inventory(artifactTag: nil, artifactSuffix: ".fake", loaded: nil).disk.neuralEngineBytes >= 8192)
+
+    try registry.remove(sha256: fakeSHA, artifacts: false, model: true)
+    #expect(NeuralEngineCache.bundles(in: [directory]).count == 2)
+    try registry.remove(sha256: fakeSHA, artifacts: true, model: false)
+    #expect(NeuralEngineCache.bundles(in: [directory]) == ["24A5390f/theirs"])
+  }
+
   @Test func ofTheModelOnlyKeepsTheEngines() throws {
     let tmp = try TemporaryDirectory()
     let (fakeSHA, _) = try buildCache(tmp)

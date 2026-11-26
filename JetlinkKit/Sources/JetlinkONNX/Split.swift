@@ -42,6 +42,96 @@ enum Split {
     return (vision, policy)
   }
 
+  /// The vision trunk cut into pieces of at most `limit` weight bytes each,
+  /// run in order, each cut where exactly one tensor crosses: as few pieces
+  /// as fit, each cut the one nearest an even share of the weight. Apple cuts
+  /// its Stable Diffusion UNet the same way for the Neural Engine on iOS and
+  /// iPadOS, into chunks of under 1 GB of weights (ml-stable-diffusion,
+  /// `--chunk-unet`). Swift's alone, not Python's. A trunk within the limit
+  /// comes back as it is, and so does one no set of cuts brings within it.
+  static func chunks(_ vision: Model, limit: Int64) throws -> [Model] {
+    guard let g = vision.graph else { throw OnnxError("the model has no graph") }
+    var sizes: [String: Int64] = [:]
+    for t in g.initializers where sizes[t.key] == nil {
+      sizes[t.key] = Int64(t.raw?.count ?? 0)
+    }
+    let total = sizes.values.reduce(0, +)
+    guard total > limit, limit > 0 else { return [vision] }
+    let cuts = cleanCuts(g, sizes)
+    let extractor = try Extractor(vision)
+    let inputs = g.inputs.map(\.key)
+    let outputs = g.outputs.map(\.key)
+    var count = Int((total + limit - 1) / limit)
+    while count <= min(8, cuts.count + 1) {
+      var chosen: [Cut] = []
+      for j in 1..<count {
+        let target = total * Int64(j) / Int64(count)
+        let after = chosen.last?.node ?? -1
+        guard let best = cuts.filter({ $0.node > after }).min(by: { abs($0.before - target) < abs($1.before - target) }) else { break }
+        chosen.append(best)
+      }
+      if chosen.count == count - 1 {
+        let ends = chosen.map(\.tensor)
+        let pieces = try zip([inputs] + ends.map { [$0] }, ends.map { [$0] } + [outputs]).map {
+          try extractor.extract(inputs: $0.0, outputs: $0.1)
+        }
+        let weights = pieces.map { piece in
+          piece.graph!.initializers.reduce(Int64(0)) { $0 + Int64($1.raw?.count ?? 0) }
+        }
+        if weights.allSatisfy({ $0 <= limit }) {
+          return pieces
+        }
+      }
+      count += 1
+    }
+    return [vision]
+  }
+
+  struct Cut: Equatable {
+    /// The cut falls after this node.
+    let node: Int
+    /// The one tensor that crosses it.
+    let tensor: String
+    /// The initializer bytes first read at or before `node`.
+    let before: Int64
+  }
+
+  /// Every point between two nodes where a single tensor, made inside the
+  /// graph and with a recorded shape, is all that later nodes and the
+  /// outputs still read: the image inputs read later, two tensors alive, or
+  /// an output made early each rule a point out.
+  static func cleanCuts(_ g: Graph, _ sizes: [String: Int64]) -> [Cut] {
+    let inputs = Set(g.inputs.map(\.key))
+    let outputs = Set(g.outputs.map(\.key))
+    var lastUse: [String: Int] = [:]
+    for (k, node) in g.nodes.enumerated() {
+      for name in node.inputs where !name.isEmpty && sizes[name] == nil {
+        lastUse[name] = k
+      }
+    }
+    for name in outputs {
+      lastUse[name] = g.nodes.count
+    }
+    let typed = Set((g.inputs + g.valueInfo + g.outputs).filter { $0.shape != nil }.map(\.key))
+    var live = inputs.filter { lastUse[$0] != nil }
+    var seen = Set<String>()
+    var before: Int64 = 0
+    var cuts: [Cut] = []
+    for (k, node) in g.nodes.enumerated().dropLast() {
+      for name in node.inputs where !name.isEmpty {
+        if let size = sizes[name], seen.insert(name).inserted {
+          before += size
+        }
+      }
+      live.formUnion(node.outputs.filter { !$0.isEmpty && (lastUse[$0] ?? -1) > k })
+      live = live.filter { (lastUse[$0] ?? -1) > k }
+      if live.count == 1, let name = live.first, !inputs.contains(name), !outputs.contains(name), typed.contains(name) {
+        cuts.append(Cut(node: k, tensor: name, before: before))
+      }
+    }
+    return cuts
+  }
+
   /// Per node, in graph order: whether it depends on the image inputs alone
   /// (_vision_mask). Nodes reading only initializers count as neither.
   static func visionMask(_ g: Graph) throws -> [Bool] {

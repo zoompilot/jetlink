@@ -8,7 +8,9 @@
 
 - A USB-C iPhone on iOS 26.1 or later, or USB-C iPad on iPadOS 26.1 or later.
   Use a USB 3 model; see [compatible devices](#usb-3-matters).
-- About 3 GB free per model.
+- Free space: about 5 times the model's size plus 3 GB to download and
+  prepare it (7 GB for a 766 MB model, 12 GB for Lebowski), and the model's
+  size plus 3 GB kept free while it runs. See [storage](#storage).
 - A comma 3X or comma 4, powered separately.
 - A USB 3 USB-C data cable. The comma does not charge the phone over it; a
   powered USB 3 hub keeps the phone charging.
@@ -77,6 +79,33 @@ reduce overheating.
 
 To download a model ahead of time, see [Models](models.md#prepare-ahead-of-time-optional).
 
+<a id="storage"></a>
+## Storage
+
+A model takes about three times its size once prepared: the download, the
+prepared copy, and the Neural Engine's own compiled copy in the app's caches.
+Preparing it needs about as much again for a while, and the system needs room
+to spare: on a nearly full device it clears the Neural Engine's copies, the
+Neural Engine has no room to make them again, and models run on the CPU at
+hundreds of milliseconds a frame, so the comma stays on its small model.
+
+- **Models** says when a download or a preparation would not fit, and how much
+  each needs, before it starts; the app refuses them rather than fill the
+  device. A prepared model with too little room to keep running well asks
+  before it is used.
+- **Status** shows **Low Storage** while the model in use is short of room,
+  and **Big Model Running Slowly** when frames take more than twice the
+  50 ms budget.
+- **Settings > Storage** shows what the downloads, the prepared copies and
+  the Neural Engine's copies take, and what is free.
+- Deleting a model removes its download, its prepared copies and the Neural
+  Engine copies made for it. Prepared copies the app can no longer load, from
+  an older version, go by themselves.
+
+The system's own storage screen counts the app's files under Jetlink; what
+it counts as System Data is the system's, and only freeing space or restarting
+the device gives it back.
+
 <a id="if-a-direct-cable-does-not-connect"></a>
 <a id="if-the-big-model-comes-and-goes"></a>
 
@@ -89,6 +118,7 @@ To download a model ahead of time, see [Models](models.md#prepare-ahead-of-time-
 | Direct cable fails or comma restarts | Update the comma, or use a powered USB 3 hub. |
 | Connection says **USB 2** | Check that the phone, cable, and hub all support USB 3. |
 | Slow frames or repeated fallbacks | Let the phone cool, repeat the 10-minute benchmark, and save the logs. |
+| Frames take hundreds of milliseconds | The Neural Engine is not running the model, usually for want of free space: see [storage](#storage). Free space, or restart the device if there is plenty. |
 
 <a id="logs"></a>
 
@@ -137,8 +167,9 @@ Neural Engine + GPU and GPU Only whose median frame is within 2 ms of the fastes
 no more frames over the 50 ms budget. Neural Engine Only is taken only if its
 outputs match Neural Engine + GPU's on 32 fixed frames, by the rules of
 `scripts/verify_parity.py`. The pick is kept per model. The runs take a
-minute; preparing the model for each processor takes minutes more and a few
-gigabytes the first time. Twenty seconds does not show how a processor holds
+minute; preparing the model for each processor takes minutes more, and the
+app says how much space that takes before it starts and refuses it when the
+device has too little. Twenty seconds does not show how a processor holds
 up once the device is hot; run **10 Minutes** on the pick for that. Run it with the
 comma unplugged, charging, in the mount, and share the result from the
 toolbar if you can: it tells us what to make the default on your device.

@@ -65,9 +65,18 @@ public final class Registry: Sendable {
   private static let log = Logger(subsystem: "io.zoompilot.jetlink", category: "registry")
 
   /// Opens the registry of a cache, making its registry and models directories.
-  public init(layout: CacheLayout, session: URLSession = .shared) {
+  /// Where CoreML keeps this process's Neural Engine copies (NeuralEngineCache).
+  let neuralEngineCaches: [URL]
+
+  public convenience init(layout: CacheLayout, session: URLSession = .shared) {
+    self.init(layout: layout, session: session, neuralEngineCaches: NeuralEngineCache.directories)
+  }
+
+  /// `neuralEngineCaches` in place of the process's own, for tests.
+  package init(layout: CacheLayout, session: URLSession = .shared, neuralEngineCaches: [URL]) {
     self.layout = layout
     self.session = session
+    self.neuralEngineCaches = neuralEngineCaches
     self.http = HTTP(session: session)
     layout.makeRegistryDirectories()
   }
@@ -440,7 +449,9 @@ public final class Registry: Sendable {
       lastLoaded: layout.lastLoaded()?.sha256,
       models: models,
       artifacts: artifacts,
-      disk: InventoryDisk(modelsBytes: modelsBytes, enginesBytes: enginesBytes, freeBytes: Files.freeBytes(at: layout.root) ?? 0))
+      disk: InventoryDisk(
+        modelsBytes: modelsBytes, enginesBytes: enginesBytes, freeBytes: Files.freeBytes(at: layout.root) ?? 0,
+        neuralEngineBytes: NeuralEngineCache.bytes(in: neuralEngineCaches)))
   }
 
   private func artifactEntry(sidecar: String, engineNames: [String], tag: String?, suffix: String) -> InventoryArtifact? {
@@ -517,6 +528,10 @@ public final class Registry: Sendable {
     try CacheLayout.validate(sha256: sha256)
     let prefix = "\(sha256.prefix(16))."
     if artifacts {
+      // the Neural Engine's copies of these artifacts, before their sidecars go
+      for fileName in Files.names(in: layout.engines) where fileName.hasPrefix(prefix) && fileName.hasSuffix(".json") {
+        NeuralEngineCache.remove(NeuralEngineCache.listed(inSidecar: layout.engines.appending(path: fileName)), from: neuralEngineCaches)
+      }
       for fileName in Files.names(in: layout.engines) where fileName.hasPrefix(prefix) {
         let url = layout.engines.appending(path: fileName)
         if Files.isDirectory(url) {

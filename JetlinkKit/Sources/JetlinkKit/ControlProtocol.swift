@@ -285,11 +285,40 @@ public struct InventoryDisk: Codable, Sendable, Equatable {
   public let modelsBytes: Int64
   public let enginesBytes: Int64
   public let freeBytes: Int64
+  /// The Neural Engine's compiled copies in the app's caches
+  /// (NeuralEngineCache); 0 where there are none, and from a server too old
+  /// to count them.
+  public let neuralEngineBytes: Int64
 
-  public init(modelsBytes: Int64, enginesBytes: Int64, freeBytes: Int64) {
+  public init(modelsBytes: Int64, enginesBytes: Int64, freeBytes: Int64, neuralEngineBytes: Int64 = 0) {
     self.modelsBytes = modelsBytes
     self.enginesBytes = enginesBytes
     self.freeBytes = freeBytes
+    self.neuralEngineBytes = neuralEngineBytes
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case modelsBytes, enginesBytes, freeBytes, neuralEngineBytes
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    modelsBytes = try c.decode(Int64.self, forKey: .modelsBytes)
+    enginesBytes = try c.decode(Int64.self, forKey: .enginesBytes)
+    freeBytes = try c.decode(Int64.self, forKey: .freeBytes)
+    neuralEngineBytes = try c.decodeIfPresent(Int64.self, forKey: .neuralEngineBytes) ?? 0
+  }
+
+  /// Without the Neural Engine's copies when there are none, so a Jetson's
+  /// or an Android server's payload is the one it always was.
+  public func encode(to encoder: any Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(modelsBytes, forKey: .modelsBytes)
+    try c.encode(enginesBytes, forKey: .enginesBytes)
+    try c.encode(freeBytes, forKey: .freeBytes)
+    if neuralEngineBytes > 0 {
+      try c.encode(neuralEngineBytes, forKey: .neuralEngineBytes)
+    }
   }
 }
 

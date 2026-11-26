@@ -19,7 +19,11 @@ import Foundation
 ///    attention around them falls to the CPU. Swift's alone, not Python's;
 /// 7. cut the graph where the vision trunk ends (`.split`, writing
 ///    vision.onnx and policy.onnx), or keep it whole (`.whole` and
-///    `.aneWhole`, model.onnx);
+///    `.aneWhole`, model.onnx). With `visionWeightLimit`, a trunk of more
+///    weight bytes than that is cut again into pieces within it (vision.onnx,
+///    vision2.onnx, ...): on iPhone and iPad the Neural Engine does not take
+///    a model of 1 GB of weights or more, and one it does not take runs on
+///    the CPU. Swift's alone, not Python's;
 /// 8. give each file a COREML_CACHE_KEY in its metadata_props.
 ///
 /// `.plain` is TensorRT's preparation (`onnx_patch.patch_file`, what
@@ -53,7 +57,8 @@ public enum CoreMLPreparation {
   }
 
   public struct Part: Sendable, Equatable {
-    /// "vision", "policy" or "model"; the file is `<name>.onnx`.
+    /// "vision" (then "vision2", ... for a trunk in pieces), "policy" or
+    /// "model"; the file is `<name>.onnx`.
     public let name: String
     public let url: URL
     /// The initializers' raw_data bytes in this part, which is what
@@ -82,6 +87,9 @@ public enum CoreMLPreparation {
     public let masks: Int
     /// Four-axis MatMuls folded to three axes; 0 unless the policy runs on the Neural Engine.
     public let folds: Int
+    /// Constant-index Gathers and GatherNDs rewritten as Slices; 0 unless the
+    /// policy runs on the Neural Engine.
+    public let slices: Int
     public let parts: [Part]
   }
 
@@ -100,23 +108,31 @@ public enum CoreMLPreparation {
     return String(String.UnicodeScalarView(kept.prefix(63)))
   }
 
+  /// The most weight bytes a vision piece holds when the trunk runs on the
+  /// Neural Engine: under 1 GB whether Apple counts 10^9 bytes or 2^30.
+  /// Every 766 MB model's trunk is within it, so only Lebowski's 1.7 GB is
+  /// cut.
+  public static let neuralEngineWeightLimit: Int64 = 950_000_000
+
   public static func prepare(
     source: URL, into directory: URL, layout: Layout,
     policyOnNeuralEngine: Bool = false,
+    visionWeightLimit: Int64? = nil,
     cacheKey: (String) -> String,
     progress: ((Double) -> Void)? = nil
   ) throws -> Report {
     let data = try Data(contentsOf: source, options: .alwaysMapped)
     return try data.withUnsafeBytes { buf in
       try prepare(
-        Source(bytes: buf), into: directory, layout: layout, policyOnNeuralEngine: policyOnNeuralEngine, cacheKey: cacheKey,
-        progress: progress)
+        Source(bytes: buf), into: directory, layout: layout, policyOnNeuralEngine: policyOnNeuralEngine,
+        visionWeightLimit: visionWeightLimit, cacheKey: cacheKey, progress: progress)
     }
   }
 
   private static func prepare(
     _ src: Source, into directory: URL, layout: Layout,
     policyOnNeuralEngine: Bool,
+    visionWeightLimit: Int64?,
     cacheKey: (String) -> String,
     progress: ((Double) -> Void)?
   ) throws -> Report {
@@ -143,9 +159,11 @@ public enum CoreMLPreparation {
     }
     var masks = 0
     var folds = 0
+    var slices = 0
     if policyOnNeuralEngine, layout != .plain {
       masks = try Patches.maskedFillAsAdd(&g, src)
       folds = Patches.foldMatMulAxes(&g)
+      slices = try Patches.constantGathersAsSlices(&g, src)
     }
     model.graph = g
 
@@ -153,7 +171,8 @@ public enum CoreMLPreparation {
     switch layout {
     case .split:
       let (vision, policy) = try Split.visionPolicy(model)
-      parts = [("vision", vision), ("policy", policy)]
+      let pieces = try visionWeightLimit.map { try Split.chunks(vision, limit: $0) } ?? [vision]
+      parts = pieces.enumerated().map { ($0.offset == 0 ? "vision" : "vision\($0.offset + 1)", $0.element) } + [("policy", policy)]
     case .whole, .aneWhole, .plain:
       parts = [("model", model)]
     }
@@ -165,7 +184,7 @@ public enum CoreMLPreparation {
     let reported = try write(parts, src, into: directory, progress: progress)
     return Report(
       stripped: stripped, retypedImages: retyped, gathers: gathers, gemms: gemms, tiles: tiles,
-      norms: norms, heads: heads, masks: masks, folds: folds, parts: reported)
+      norms: norms, heads: heads, masks: masks, folds: folds, slices: slices, parts: reported)
   }
 
   /// Encodes each part and streams it to `<name>.onnx` in `directory`; on a
