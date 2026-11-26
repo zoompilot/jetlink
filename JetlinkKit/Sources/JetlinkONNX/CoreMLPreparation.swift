@@ -12,6 +12,11 @@ import Foundation
 /// 6. for `.aneWhole` only (`layout='ane-whole'`), feed the policy's fp16
 ///    LayerNormalizations their input times 1/8 and run the heads after the
 ///    vision trunk in fp32;
+/// 6a. when the policy runs on the Neural Engine (`policyOnNeuralEngine`),
+///    rewrite each constant attention mask's Where as an Add and fold the
+///    middle axes of each four-axis MatMul by a constant: the Neural
+///    Engine's compiler on macOS 27 takes neither as exported, and the
+///    attention around them falls to the CPU. Swift's alone, not Python's;
 /// 7. cut the graph where the vision trunk ends (`.split`, writing
 ///    vision.onnx and policy.onnx), or keep it whole (`.whole` and
 ///    `.aneWhole`, model.onnx);
@@ -73,6 +78,10 @@ public enum CoreMLPreparation {
     public let norms: Int
     /// Vision head nodes moved to fp32; 0 unless the layout is `.aneWhole`.
     public let heads: Int
+    /// Attention-mask Wheres rewritten as Add; 0 unless the policy runs on the Neural Engine.
+    public let masks: Int
+    /// Four-axis MatMuls folded to three axes; 0 unless the policy runs on the Neural Engine.
+    public let folds: Int
     public let parts: [Part]
   }
 
@@ -93,17 +102,21 @@ public enum CoreMLPreparation {
 
   public static func prepare(
     source: URL, into directory: URL, layout: Layout,
+    policyOnNeuralEngine: Bool = false,
     cacheKey: (String) -> String,
     progress: ((Double) -> Void)? = nil
   ) throws -> Report {
     let data = try Data(contentsOf: source, options: .alwaysMapped)
     return try data.withUnsafeBytes { buf in
-      try prepare(Source(bytes: buf), into: directory, layout: layout, cacheKey: cacheKey, progress: progress)
+      try prepare(
+        Source(bytes: buf), into: directory, layout: layout, policyOnNeuralEngine: policyOnNeuralEngine, cacheKey: cacheKey,
+        progress: progress)
     }
   }
 
   private static func prepare(
     _ src: Source, into directory: URL, layout: Layout,
+    policyOnNeuralEngine: Bool,
     cacheKey: (String) -> String,
     progress: ((Double) -> Void)?
   ) throws -> Report {
@@ -128,6 +141,12 @@ public enum CoreMLPreparation {
       norms = try Patches.prescaleLayerNorm(&g)
       heads = try Patches.headsInFP32(&g, src)
     }
+    var masks = 0
+    var folds = 0
+    if policyOnNeuralEngine, layout != .plain {
+      masks = try Patches.maskedFillAsAdd(&g, src)
+      folds = Patches.foldMatMulAxes(&g)
+    }
     model.graph = g
 
     var parts: [(name: String, model: Model)]
@@ -146,7 +165,7 @@ public enum CoreMLPreparation {
     let reported = try write(parts, src, into: directory, progress: progress)
     return Report(
       stripped: stripped, retypedImages: retyped, gathers: gathers, gemms: gemms, tiles: tiles,
-      norms: norms, heads: heads, parts: reported)
+      norms: norms, heads: heads, masks: masks, folds: folds, parts: reported)
   }
 
   /// Encodes each part and streams it to `<name>.onnx` in `directory`; on a

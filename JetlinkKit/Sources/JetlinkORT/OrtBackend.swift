@@ -88,10 +88,18 @@ public enum OrtProfile: String, CaseIterable, Sendable {
     }
   }
 
+  /// Whether the policy runs on the Neural Engine, and so needs the rewrites
+  /// its compiler takes (CoreMLPreparation, step 6a).
+  var policyOnNeuralEngine: Bool {
+    self == .aneBoth || self == .aneWhole
+  }
+
   /// What a build writes: 5 is every graph split on `ane` and Expand as Tile
-  /// on both, 6 the plain graph. An artifact prepared under another rebuilds.
+  /// on both, 6 the plain graph, 7 the policy rewritten for the Neural
+  /// Engine. An artifact prepared under another rebuilds.
   public var prepareVersion: Int {
-    layout == .plain ? 6 : 5
+    if layout == .plain { return 6 }
+    return policyOnNeuralEngine ? 7 : 5
   }
 
   var usesCoreML: Bool {
@@ -223,7 +231,7 @@ public final class OrtBackend: EngineBackend {
     try Artifact.build(artifact, metaExtra: metaExtra, report: report) { staged in
       try FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true)
       report("patch", 0, profile.usesCoreML ? "preparing the model for CoreML" : "preparing the model")
-      let prepared = try preparer.prepare(model: model, into: staged, layout: profile.layout) {
+      let prepared = try preparer.prepare(model: model, into: staged, layout: profile.layout, policyOnNeuralEngine: profile.policyOnNeuralEngine) {
         CoreMLPreparation.cacheKey(stem: artifact.deletingPathExtension().lastPathComponent, part: $0)
       }
       log.info("prepared \(model.lastPathComponent): \(prepared.summary)")
@@ -330,11 +338,31 @@ public final class OrtBackend: EngineBackend {
       log.info("removed \(formatBytes(freed)) of converted model the compiled one replaces")
     }
     var meta = OrtArtifact.meta(self, manifest: manifest, providers: engine.providers, model: model, started: started)
+    let placement = placements(staged, manifest)
+    if !placement.isEmpty {
+      meta["placement"] = placement
+    }
     meta["convert_bytes"] = converted
     meta["compile_bytes"] = compiled
     meta["compile_seconds"] = pythonRound(compileSeconds, 1)
     meta["freed_bytes"] = freed
     return meta
+  }
+
+  /// Where CoreML plans to run each session, logged and kept in the sidecar:
+  /// the only place a session the Neural Engine's compiler has stopped taking
+  /// shows, short of a benchmark.
+  private func placements(_ staged: URL, _ manifest: [[String: Any]]) -> [[String: Any]] {
+    var entries: [[String: Any]] = []
+    for entry in manifest {
+      guard case .coreML(let units) = OrtUnit(entry: entry), let cache = entry["cache"] as? String,
+        let placement = CoreMLPlacement.read(cache: staged.appending(path: cache, directoryHint: .isDirectory), units: units)
+      else { continue }
+      let session = (entry["model"] as? String).map { ($0 as NSString).deletingPathExtension } ?? cache
+      log.info("placement, \(placement.summary(session: session, wantsNeuralEngine: units.contains("NeuralEngine") || units == "ALL"))")
+      entries.append(placement.entry(session: session))
+    }
+    return entries
   }
 
   // MARK: load

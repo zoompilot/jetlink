@@ -36,6 +36,10 @@ struct OrtBackendTests {
     }
     #expect(OrtProfile(rawValue: "ane-whole") == .aneWhole && OrtProfile(rawValue: "htp-whole") == .htpWhole)
     #expect(OrtProfile(rawValue: "ane-both") == .aneBoth)
+    // The policy's Neural Engine rewrites, and the rebuild they force, are for the profiles that run it there.
+    #expect(OrtProfile.allCases.filter(\.policyOnNeuralEngine) == [.aneBoth, .aneWhole])
+    #expect(OrtProfile.aneBoth.prepareVersion == 7 && OrtProfile.aneWhole.prepareVersion == 7)
+    #expect(OrtProfile.ane.prepareVersion == 5 && OrtProfile.coreml.prepareVersion == 5)
     #if canImport(Metal)
       #expect(OrtProfile.available == [.ane, .aneBoth, .aneWhole, .coreml, .cpu])
     #elseif os(Android)

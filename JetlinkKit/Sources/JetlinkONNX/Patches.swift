@@ -637,6 +637,131 @@ enum Patches {
     return Tensor(name: name, dims: weight.dims, dataType: DataType.float, raw: .widened(Widen(elements: elements, count: count)))
   }
 
+  // MARK: Neural Engine policy rewrites
+
+  /// What a masked position adds to its attention score: far enough below
+  /// any score that its softmax weight is 0, and small enough that the sum
+  /// stays finite in fp16.
+  static let additiveMask: Float = -10_000
+
+  /// Rewrites `Softmax(Where(mask, fill, x))` with a constant mask and a
+  /// constant fill of `additiveMask` or lower as `Softmax(x + m)`, m being 0
+  /// where x is kept and `additiveMask` where it was filled.
+  ///
+  /// The Neural Engine's compiler on macOS 27 takes no `select`, which is
+  /// what CoreML makes of the Where, and the attention around each one falls
+  /// to the CPU with it. A masked score's weight is 0 either way. A mask that
+  /// fills a whole row is left alone: that row's weights depend on the fill.
+  ///
+  /// Not in the Python: this pass is Swift's alone.
+  static func maskedFillAsAdd(_ g: inout Graph, _ src: Source) throws -> Int {
+    let initializers = lastIndexByName(g.initializers)
+    var producers: [String: Int] = [:]
+    var consumers: [String: [Int]] = [:]
+    for (k, node) in g.nodes.enumerated() {
+      for name in node.outputs { producers[name] = k }
+      for name in node.inputs { consumers[name, default: []].append(k) }
+    }
+    let outputs = Set(g.outputs.map(\.key))
+    let dims = staticDims(g)
+
+    var done = 0
+    for k in g.nodes.indices {
+      let n = g.nodes[k]
+      guard n.op == "Where", n.inputs.count == 3, n.outputs.count == 1, !outputs.contains(n.outputs[0]) else { continue }
+      // The mask: a constant, or the Not of one.
+      var filledWhere = true
+      var maskName = n.inputs[0]
+      if initializers[maskName] == nil, let p = producers[maskName], g.nodes[p].op == "Not", g.nodes[p].inputs.count == 1 {
+        maskName = g.nodes[p].inputs[0]
+        filledWhere = false
+      }
+      guard let maskIndex = initializers[maskName], let fillIndex = initializers[n.inputs[1]] else { continue }
+      let mask = g.initializers[maskIndex]
+      let fill = g.initializers[fillIndex]
+      guard mask.elementType == DataType.bool, !mask.dims.isEmpty, !mask.dims.contains(where: { $0 <= 0 }),
+        fill.elementType == DataType.float16 || fill.elementType == DataType.float, fill.elementCount == 1
+      else { continue }
+      let fillValue = try Elements.floats(Elements.littleEndian(fill, src), as: fill.elementType, for: fill.key)[0]
+      guard fillValue <= additiveMask else { continue }
+      // Only a softmax over the mask's last axis reads it.
+      let readers = consumers[n.outputs[0]] ?? []
+      guard readers.count == 1, g.nodes[readers[0]].op == "Softmax", let shape = dims[n.inputs[2]],
+        shape.count >= mask.dims.count, !shape.contains(where: { $0 <= 0 })
+      else { continue }
+      let axis = g.nodes[readers[0]].attribute("axis")?.i ?? -1
+      guard axis == -1 || axis == Int64(shape.count - 1) else { continue }
+
+      let filled = try Elements.littleEndian(mask, src).map { ($0 != 0) == filledWhere }
+      let row = Int(mask.dims.last!)
+      guard row == Int(shape.last!) else { continue }
+      let wholeRow = stride(from: 0, to: filled.count, by: row).contains { start in
+        filled[start..<(start + row)].allSatisfy { $0 }
+      }
+      guard !wholeRow else { continue }
+
+      let name = "\(n.outputs[0])__mask"
+      g.initializers.append(
+        Tensor(
+          name: name, dims: mask.dims, dataType: fill.elementType,
+          raw: .owned(Elements.encode(filled.map { $0 ? additiveMask : 0 }, as: fill.elementType))))
+      g.nodes[k] = Node(inputs: [n.inputs[2], name], outputs: n.outputs, name: n.name, opType: "Add")
+      done += 1
+    }
+    guard done > 0 else { return 0 }
+
+    // The Nots nothing reads now, then the masks and fills only they and the Wheres read.
+    var read = Set(g.outputs.map(\.key))
+    for node in g.nodes { read.formUnion(node.inputs) }
+    var gone = Set<String>()
+    g.nodes.removeAll { node in
+      guard node.op == "Not", node.outputs.allSatisfy({ !read.contains($0) }) else { return false }
+      gone.formUnion(node.outputs)
+      return true
+    }
+    g.valueInfo.removeAll { gone.contains($0.key) }
+    dropUnusedInitializers(&g)
+    return done
+  }
+
+  /// Rewrites a `MatMul(x, W)` of a four-axis x by a constant matrix, which
+  /// `gemmWithTransposedWeight` left because no bias follows it, as the same
+  /// MatMul on x with its two middle axes folded into one, a Reshape either
+  /// side.
+  ///
+  /// The Neural Engine's compiler on macOS 27 takes the three-axis product
+  /// and not the four-axis one.
+  ///
+  /// Not in the Python: this pass is Swift's alone.
+  static func foldMatMulAxes(_ g: inout Graph) -> Int {
+    let initializers = lastIndexByName(g.initializers)
+    let dims = staticDims(g)
+    var rebuilt: [Node] = []
+    rebuilt.reserveCapacity(g.nodes.count)
+    var done = 0
+    for n in g.nodes {
+      guard n.op == "MatMul", n.inputs.count == 2, n.outputs.count == 1, let w = initializers[n.inputs[1]],
+        g.initializers[w].dims.count == 2, let shape = dims[n.inputs[0]], shape.count == 4,
+        !shape.contains(where: { $0 <= 0 }), shape[3] == g.initializers[w].dims[0]
+      else {
+        rebuilt.append(n)
+        continue
+      }
+      let stem = n.outputs[0]
+      let folded = "\(stem)__folded_shape"
+      let back = "\(stem)__out_shape"
+      g.initializers.append(int64Tensor([shape[0], shape[1] * shape[2], shape[3]], folded))
+      g.initializers.append(int64Tensor(Array(shape.dropLast()) + [g.initializers[w].dims[1]], back))
+      rebuilt.append(Node(inputs: [n.inputs[0], folded], outputs: ["\(stem)__folded"], name: "\(stem)__fold", opType: "Reshape"))
+      rebuilt.append(
+        Node(inputs: ["\(stem)__folded", n.inputs[1]], outputs: ["\(stem)__product"], name: n.name, opType: "MatMul", attributes: n.attributes))
+      rebuilt.append(Node(inputs: ["\(stem)__product", back], outputs: [stem], name: "\(stem)__unfold", opType: "Reshape"))
+      done += 1
+    }
+    if done > 0 { g.nodes = rebuilt }
+    return done
+  }
+
   // MARK: helpers
 
   /// Static shapes from what the file carries (_static_dims), inputs first,

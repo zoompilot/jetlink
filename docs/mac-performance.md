@@ -113,6 +113,34 @@ Other apps on the Neural Engine slow the default: with another process running
 a model on it back to back, the split measured 52.5 ms mean and 65 ms p99, GPU
 only 43.5 ms. Then use `--device coreml` (**GPU Only** in the Mac app).
 
+## The policy on the Neural Engine
+
+`--device ane-both` (**Neural Engine Only**) and `ane-whole` ask CoreML for the
+Neural Engine; what its compiler does not take runs on the CPU, and nothing
+says so. macOS 27 stopped taking two things in Cinque Terre V3's policy that
+macOS 26.6 took: the `select` CoreML makes of each attention mask's Where, and
+a four-axis MatMul by a constant. The attention around them went to the CPU
+too, 185 of the policy's 449 operations against 106 on 26.6.
+
+For those two devices the preparation now writes each mask as an Add of a
+constant (0 where a score is kept, -10,000 where it was filled) and folds each
+four-axis MatMul's middle axes into one. M5 Max, macOS 27.2.1, Cinque Terre
+V3, `jetlink-server bench` at 20 Hz, 2026-11-26:
+
+| `ane-both` | mean | p99 |
+| --- | ---: | ---: |
+| before, 25 s | 37.2 ms | 47.7 ms |
+| with the rewrites, 30 s | 12.8 ms | 13.0 ms |
+
+- The Mac was busy during the first run (Spotlight indexing after a restart);
+  the app's own benchmark measured about 33 ms before.
+- `scripts/verify_parity.py` passes on the rewritten engine: 32 frames against
+  the CPU, hidden state included.
+- Not yet measured with the rewrites: macOS 26, an M1, an iPhone or iPad.
+- A build logs where CoreML plans to run each session's operations and which
+  operators the Neural Engine does not take, and keeps both in the engine's
+  sidecar under `placement`. Read it after an OS update that slows a model.
+
 ## How to measure
 
 | Tool | Does |
