@@ -167,6 +167,18 @@ struct ControllerTests {
     }
   }
 
+  @Test("A benchmark ends with its server")
+  func finishCancelsABenchmark() async throws {
+    try await withController { controller, registry, log in
+      _ = await controller.handle(.prepare(sha256: registry.sha256, frameSkip: 4))
+      _ = try await log.wait { if case .engine(let e) = $0 { e.state == .ready } else { false } }
+      #expect(await controller.handle(.benchmark(seconds: 600)).ok)
+      _ = try await log.wait { if case .benchmark(let b) = $0 { b.state == "running" } else { false } }
+      controller.finish()
+      _ = try await log.wait(timeout: 5) { if case .benchmark(let b) = $0 { b.state == "cancelled" } else { false } }
+    }
+  }
+
   @Test(
     "Commands the server cannot carry out say why",
     arguments: [

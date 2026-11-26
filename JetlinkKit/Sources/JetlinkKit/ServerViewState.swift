@@ -59,6 +59,8 @@ public final class ServerViewState {
     link = .waiting
     engine = .none
     statsHistory = []
+    // A benchmark ends with its server; a finished one's report stays.
+    if benchmark?.isFinished == false { benchmark = nil }
   }
 
   /// A new server: nothing from the last one. The shutdown requests keep

@@ -157,7 +157,18 @@ public final class ServerController: @unchecked Sendable {
   public func finish() {
     lock.lock()
     for download in active.values { download.cancel = true }
+    let run = benchmark
     lock.unlock()
+    // A benchmark ends with its server. It stops at its next frame; waiting
+    // for that lets its last event out and keeps the engine from being closed
+    // under it.
+    if let run {
+      run.cancel()
+      let deadline = ProcessInfo.processInfo.systemUptime + 2
+      while lock.withLock({ benchmark === run }), ProcessInfo.processInfo.systemUptime < deadline {
+        Thread.sleep(forTimeInterval: 0.01)
+      }
+    }
     publish(.server(serverEvent("stopping")))
     observersLock.withLock {
       finished = true
