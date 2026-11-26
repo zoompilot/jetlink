@@ -1,4 +1,28 @@
 <!-- Each release: a "Jetlink vX.Y.Z" heading underlined with =, newest first. A release that changes the fork contract ends with a **Forks** group (docs/publishing.md). -->
+Jetlink v0.10.0
+===============
+**iPhone & iPad**
+* **Neural Engine Only:** a new processor that keeps the GPU idle, for less heat and battery use. It is the new default. Thanks Alexandru (@alexandrupetraru)!
+* **Compare Processors** on the Benchmark tab tries each Engine for 20 seconds and sets Automatic to the best one for that model.
+* The Engines are now named Neural Engine Only, Neural Engine + GPU and GPU Only.
+* Keep GPU Awake is off by default.
+
+**Mac**
+* **Neural Engine Only** added. Automatic uses it on every Mac but the M1 series, which stay on Neural Engine + GPU. If frames are slower after updating, choose Neural Engine + GPU in Settings.
+* New **Keep CPU Awake** and **Keep GPU Awake** settings (default settings for speed, but you can disable now).
+* Changing these restarts the server and reloads the model by itself, unless a comma is connected.
+
+**Jetson**
+* The installer adds minimum swap needed, so models now build on a 64 GB SD card.
+* Custom power mode for top speed and slightly reduced noise.
+* Swap and performance settings on the web page, and `jetlink power`.
+
+**Models**
+* **Fairy Tale Model v1.1** is the default.
+
+**General Updates & Fixes**
+* Restarting the server stops a running benchmark.
+
 Jetlink v0.9.0
 ==============
 **Models**
