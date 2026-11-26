@@ -12,11 +12,11 @@ enum BackendChoice: String, CaseIterable, Codable, Sendable {
 
   /// What Automatic is on `chip`, as `HostChip.name()` names it. The Neural
   /// Engine alone draws the least power and heats the Mac least, so it is the
-  /// default everywhere but the M1 Pro, Max and Ultra, whose Neural Engine is
+  /// default everywhere but the M1 series (M1, Pro, Max, Ultra), whose Neural Engine is
   /// slower with the whole model than with the GPU's help (M1 Pro, Light
   /// Speed 2: 32 ms a frame against 28).
   nonisolated static func automatic(chip: String) -> OrtProfile {
-    ["Apple M1 Pro", "Apple M1 Max", "Apple M1 Ultra"].contains(chip) ? .ane : .aneBoth
+    chip == "Apple M1" || chip.hasPrefix("Apple M1 ") ? .ane : .aneBoth
   }
 
   /// What the Swift server is asked to be.

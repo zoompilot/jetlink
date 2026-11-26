@@ -178,7 +178,7 @@ struct ServerSettingsView: View {
   static func backendCaption(_ backend: BackendChoice) -> String {
     switch backend {
     case .auto:
-      "Recommended: the best for this Mac's chip. Neural Engine Only, or Neural Engine + GPU on an M1 Pro, Max or Ultra."
+      "Recommended: the best for this Mac's chip. Neural Engine Only, or Neural Engine + GPU on an M1 series Mac."
     case .aneBoth:
       "Nothing on the GPU: the least power and heat. Runs part of the model in lower precision, and nothing checks its outputs. If frames are slow, try Neural Engine + GPU."
     case .ane:

@@ -83,7 +83,7 @@ time you open Jetlink with the comma disconnected.
 <a id="the-server"></a>
 
 Keep **Backend** on **Automatic**: **Neural Engine Only**, or
-**Neural Engine + GPU** on an M1 Pro, Max or Ultra, where the Neural Engine
+**Neural Engine + GPU** on an M1 series Mac, where the Neural Engine
 alone is slower. Neural Engine Only keeps the GPU idle for the least power and
 heat; it runs part of the model in lower precision and nothing checks its
 outputs, so if frames are slow or the driving is off, choose

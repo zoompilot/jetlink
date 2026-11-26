@@ -68,8 +68,8 @@ struct ServerStoreTests {
   }
 
   @Test(arguments: [
-    ("Apple M1 Pro", OrtProfile.ane), ("Apple M1 Max", .ane), ("Apple M1 Ultra", .ane),
-    ("Apple M1", .aneBoth), ("Apple M2 Pro", .aneBoth), ("Apple M5 Max", .aneBoth),
+    ("Apple M1", OrtProfile.ane), ("Apple M1 Pro", .ane), ("Apple M1 Max", .ane), ("Apple M1 Ultra", .ane),
+    ("Apple M2", .aneBoth), ("Apple M2 Pro", .aneBoth), ("Apple M5 Max", .aneBoth), ("Apple M10", .aneBoth),
   ])
   func automaticByChip(chip: String, profile: OrtProfile) {
     #expect(BackendChoice.automatic(chip: chip) == profile)

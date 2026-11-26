@@ -36,7 +36,7 @@ The iPhone app's **Processor** offers **Automatic** (the default), `ane-both`
 iPhone 18 Pro) and `coreml` (**GPU Only**); `cpu` in the Simulator. Automatic
 runs a model on `ane-both` unless [Compare Processors](iphone-app.md#compare-processors)
 has picked another for it. The Mac app's **Backend** offers **Automatic**
-(`ane-both`, or `ane` on an M1 Pro, Max or Ultra), `ane-both`, `ane` and
+(`ane-both`, or `ane` on an M1 series Mac), `ane-both`, `ane` and
 `coreml`. The command-line server's default stays `ane`.
 
 The Android app's **Processor**, on the same preparation:
