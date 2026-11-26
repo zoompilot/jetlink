@@ -1,29 +1,46 @@
 import Foundation
 import JetlinkORT
+import JetlinkServer
 import Observation
 
 /// Where the server runs the model, in the picker's order.
 enum BackendChoice: String, CaseIterable, Codable, Sendable {
   case auto
   case aneBoth = "ane-both"
+  case ane
   case coreml
+
+  /// What Automatic is on `chip`, as `HostChip.name()` names it. The Neural
+  /// Engine alone draws the least power and heats the Mac least, so it is the
+  /// default everywhere but the M1 Pro, Max and Ultra, whose Neural Engine is
+  /// slower with the whole model than with the GPU's help (M1 Pro, Light
+  /// Speed 2: 32 ms a frame against 28).
+  nonisolated static func automatic(chip: String) -> OrtProfile {
+    ["Apple M1 Pro", "Apple M1 Max", "Apple M1 Ultra"].contains(chip) ? .ane : .aneBoth
+  }
 
   /// What the Swift server is asked to be.
   var profile: OrtProfile {
     switch self {
-    case .auto: .ane
+    case .auto: BackendChoice.automatic(chip: HostChip.name())
     case .aneBoth: .aneBoth
+    case .ane: .ane
     case .coreml: .coreml
     }
   }
 
-  var title: String {
-    switch self {
-    case .auto: "Neural Engine + GPU"
+  /// A processor as the Settings picker and the status lines name it.
+  nonisolated static func title(_ profile: OrtProfile) -> String {
+    switch profile {
+    case .ane: "Neural Engine + GPU"
     case .aneBoth: "Neural Engine Only"
     case .coreml: "GPU Only"
+    default: profile.rawValue
     }
   }
+
+  /// Automatic reads as what it runs on here.
+  var title: String { BackendChoice.title(profile) }
 }
 
 /// How the comma reaches the server: its USB gadget, or TCP for a bench client.
@@ -89,8 +106,7 @@ final class AppSettings {
 
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
-    // A stored "tinygrad" (the removed Python backend) or "ane" (an older name
-    // for the split) reads as Automatic.
+    // A stored "tinygrad" (the removed Python backend) reads as Automatic.
     backend = BackendChoice(rawValue: defaults.string(forKey: Key.backend) ?? "") ?? .auto
     // Not "transport": that is what the removed Settings picker stored, and a
     // stored "tcp" there must not keep the app off USB.

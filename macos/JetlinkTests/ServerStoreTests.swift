@@ -17,7 +17,7 @@ struct ServerStoreTests {
     let suite = "io.zoompilot.jetlink.tests.\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
-    for stored in ["tinygrad", "ane", "", "nonsense"] {
+    for stored in ["tinygrad", "", "nonsense"] {
       defaults.set(stored, forKey: AppSettings.Key.backend)
       #expect(AppSettings(defaults: defaults).backend == .auto, "stored \(stored)")
     }
@@ -68,7 +68,16 @@ struct ServerStoreTests {
   }
 
   @Test(arguments: [
-    (BackendChoice.auto, OrtProfile.ane),
+    ("Apple M1 Pro", OrtProfile.ane), ("Apple M1 Max", .ane), ("Apple M1 Ultra", .ane),
+    ("Apple M1", .aneBoth), ("Apple M2 Pro", .aneBoth), ("Apple M5 Max", .aneBoth),
+  ])
+  func automaticByChip(chip: String, profile: OrtProfile) {
+    #expect(BackendChoice.automatic(chip: chip) == profile)
+  }
+
+  @Test(arguments: [
+    (BackendChoice.auto, BackendChoice.automatic(chip: HostChip.name())),
+    (BackendChoice.ane, OrtProfile.ane),
     (BackendChoice.aneBoth, OrtProfile.aneBoth),
     (BackendChoice.coreml, OrtProfile.coreml),
   ])
