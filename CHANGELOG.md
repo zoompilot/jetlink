@@ -1,4 +1,10 @@
 <!-- Each release: a "Jetlink vX.Y.Z" heading underlined with =, newest first. A release that changes the fork contract ends with a **Forks** group (docs/publishing.md). -->
+Jetlink v0.10.1
+===============
+**Mac, iPhone & iPad**
+* **Neural Engine Only is fast again on macOS 27.** macOS 27 moved part of Cinque Terre V3 off the Neural Engine and onto the CPU, which made each frame take about three times as long. On an M5 Max a frame is back to about 13 ms, from about 35.
+* The model is prepared again the first time it loads on Neural Engine Only.
+
 Jetlink v0.10.0
 ===============
 **iPhone & iPad**
