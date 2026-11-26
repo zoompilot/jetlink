@@ -155,7 +155,9 @@ jobs:
         run: make -C macos project
 
       - name: Check the committed project is fresh
-        run: git diff --exit-code macos/Jetlink.xcodeproj
+        # Not the scheme's buildArchitectures line: xcodegen 2.48 began
+        # writing it, and the runners do not all have the same xcodegen.
+        run: git diff --exit-code -I buildArchitectures macos/Jetlink.xcodeproj
         # project.yml is the source of truth; the generated project is
         # committed so `open` works without xcodegen. Run `make -C macos
         # project` and commit the result when this fails.
@@ -172,7 +174,7 @@ jobs:
       - name: Check the committed iPhone project is fresh
         run: |
           make -C ios project
-          git diff --exit-code ios/Jetlink.xcodeproj
+          git diff --exit-code -I buildArchitectures ios/Jetlink.xcodeproj
 
       - name: Compile the iPhone app for iOS
         run: make -C ios typecheck
