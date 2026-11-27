@@ -14,7 +14,7 @@ set -uo pipefail
 SRC=/src
 FAKE_BIN=/tmp/fakebin
 export FAKE_BIN FAKE_LOG=/tmp/fake.log FAKE_STATE=/tmp/fake-state
-export JETLINK_TEST_DT_MODEL=/tmp/dt-model JETLINK_TEST_MEM_SLEEP=/tmp/mem-sleep
+export JETLINK_TEST_DT_MODEL=/tmp/dt-model JETLINK_TEST_MEM_SLEEP=/tmp/mem-sleep JETLINK_TEST_DEVFREQ=/tmp/devfreq
 export JETLINK_TEST_PROC_VERSION=/tmp/proc-version JETLINK_TEST_SYSTEMD_RUN=/tmp
 export JETLINK_TEST_OS_RELEASE=/tmp/os-release JETLINK_TEST_SECURE_BOOT=/tmp/secure-boot
 export JETLINK_TEST_PKG_PATH=$FAKE_BIN
@@ -73,7 +73,7 @@ reset_box() {
     "$UNITS"/jetlink-* /etc/udev/rules.d/99-jetlink-usb-wakeup.rules \
     /etc/systemd/journald.conf.d/60-jetlink.conf "$FAKE_STATE" "$FAKE_LOG" "$FAKE_BIN" \
     /etc/nv_tegra_release /etc/nvpmodel.conf /tmp/dt-model /tmp/mem-sleep /etc/apt/sources.list.d/nvidia-container-toolkit.list \
-    "$LOCK" /tmp/secure-boot /tmp/boot /tmp/efivars
+    "$LOCK" /tmp/secure-boot /tmp/boot /tmp/efivars /tmp/devfreq
   cp /tmp/fstab.orig /etc/fstab
   mkdir -p "$FAKE_STATE"
   echo "Linux version 6.8.0-fake (gcc) #1 SMP" >/tmp/proc-version
@@ -130,6 +130,10 @@ jetson() {  # jetson L4T_RELEASE REVISION
 < POWER_MODEL ID=2 NAME=MAXN_SUPER >
 < POWER_MODEL ID=3 NAME=7W >
 EOF
+  # the GPU's clock steps, in hertz
+  mkdir -p /tmp/devfreq/17000000.gpu
+  echo '306000000 408000000 510000000 612000000 714000000 816000000 918000000 1020000000' \
+    >/tmp/devfreq/17000000.gpu/available_frequencies
   # no TensorRT on the host: the Docker era had it only in the image
   export FAKE_ARCH=aarch64
   [ "$1" = 36 ] && export FAKE_TRT10=10.3.0.30-1+cuda12.5
@@ -801,7 +805,7 @@ reset_box; jetson 39 2.1
 run_installer curl '' --yes
 expect_in /etc/jetlink/install.conf "JETLINK_POWER_MODE=fastest"
 expect_in /etc/jetlink/install.conf 'JETLINK_POWER_MODES=7W\ 15W\ 25W\ MAXN_SUPER'
-expect_in /etc/jetlink/install.conf 'JETLINK_DEFAULTS=power=always\ comma_poweroff=yes\ desktop=off\ swap=on\ power_mode=fastest\ clocks=on'
+expect_in /etc/jetlink/install.conf 'JETLINK_DEFAULTS=power=always\ comma_poweroff=yes\ desktop=off\ swap=on\ power_mode=fastest\ clocks=on\ gpu_max=full'
 expect_in /etc/jetlink/install.conf "JETLINK_CLOCKS=on"
 : >"$FAKE_LOG"
 cli setup --set power_mode=25W --set clocks=off </dev/null
@@ -842,13 +846,53 @@ cli setup --set clocks=auto </dev/null
 expect_rc 1
 expect_out "--set clocks takes on or off, not 'auto'."
 
+scenario "jetlink setup --set gpu_max caps the GPU inside the power mode, and an update keeps it"
+reset_box; jetson 39 2.1
+run_installer curl '' --yes
+expect_in /etc/jetlink/install.conf "JETLINK_GPU_MAX=full"
+expect_in /etc/jetlink/install.conf 'JETLINK_GPU_STEPS=306\ 408\ 510\ 612\ 714\ 816\ 918\ 1020'
+expect_in /etc/jetlink/server.env 'JETLINK_CLOCK_FLAGS="--clocks on --power-mode MAXN_SUPER"'
+: >"$FAKE_LOG"
+cli setup --set gpu_max=510 </dev/null
+expect_rc 0
+expect_out "Cap the GPU at 510 MHz"
+expect_in /etc/jetlink/install.conf "JETLINK_GPU_MAX=510"
+expect_in /etc/jetlink/server.env 'JETLINK_CLOCK_FLAGS="--clocks on --power-mode MAXN_SUPER --gpu-max 510"'
+expect_ran "systemctl restart jetlink-server"
+cli power
+expect_out "510 MHz"
+# another mode keeps it, and so does an update
+cli setup --set power_mode=15W </dev/null
+expect_rc 0
+expect_in /etc/jetlink/server.env 'JETLINK_CLOCK_FLAGS="--clocks on --power-mode 15W --gpu-max 510"'
+run_installer curl '' --update
+expect_rc 0
+expect_in /etc/jetlink/install.conf "JETLINK_GPU_MAX=510"
+# a step the GPU no longer has goes back to full
+echo '306000000 612000000 1020000000' >/tmp/devfreq/17000000.gpu/available_frequencies
+run_installer curl '' --update
+expect_rc 0
+expect_out "This Jetson's GPU has no 510 MHz clock now"
+expect_in /etc/jetlink/install.conf "JETLINK_GPU_MAX=full"
+expect_in /etc/jetlink/server.env 'JETLINK_CLOCK_FLAGS="--clocks on --power-mode 15W"'
+# the fastest step is no cap, and a clock the GPU does not have is refused
+cli setup --set gpu_max=612 </dev/null
+expect_rc 0
+cli setup --set gpu_max=1020 </dev/null
+expect_rc 0
+expect_out "Let the GPU run at the power mode's top speed"
+expect_in /etc/jetlink/install.conf "JETLINK_GPU_MAX=full"
+cli setup --set gpu_max=500 </dev/null
+expect_rc 1
+expect_out "--set gpu_max takes full or one of this GPU's clocks in MHz (306, 612, 1020), not '500'."
+
 scenario "--set with an unknown key, a bad value or the other computer's key fails and changes nothing"
 cp /etc/jetlink/install.conf /tmp/install.conf.before
 : >"$FAKE_LOG"
 cli setup --set colour=blue </dev/null
 expect_rc 1
 expect_out "--set does not know 'colour'."
-expect_out "On a Jetson: power=always|switched, comma_poweroff=yes|no, desktop=on|off, swap=on|off, power_mode=fastest|<a mode it has>, clocks=on|off. On a PC: autostart=yes|no."
+expect_out "On a Jetson: power=always|switched, comma_poweroff=yes|no, desktop=on|off, swap=on|off, power_mode=fastest|<a mode it has>, clocks=on|off, gpu_max=full|<a GPU clock in MHz>. On a PC: autostart=yes|no."
 cli setup --set power=sometimes </dev/null
 expect_rc 1
 expect_out "--set power takes always or switched, not 'sometimes'."

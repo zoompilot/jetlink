@@ -169,6 +169,7 @@ server. Give `--set` once for each answer; `install.sh --set` is the same.
 | `swap` | `on` or `off`: Jetlink's [swap](#swap) file | a Jetson |
 | `power_mode` | `fastest` or one of the Jetson's modes (`15W`, `25W`, `MAXN_SUPER` on an Orin Nano) | a Jetson |
 | `clocks` | `on` or `off` ([power mode and clocks](#power-mode-and-clocks)) | a Jetson |
+| `gpu_max` | `full` or one of the GPU's clocks in MHz (`306` to `1020` on an Orin Nano Super) ([GPU speed cap](#gpu-speed-cap)) | a Jetson |
 | `autostart` | `yes` or `no` | a PC |
 
 - An answer the install already has changes nothing.
@@ -215,6 +216,21 @@ half a minute; the Jetson does not. `jetlink power` shows what is set now.
 The server keeps to the mode's limits in `/etc/nvpmodel.conf` itself, so a
 new mode applies even where nvpmodel will not switch until a restart.
 The power modes and full speed, measured: [Jetson performance](jetson-performance.md#power-modes).
+
+<a id="gpu-speed-cap"></a>
+
+#### GPU speed cap
+
+Some Jetsons whine: at 20 frames a second the GPU goes from about 25 W to
+2 W and back, and the board's coils sing with it. A lower GPU clock draws less
+at each frame and whines less, while the processor and memory keep the power
+mode's speed. **GPU speed cap** in the web page's Performance settings,
+`jetlink power gpu MHZ`, or `--set gpu_max=MHZ` caps the GPU at one of its
+clocks (`/sys/class/devfreq/*.gpu/available_frequencies`); `full`, the
+default, leaves it at the mode's top. The server keeps the cap inside the
+mode: a cap above the mode's own limit (612 MHz in an Orin Nano's 15W) changes
+nothing. Models run slower with it, so watch the frame budget on the Status
+tab: a frame over 50 ms is one the comma drives without.
 
 <a id="the-web-page"></a>
 
