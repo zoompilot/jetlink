@@ -160,7 +160,7 @@ struct ControllerTests {
   @Test("A download that would leave no room to prepare the model is refused, and says why")
   func refusesADownloadWithoutRoom() async throws {
     let backend = FlakyBackend()
-    backend.need = StorageNeed(model: 1, prepared: 1, buildScratch: 1, neuralEngine: 1, headroom: Int64.max / 4)
+    backend.need = StorageNeed(model: 1, prepared: Int64.max / 4, buildScratch: 1, neuralEngine: 1, headroom: 1)
     try await withController(backend: backend) { controller, registry, log in
       let reply = await controller.handle(.prepare(sha256: registry.sha256, frameSkip: 4))
       #expect(reply.ok)

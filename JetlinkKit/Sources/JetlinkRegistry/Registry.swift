@@ -64,10 +64,10 @@ public final class Registry: Sendable {
   private let kept = Mutex<(stamp: [Double], index: ModelIndex?)?>(nil)
   private static let log = Logger(subsystem: "io.zoompilot.jetlink", category: "registry")
 
-  /// Opens the registry of a cache, making its registry and models directories.
   /// Where CoreML keeps this process's Neural Engine copies (NeuralEngineCache).
   let neuralEngineCaches: [URL]
 
+  /// Opens the registry of a cache, making its registry and models directories.
   public convenience init(layout: CacheLayout, session: URLSession = .shared) {
     self.init(layout: layout, session: session, neuralEngineCaches: NeuralEngineCache.directories)
   }
@@ -444,6 +444,7 @@ public final class Registry: Sendable {
       enginesBytes += entry.bytes
     }
 
+    let neuralEngineBytes = NeuralEngineCache.bytes(in: neuralEngineCaches)
     return InventoryEvent(
       loaded: loaded,
       lastLoaded: layout.lastLoaded()?.sha256,
@@ -451,7 +452,7 @@ public final class Registry: Sendable {
       artifacts: artifacts,
       disk: InventoryDisk(
         modelsBytes: modelsBytes, enginesBytes: enginesBytes, freeBytes: Files.freeBytes(at: layout.root) ?? 0,
-        neuralEngineBytes: NeuralEngineCache.bytes(in: neuralEngineCaches)))
+        neuralEngineBytes: neuralEngineBytes > 0 ? neuralEngineBytes : nil))
   }
 
   private func artifactEntry(sidecar: String, engineNames: [String], tag: String?, suffix: String) -> InventoryArtifact? {

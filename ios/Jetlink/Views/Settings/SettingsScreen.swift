@@ -149,8 +149,8 @@ struct SettingsScreen: View {
         LabeledContent("Downloaded", value: ByteCount.string(disk.modelsBytes))
         LabeledContent("Prepared", value: ByteCount.string(disk.enginesBytes))
         // CoreML's compiled copies in the app's caches, which iOS counts as Jetlink's data
-        if disk.neuralEngineBytes > 0 {
-          LabeledContent("Neural Engine Copies", value: ByteCount.string(disk.neuralEngineBytes))
+        if let copies = disk.neuralEngineBytes {
+          LabeledContent("Neural Engine Copies", value: ByteCount.string(copies))
         }
         LabeledContent("Available", value: ByteCount.string(disk.freeBytes))
       } header: {

@@ -70,11 +70,14 @@ public struct ONNXPreparer: ModelPreparer {
       summary += "; for the whole Neural Engine: \(report.norms) policy LayerNormalization(s) prescaled, \(report.heads) vision head node(s) in fp32"
     }
     if policyOnNeuralEngine {
-      summary += "; for the policy on the Neural Engine: \(report.masks) attention mask(s) as Add, \(report.folds) MatMul(s) folded to three axes, \(report.slices) constant Gather(s) as Slice"
+      summary +=
+        "; for the policy on the Neural Engine: \(report.masks) attention mask(s) as Add, \(report.folds) MatMul(s) folded to three axes, "
+        + "\(report.slices) constant Gather(s) as Slice"
     }
     let vision = report.parts.filter { $0.name.hasPrefix("vision") }
     if vision.count > 1 {
-      summary += "; the vision trunk in \(vision.count) pieces for the Neural Engine, "
+      summary +=
+        "; the vision trunk in \(vision.count) pieces for the Neural Engine, "
         + vision.map { "\($0.weightBytes / 1_000_000) MB" }.joined(separator: ", ")
     }
     return PreparedModel(

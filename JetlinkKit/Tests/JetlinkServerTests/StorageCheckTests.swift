@@ -22,7 +22,7 @@ struct StorageCheckTests {
   func refusesABuild() throws {
     let tmp = try TemporaryDirectory()
     let backend = FlakyBackend()
-    backend.need = StorageNeed(model: 1, prepared: 1, buildScratch: 1, neuralEngine: 1, headroom: Int64.max / 4)
+    backend.need = StorageNeed(model: 1, prepared: Int64.max / 4, buildScratch: 1, neuralEngine: 1, headroom: 1)
     let (host, cache, request) = try host(Golden("tiny_stateful"), in: tmp, backend: backend)
     defer { host.close() }
     _ = host.request(request, session: nil)
@@ -34,9 +34,10 @@ struct StorageCheckTests {
     #expect(!cache.entry(request).exists)
   }
 
-  @Test("With room, or with no estimate, the build goes ahead")
+  @Test("With room for its files, even with little left over, or with no estimate, the build goes ahead")
   func buildsWithRoom() throws {
-    for need in [StorageNeed(model: 1, prepared: 1, buildScratch: 1, neuralEngine: 1, headroom: 1), nil] {
+    let tight = StorageNeed(model: 1, prepared: 1, buildScratch: 1, neuralEngine: 1, headroom: Int64.max / 4)
+    for need in [StorageNeed(model: 1, prepared: 1, buildScratch: 1, neuralEngine: 1, headroom: 1), tight, nil] {
       let tmp = try TemporaryDirectory()
       let backend = FlakyBackend()
       backend.need = need

@@ -66,35 +66,56 @@ public struct StorageNeed: Sendable, Equatable {
     }
   }
 
+  /// What a step itself writes, without the Neural Engine's copy and the
+  /// room for the system: with less free than this it cannot finish.
+  public func writes(for step: Step) -> Int64 {
+    switch step {
+    case .download: model + prepared + buildScratch
+    case .prepare: prepared + buildScratch
+    case .run: 0
+    }
+  }
+
   /// Free space to prepare the model for `profiles` more processors in
   /// turn, as Compare Processors does: a prepared copy each, a Neural Engine
   /// copy for each of `onNeuralEngine` of them, and one build's working copy,
-  /// since each goes when its build ends.
-  public func toPrepare(profiles: Int, onNeuralEngine: Int) -> Int64 {
-    guard profiles > 0 else { return 0 }
-    return Int64(profiles) * prepared + Int64(onNeuralEngine) * neuralEngine + buildScratch + headroom
+  /// since each goes when its build ends. `writes` is the files alone.
+  public func toPrepare(profiles: Int, onNeuralEngine: Int) -> (need: Int64, writes: Int64) {
+    guard profiles > 0 else { return (0, 0) }
+    let writes = Int64(profiles) * prepared + buildScratch
+    return (writes + Int64(onNeuralEngine) * neuralEngine + headroom, writes)
   }
 
-  /// What is missing for a step with `free` bytes free, or nil when they are enough.
+  /// What is missing for a step with `free` bytes free, or nil when they are
+  /// enough. The free figure is the system's guess, low when it could still
+  /// purge something, so only a step whose own files would not fit is
+  /// `blocking`; the rest is a warning the person may go past.
   public func shortfall(for step: Step, free: Int64, name: String? = nil) -> StorageShortfall? {
     let need = bytes(for: step)
     guard free < need else { return nil }
-    return StorageShortfall(step: step, need: need, free: free, message: message(for: step, need: need, free: free, name: name))
+    let blocking = free < writes(for: step)
+    return StorageShortfall(
+      step: step, need: need, free: free, blocking: blocking,
+      message: message(for: step, need: need, free: free, blocking: blocking, name: name))
   }
 
-  private func message(for step: Step, need: Int64, free: Int64, name: String?) -> String {
+  private func message(for step: Step, need: Int64, free: Int64, blocking: Bool, name: String?) -> String {
     let model = name.map { "\($0) needs" } ?? "This model needs"
     let have = "\(Self.gigabytes(free)) is free"
+    let then =
+      blocking
+      ? "Free some space and try again."
+      : "It fits, but with this little left the system may clear the Neural Engine's copy, and the model then runs on the CPU, far too slow to drive."
     switch step {
     case .download:
       return "\(model) about \(Self.gigabytes(need)) free to download and prepare: the model \(Self.gigabytes(self.model)), "
         + "its prepared copy \(Self.gigabytes(prepared)), CoreML's working copy \(Self.gigabytes(buildScratch)), "
         + "the Neural Engine's copy \(Self.gigabytes(neuralEngine)) and \(Self.gigabytes(headroom)) left for the system. "
-        + "\(have). Free some space and try again."
+        + "\(have). \(then)"
     case .prepare:
       return "\(model) about \(Self.gigabytes(need)) free to prepare: its prepared copy \(Self.gigabytes(prepared)), "
         + "CoreML's working copy \(Self.gigabytes(buildScratch)), the Neural Engine's copy \(Self.gigabytes(neuralEngine)) "
-        + "and \(Self.gigabytes(headroom)) left for the system. \(have). Free some space and try again."
+        + "and \(Self.gigabytes(headroom)) left for the system. \(have). \(then)"
     case .run:
       return "\(model) about \(Self.gigabytes(need)) free to keep running on the Neural Engine, and \(have). "
         + "With less, the system clears the Neural Engine's copy of the model and it runs on the CPU, far too slow to drive."
@@ -114,15 +135,18 @@ public struct StorageShortfall: Sendable, Equatable {
   public let need: Int64
   /// The free space there is.
   public let free: Int64
+  /// The step's own files would not fit, so it is refused; false is a
+  /// warning: it fits, with too little left over.
+  public let blocking: Bool
   /// One paragraph for the person: what is needed, what there is, what to do.
   public let message: String
 }
 
-/// Frames served far over the budget: on an iPhone or iPad, a model the
-/// Neural Engine is not running. CoreML runs it on the CPU instead, at about
-/// 400 ms a frame for Light Speed 2 on an iPad Air (M1) against 25, and the
-/// comma keeps to its small model. A full disk is the usual cause: the Neural
-/// Engine had no room for its copy of the model.
+/// Frames served far over the budget: on an iPhone or iPad, most often a
+/// model the Neural Engine is not running. CoreML runs it on the CPU instead,
+/// at about 400 ms a frame for Light Speed 2 on an iPad Air (M1) against 25,
+/// and the comma keeps to its small model. A full disk is the usual cause:
+/// the Neural Engine had no room for its copy of the model.
 public enum SlowFrames {
   /// The comma's frame budget.
   public static let budgetMs = 50.0
@@ -137,11 +161,11 @@ public enum SlowFrames {
     let times = Int((meanMs / budgetMs).rounded())
     let head =
       "Frames take \(Int(meanMs.rounded())) ms, \(times) times the \(Int(budgetMs)) ms budget, "
-      + "so the comma uses its small model. The Neural Engine is not running this model."
+      + "so the comma uses its small model."
     if let storage {
       return head + " The likely cause is storage: " + storage.message
     }
-    return head + " This usually means too little free space for the Neural Engine's copy of the model. "
+    return head + " This usually means the Neural Engine is not running the model, for want of free space for its copy. "
       + "Free some space, or restart the device if there is plenty."
   }
 }

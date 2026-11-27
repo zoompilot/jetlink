@@ -383,6 +383,7 @@ public final class EngineHost: @unchecked Sendable {
       // One engine resident at a time: a build needs the memory.
       unload()
       // What the Neural Engine has compiled so far, to tell what this build or load adds.
+      NeuralEngineCache.forgetUntracked()
       let neuralEngineBefore = NeuralEngineCache.bundles()
       var spec = spec
       if !job.loadOnly {
@@ -465,12 +466,11 @@ public final class EngineHost: @unchecked Sendable {
 
   private func buildJob(_ request: Request, entry: CacheEntry, modelPath: URL, spec: ModelSpec?) throws -> ModelSpec {
     // Out of room part way, a build fails with CoreML's "MIL FileWriter"
-    // error, and a disk left nearly full stops the Neural Engine for every
-    // model: refuse first, and say what it takes.
+    // error: refuse one whose files cannot fit, and say what it takes.
     let modelBytes = request.nbytes > 0 ? request.nbytes : Files.size(of: modelPath)
     if let need = backend.storageNeed(modelBytes: modelBytes),
       let free = Files.freeBytes(at: entry.path.deletingLastPathComponent()),
-      let short = need.shortfall(for: .prepare, free: free)
+      let short = need.shortfall(for: .prepare, free: free), short.blocking
     {
       log.warning("not building \(request.sha256.prefix(16)): \(short.message)")
       throw HostError.failed(short.message)
@@ -482,7 +482,6 @@ public final class EngineHost: @unchecked Sendable {
     }
     try backend.build(model: modelPath, artifact: entry.path, report: progressFn, metaExtra: ["spec": spec!.dictionary()])
     cache.prune(protect: entry.path)
-    cache.pruneStale(protect: entry.path)
     cache.sweepTemp()
     return spec!
   }

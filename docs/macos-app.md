@@ -6,7 +6,9 @@
 ## What you need
 
 - An Apple silicon Mac on macOS 15 or later; 16 GB memory recommended.
-- About 3 GB of disk space per model.
+- About 3 GB of disk space per model once prepared, and 4 times the model's
+  size free to download and prepare it (3 GB for a 766 MB model, 7 GB for
+  Lebowski). With less, the download is refused and says what it needs.
 - A comma 3X or comma 4, powered separately.
 - A USB 3 USB-C data cable.
 

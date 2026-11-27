@@ -89,10 +89,10 @@ to spare: on a nearly full device it clears the Neural Engine's copies, the
 Neural Engine has no room to make them again, and models run on the CPU at
 hundreds of milliseconds a frame, so the comma stays on its small model.
 
-- **Models** says when a download or a preparation would not fit, and how much
-  each needs, before it starts; the app refuses them rather than fill the
-  device. A prepared model with too little room to keep running well asks
-  before it is used.
+- **Models** says how much a download or a preparation needs when the device
+  has less, before it starts. One whose files cannot fit is refused rather
+  than fill the device; one that fits with too little left over asks first,
+  as does a prepared model with too little room to keep running well.
 - **Status** shows **Low Storage** while the model in use is short of room,
   and **Big Model Running Slowly** when frames take more than twice the
   50 ms budget.
@@ -100,7 +100,9 @@ hundreds of milliseconds a frame, so the comma stays on its small model.
   the Neural Engine's copies take, and what is free.
 - Deleting a model removes its download, its prepared copies and the Neural
   Engine copies made for it. Prepared copies the app can no longer load, from
-  an older version, go by themselves.
+  an older version, go by themselves, and so do the Neural Engine copies made
+  before the app kept track of them: each model compiles once more after the
+  update.
 
 The system's own storage screen counts the app's files under Jetlink; what
 it counts as System Data is the system's, and only freeing space or restarting
@@ -168,8 +170,8 @@ no more frames over the 50 ms budget. Neural Engine Only is taken only if its
 outputs match Neural Engine + GPU's on 32 fixed frames, by the rules of
 `scripts/verify_parity.py`. The pick is kept per model. The runs take a
 minute; preparing the model for each processor takes minutes more, and the
-app says how much space that takes before it starts and refuses it when the
-device has too little. Twenty seconds does not show how a processor holds
+app says how much space that takes before it starts, and refuses it when the
+copies cannot fit. Twenty seconds does not show how a processor holds
 up once the device is hot; run **10 Minutes** on the pick for that. Run it with the
 comma unplugged, charging, in the mount, and share the result from the
 toolbar if you can: it tells us what to make the default on your device.

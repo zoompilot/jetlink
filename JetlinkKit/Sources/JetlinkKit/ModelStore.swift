@@ -140,12 +140,13 @@ public final class ModelStore {
     }
   }
 
-  /// What using this model needs free that the disk does not have, where
-  /// models are prepared for CoreML: room to download and prepare it, to
-  /// prepare it, or, once prepared, to keep it on the Neural Engine. Nil when
-  /// there is room or nothing to go by.
+  /// What using this model needs free that the disk does not have, on an
+  /// iPhone or iPad: room to download and prepare it, to prepare it, or, once
+  /// prepared, to keep it on the Neural Engine. Nil when there is room or
+  /// nothing to go by, and on a Mac, whose figures these are not: its server
+  /// still refuses what cannot fit.
   public func storageShortfall(for row: ModelRow) -> StorageShortfall? {
-    #if canImport(CoreML)
+    #if os(iOS)
       guard let sha = row.sha256, let bytes = row.bytes, bytes > 0, let inventory else { return nil }
       let step: StorageNeed.Step =
         row.preparedFor.contains(where: \.current)

@@ -68,12 +68,18 @@ package enum NeuralEngineCache {
     directories.filter(Files.isDirectory).reduce(0) { $0 + Files.size(of: $1) }
   }
 
-  /// Removes every copy. The loaded model keeps running from what it has
-  /// mapped, and the next load of any model compiles it again: for tests and
-  /// a last resort, not for removing one model.
-  package static func clear(_ directories: [URL] = directories) {
-    for directory in directories where Files.isDirectory(directory) {
+  /// Once per caches directory, before the first build or load that records
+  /// its copies: removes the copies made until then, which no sidecar lists
+  /// and so nothing would ever remove (8.8 GB in 60 copies on one Mac). Each
+  /// model in use compiles once more on its next load, and is listed from
+  /// then on. A marker beside the copies says it is done.
+  package static func forgetUntracked(in directories: [URL] = directories) {
+    for directory in directories {
+      let marker = directory.deletingLastPathComponent().appending(path: "\(directoryName).tracked")
+      guard !Files.exists(marker) else { continue }
       try? FileManager.default.removeItem(at: directory)
+      try? FileManager.default.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
+      FileManager.default.createFile(atPath: marker.path(percentEncoded: false), contents: nil)
     }
   }
 }

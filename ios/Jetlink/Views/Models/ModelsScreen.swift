@@ -16,7 +16,7 @@ struct ModelsScreen: View {
 
   enum Confirmation: Identifiable {
     case delete(ModelRow), switchModel(ModelRow)
-    /// Too little room to download or prepare it, or to keep it on the Neural Engine.
+    /// Too little room to download or prepare it (refused when `blocking`), or to keep it on the Neural Engine.
     case notEnoughSpace(ModelRow, StorageShortfall)
 
     var row: ModelRow {
@@ -67,13 +67,13 @@ struct ModelsScreen: View {
         Button("Use Model") { models.use(row, confirmedInterruption: true) }
         Button("Cancel", role: .cancel) {}
       case let .notEnoughSpace(row, short):
-        // A download or a build would stop part way and leave the disk full:
-        // the server refuses them too. A prepared model can still run, slowly.
-        if short.step == .run {
-          Button("Use Anyway") { use(row) }
-          Button("Cancel", role: .cancel) {}
-        } else {
+        // What cannot fit would stop part way and leave the disk full: the
+        // server refuses it too. The rest fits, with too little left over.
+        if short.blocking {
           Button("OK", role: .cancel) {}
+        } else {
+          Button(short.step == .download ? "Get Anyway" : "Use Anyway") { use(row) }
+          Button("Cancel", role: .cancel) {}
         }
       }
     } message: { item in
@@ -239,7 +239,7 @@ struct ModelsScreen: View {
     switch confirmation {
     case let .delete(row): "Delete \(row.displayName)?"
     case let .switchModel(row): "Use \(row.displayName)?"
-    case let .notEnoughSpace(row, short): short.step == .run ? "Low Storage" : "Not Enough Space for \(row.displayName)"
+    case let .notEnoughSpace(row, short): short.blocking ? "Not Enough Space for \(row.displayName)" : "Low Storage"
     case nil: ""
     }
   }

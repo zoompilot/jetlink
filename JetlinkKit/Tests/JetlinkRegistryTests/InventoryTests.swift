@@ -249,12 +249,25 @@ struct RemoveTests {
     var meta = try #require(Files.readJSON(sidecar)?.object)
     meta[NeuralEngineCache.sidecarKey] = .array([.string("24A5390f/ours")])
     try JSON.object(meta).data().write(to: sidecar)
-    #expect(registry.inventory(artifactTag: nil, artifactSuffix: ".fake", loaded: nil).disk.neuralEngineBytes >= 8192)
+    #expect((registry.inventory(artifactTag: nil, artifactSuffix: ".fake", loaded: nil).disk.neuralEngineBytes ?? 0) >= 8192)
 
     try registry.remove(sha256: fakeSHA, artifacts: false, model: true)
     #expect(NeuralEngineCache.bundles(in: [directory]).count == 2)
     try registry.remove(sha256: fakeSHA, artifacts: true, model: false)
     #expect(NeuralEngineCache.bundles(in: [directory]) == ["24A5390f/theirs"])
+  }
+
+  /// Copies from before they were listed go once, and the ones made after stay.
+  @Test func forgetsUntrackedNeuralEngineCopiesOnce() throws {
+    let tmp = try TemporaryDirectory()
+    let directory = tmp.url.appending(path: "Caches/app/com.apple.e5rt.e5bundlecache")
+    let bundle = directory.appending(path: "24A5390f/old")
+    try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+    NeuralEngineCache.forgetUntracked(in: [directory])
+    #expect(NeuralEngineCache.bundles(in: [directory]).isEmpty)
+    try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+    NeuralEngineCache.forgetUntracked(in: [directory])
+    #expect(NeuralEngineCache.bundles(in: [directory]) == ["24A5390f/old"])
   }
 
   @Test func ofTheModelOnlyKeepsTheEngines() throws {
