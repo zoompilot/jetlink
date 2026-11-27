@@ -200,8 +200,10 @@ public struct CacheEntry: Sendable, Equatable {
     Files.exists(path) && Files.isFile(metaPath)
   }
 
-  /// Both halves, whichever exist. A directory artifact goes whole.
+  /// Both halves, whichever exist, and the Neural Engine's copies the
+  /// sidecar lists. A directory artifact goes whole.
   public func remove() {
+    NeuralEngineCache.remove(NeuralEngineCache.listed(inSidecar: metaPath))
     Files.removeItem(path)
     try? Files.removeFile(metaPath)
   }

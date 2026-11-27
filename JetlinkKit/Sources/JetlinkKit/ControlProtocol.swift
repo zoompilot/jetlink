@@ -285,11 +285,16 @@ public struct InventoryDisk: Codable, Sendable, Equatable {
   public let modelsBytes: Int64
   public let enginesBytes: Int64
   public let freeBytes: Int64
+  /// The Neural Engine's compiled copies in the app's caches
+  /// (NeuralEngineCache); nil, and not sent, where there are none, so a
+  /// Jetson's or an Android server's payload is the one it always was.
+  public let neuralEngineBytes: Int64?
 
-  public init(modelsBytes: Int64, enginesBytes: Int64, freeBytes: Int64) {
+  public init(modelsBytes: Int64, enginesBytes: Int64, freeBytes: Int64, neuralEngineBytes: Int64? = nil) {
     self.modelsBytes = modelsBytes
     self.enginesBytes = enginesBytes
     self.freeBytes = freeBytes
+    self.neuralEngineBytes = neuralEngineBytes
   }
 }
 

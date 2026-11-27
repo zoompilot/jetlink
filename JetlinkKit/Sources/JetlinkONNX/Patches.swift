@@ -762,6 +762,88 @@ enum Patches {
     return done
   }
 
+  /// Rewrites a Gather or GatherND by constant indices that pick one entry,
+  /// or a run of consecutive ones, along a single axis as the same Slice: a
+  /// scalar index as a Slice of one and a Reshape to the Gather's shape, a
+  /// run as a Slice alone. GatherND counts when its indices are `[k, 1]`
+  /// (rows of the first axis) with no batch axes.
+  ///
+  /// The Neural Engine's compiler takes neither gather and does take the
+  /// slice, so each one left splits the policy into Neural Engine and CPU
+  /// segments. Lebowski's policy has three: the last 9 of its 25 history
+  /// features (GatherND) and the last of 9 tokens, twice (Gather).
+  ///
+  /// Not in the Python: this pass is Swift's alone.
+  static func constantGathersAsSlices(_ g: inout Graph, _ src: Source) throws -> Int {
+    let initializers = lastIndexByName(g.initializers)
+    let dims = staticDims(g)
+    var rebuilt: [Node] = []
+    rebuilt.reserveCapacity(g.nodes.count)
+    var done = 0
+    for n in g.nodes {
+      guard n.op == "Gather" || n.op == "GatherND", n.inputs.count == 2, n.outputs.count == 1,
+        let at = initializers[n.inputs[1]], DataType.isInteger(g.initializers[at].elementType),
+        let shape = dims[n.inputs[0]], !shape.contains(where: { $0 <= 0 })
+      else {
+        rebuilt.append(n)
+        continue
+      }
+      let index = g.initializers[at]
+      var axis: Int
+      var scalar: Bool
+      if n.op == "Gather" {
+        let a = Int(n.attribute("axis")?.i ?? 0)
+        axis = a < 0 ? a + shape.count : a
+        scalar = index.dims.isEmpty
+        guard index.dims.count <= 1 else {
+          rebuilt.append(n)
+          continue
+        }
+      } else {
+        // GatherND: indices [k, 1] index the first axis, batch_dims 0
+        axis = 0
+        scalar = false
+        guard (n.attribute("batch_dims")?.i ?? 0) == 0, index.dims.count == 2, index.dims[1] == 1 else {
+          rebuilt.append(n)
+          continue
+        }
+      }
+      guard axis >= 0, axis < shape.count else {
+        rebuilt.append(n)
+        continue
+      }
+      let size = shape[axis]
+      let values = try Elements.integers(index, src).map { $0 < 0 ? $0 + size : $0 }
+      guard let first = values.first, values.allSatisfy({ $0 >= 0 && $0 < size }),
+        values.enumerated().allSatisfy({ $0.element == first + Int64($0.offset) })
+      else {
+        rebuilt.append(n)
+        continue
+      }
+      let stem = n.outputs[0]
+      let target = dims[stem]
+      if scalar, target == nil || target!.contains(where: { $0 <= 0 }) {
+        rebuilt.append(n)
+        continue
+      }
+      g.initializers.append(int64Tensor([first], "\(stem)__starts"))
+      g.initializers.append(int64Tensor([first + Int64(values.count)], "\(stem)__ends"))
+      g.initializers.append(int64Tensor([Int64(axis)], "\(stem)__axes"))
+      let sliced = scalar ? "\(stem)__slice" : stem
+      rebuilt.append(
+        Node(
+          inputs: [n.inputs[0], "\(stem)__starts", "\(stem)__ends", "\(stem)__axes"], outputs: [sliced], name: n.name,
+          opType: "Slice"))
+      if scalar {
+        g.initializers.append(int64Tensor(target!, "\(stem)__shape"))
+        rebuilt.append(Node(inputs: [sliced, "\(stem)__shape"], outputs: [stem], name: "\(stem)__squeeze", opType: "Reshape"))
+      }
+      done += 1
+    }
+    if done > 0 { g.nodes = rebuilt }
+    return done
+  }
+
   // MARK: helpers
 
   /// Static shapes from what the file carries (_static_dims), inputs first,

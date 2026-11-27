@@ -110,10 +110,12 @@ final class EventLog: @unchecked Sendable {
 
 @Suite("Control layer", .serialized)
 struct ControllerTests {
-  func withController(_ body: (ServerController, FakeRegistry, EventLog) async throws -> Void) async throws {
+  func withController(
+    backend: any EngineBackend = cpuBackend(), _ body: (ServerController, FakeRegistry, EventLog) async throws -> Void
+  ) async throws {
     let cache = try TemporaryDirectory()
     let server = try Server(
-      configuration: Server.Configuration(host: "127.0.0.1", port: 0, cacheRoot: cache.url, preload: false), backend: cpuBackend())
+      configuration: Server.Configuration(host: "127.0.0.1", port: 0, cacheRoot: cache.url, preload: false), backend: backend)
     let registry = try FakeRegistry(cache: cache.url, golden: Golden("tiny_queued"))
     let controller = ServerController(server: server, registry: registry)
     let log = EventLog(controller.events)
@@ -152,6 +154,22 @@ struct ControllerTests {
       let again = await controller.handle(.prepare(sha256: registry.sha256, frameSkip: 4))
       #expect(again.ok)
       #expect(registry.fetches == 1)
+    }
+  }
+
+  @Test("A download that would leave no room to prepare the model is refused, and says why")
+  func refusesADownloadWithoutRoom() async throws {
+    let backend = FlakyBackend()
+    backend.need = StorageNeed(model: 1, prepared: Int64.max / 4, buildScratch: 1, neuralEngine: 1, headroom: 1)
+    try await withController(backend: backend) { controller, registry, log in
+      let reply = await controller.handle(.prepare(sha256: registry.sha256, frameSkip: 4))
+      #expect(reply.ok)
+      let failed = try await log.wait { if case .download(let d) = $0 { d.state == "failed" } else { false } }
+      if case .download(let d) = failed {
+        #expect(d.detail.contains("free to download and prepare"))
+      }
+      #expect(registry.fetches == 0)
+      #expect(backend.counts.builds == 0)
     }
   }
 

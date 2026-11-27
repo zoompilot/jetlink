@@ -62,6 +62,20 @@ public final class ServerCache: Sendable {
     try? FileManager.default.removeItem(at: layout.lastLoadedURL)
   }
 
+  /// Removes the artifacts the backend can never load again, whatever their
+  /// age: made by another runtime, or by an older preparation. They would
+  /// only be rebuilt, and each holds gigabytes and a Neural Engine copy.
+  public func pruneStale(protect: URL? = nil) {
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: layout.engines.path(percentEncoded: false))) ?? []
+    for name in names where name.hasSuffix(backend.suffix) {
+      let url = layout.engines.appending(path: name)
+      if let protect, url.standardizedFileURL.path == protect.standardizedFileURL.path { continue }
+      if backend.isStale(artifactMeta: Artifact.sidecar(url)) {
+        CacheEntry(path: url, metaPath: Artifact.sidecarURL(url)).remove()
+      }
+    }
+  }
+
   /// Keep the newest few artifacts of this backend's kind. `protect` is never
   /// pruned whatever its mtime says.
   public func prune(protect: URL? = nil) {

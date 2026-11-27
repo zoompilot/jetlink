@@ -382,6 +382,9 @@ public final class EngineHost: @unchecked Sendable {
     do {
       // One engine resident at a time: a build needs the memory.
       unload()
+      // What the Neural Engine has compiled so far, to tell what this build or load adds.
+      NeuralEngineCache.forgetUntracked()
+      let neuralEngineBefore = NeuralEngineCache.bundles()
       var spec = spec
       if !job.loadOnly {
         spec = try buildJob(request, entry: entry, modelPath: modelPath, spec: spec)
@@ -413,6 +416,8 @@ public final class EngineHost: @unchecked Sendable {
       let loaded = try Ticker.during(interval: 1, Ticker.paced("warm", "warming up", took: 0, report: progressFn)) {
         try warm(warming, spec: ready)
       }
+      recordNeuralEngineCopies(entry, before: neuralEngineBefore)
+      cache.pruneStale(protect: entry.path)
       engine = nil
       lock.lock()
       self.loaded = loaded
@@ -460,6 +465,16 @@ public final class EngineHost: @unchecked Sendable {
   }
 
   private func buildJob(_ request: Request, entry: CacheEntry, modelPath: URL, spec: ModelSpec?) throws -> ModelSpec {
+    // Out of room part way, a build fails with CoreML's "MIL FileWriter"
+    // error: refuse one whose files cannot fit, and say what it takes.
+    let modelBytes = request.nbytes > 0 ? request.nbytes : Files.size(of: modelPath)
+    if let need = backend.storageNeed(modelBytes: modelBytes),
+      let free = Files.freeBytes(at: entry.path.deletingLastPathComponent()),
+      let short = need.shortfall(for: .prepare, free: free), short.blocking
+    {
+      log.warning("not building \(request.sha256.prefix(16)): \(short.message)")
+      throw HostError.failed(short.message)
+    }
     var spec = spec
     if spec == nil {
       progress("parse", 0, "reading model metadata", force: true)
@@ -469,6 +484,18 @@ public final class EngineHost: @unchecked Sendable {
     cache.prune(protect: entry.path)
     cache.sweepTemp()
     return spec!
+  }
+
+  /// The Neural Engine's compiled copies this build and load added, kept in
+  /// the artifact's sidecar so they go with it (NeuralEngineCache): gigabytes
+  /// that nothing else names. A copy CoreML reused adds nothing.
+  private func recordNeuralEngineCopies(_ entry: CacheEntry, before: Set<String>) {
+    let added = NeuralEngineCache.bundles().subtracting(before)
+    guard !added.isEmpty else { return }
+    var meta = Artifact.sidecar(entry.path)
+    let known = meta[NeuralEngineCache.sidecarKey] as? [String] ?? []
+    meta[NeuralEngineCache.sidecarKey] = Set(known).union(added).sorted()
+    try? Artifact.writeSidecar(entry.path, meta)
   }
 
   private func writeSpec(_ entry: CacheEntry, _ spec: ModelSpec) {

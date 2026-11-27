@@ -207,6 +207,9 @@
       #expect(
         ModelFormatting.diskSummary(models: 2_300_000_000, engines: 6_900_000_000, free: 13_600_000_000)
           == "Downloads 2.3 GB · Prepared engines 6.9 GB · 13.6 GB available")
+      #expect(
+        ModelFormatting.diskSummary(models: 2_300_000_000, engines: 6_900_000_000, neuralEngine: 1_500_000_000, free: 13_600_000_000)
+          == "Downloads 2.3 GB · Prepared engines 6.9 GB · Neural Engine copies 1.5 GB · 13.6 GB available")
       #expect(ModelFormatting.downloadCaption(frac: 0.421, rateBps: 0) == "Downloading 42%")
       #expect(ModelFormatting.downloadCaption(frac: 0.421, rateBps: 41_000_000).hasPrefix("Downloading 42%, 41"))
     }

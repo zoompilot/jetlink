@@ -1,4 +1,5 @@
 import Foundation
+import JetlinkKit
 import JetlinkRegistry
 
 /// Progress of a build or a load: stage, fraction, message.
@@ -82,6 +83,14 @@ public protocol EngineBackend: AnyObject, Sendable {
   func deriveSpec(model: URL, sha256: String, nbytes: Int64, frameSkip: Int) throws -> ModelSpec
   func build(model: URL, artifact: URL, report: @escaping ProgressFn, metaExtra: [String: Any]) throws
   func load(artifact: URL, report: @escaping ProgressFn) throws -> any Engine
+  /// What a model of `modelBytes` takes on disk with this backend, which a
+  /// download and a build check before they start; nil for a backend with
+  /// no estimate, where only the download's own check applies.
+  func storageNeed(modelBytes: Int64) -> StorageNeed?
+  /// Whether an artifact this backend's kind made can never load here again
+  /// (another runtime, an older preparation), from its sidecar; false when
+  /// the backend cannot tell.
+  func isStale(artifactMeta: [String: Any]) -> Bool
 }
 
 extension Engine {
@@ -93,6 +102,9 @@ extension Engine {
 }
 
 extension EngineBackend {
+  public func storageNeed(modelBytes: Int64) -> StorageNeed? { nil }
+  public func isStale(artifactMeta: [String: Any]) -> Bool { false }
+
   public func tag() -> String {
     "\(name)\(sanitize(runtimeVersion)).\(deviceTag())"
   }

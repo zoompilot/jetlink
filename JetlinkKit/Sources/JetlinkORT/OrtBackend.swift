@@ -94,12 +94,32 @@ public enum OrtProfile: String, CaseIterable, Sendable {
     self == .aneBoth || self == .aneWhole
   }
 
+  /// The most weight bytes one piece of the vision trunk may hold, where the
+  /// trunk runs on the Neural Engine of an iPhone or iPad: Apple documents
+  /// that the Neural Engine there needs models of under 1 GB of weights
+  /// (ml-stable-diffusion's `--chunk-unet`), and CoreML runs what it does not
+  /// take on the CPU. Cut, Lebowski's 1.7 GB trunk ran wholly on an iPad Air's
+  /// (M1) Neural Engine at about 40 ms a frame. A Mac takes it whole, and a cut
+  /// costs it a millisecond, so it is cut on iOS only (CoreMLPreparation,
+  /// step 7).
+  var visionWeightLimit: Int64? {
+    #if os(iOS)
+      switch self {
+      case .ane, .aneBoth: CoreMLPreparation.neuralEngineWeightLimit
+      default: nil
+      }
+    #else
+      nil
+    #endif
+  }
+
   /// What a build writes: 5 is every graph split on `ane` and Expand as Tile
   /// on both, 6 the plain graph, 7 the policy rewritten for the Neural
-  /// Engine. An artifact prepared under another rebuilds.
+  /// Engine, 8 its constant gathers as slices too. An artifact prepared
+  /// under another rebuilds.
   public var prepareVersion: Int {
     if layout == .plain { return 6 }
-    return policyOnNeuralEngine ? 7 : 5
+    return policyOnNeuralEngine ? 8 : 5
   }
 
   var usesCoreML: Bool {
@@ -177,6 +197,25 @@ public final class OrtBackend: EngineBackend {
 
   public var runtimeVersion: String { OrtRuntime.version }
 
+  /// Where the model is prepared for CoreML: the prepared copy, CoreML's
+  /// working copy while it builds, and the Neural Engine's compiled copy.
+  public func storageNeed(modelBytes: Int64) -> StorageNeed? {
+    profile.usesCoreML ? .coreML(modelBytes: modelBytes) : nil
+  }
+
+  /// An artifact of any profile on this chip that this build can never load:
+  /// made by another onnxruntime, or by an older preparation of its profile
+  /// (OrtArtifact.open would only rebuild it). An artifact of another chip,
+  /// or without the sidecar's fields, is not judged.
+  public func isStale(artifactMeta meta: [String: Any]) -> Bool {
+    guard meta["backend"] as? String == name, let device = meta["device"] as? String,
+      let built = OrtProfile.allCases.first(where: { sanitize("\($0.rawValue)-\(chip)") == device })
+    else { return false }
+    if let runtime = meta["onnxruntime"] as? String, runtime != runtimeVersion { return true }
+    guard let prepare = (meta["prepare"] as? NSNumber)?.intValue else { return false }
+    return prepare != built.prepareVersion
+  }
+
   public func deviceTag() -> String {
     sanitize("\(profile.rawValue)-\(chip)")
   }
@@ -231,14 +270,14 @@ public final class OrtBackend: EngineBackend {
     try Artifact.build(artifact, metaExtra: metaExtra, report: report) { staged in
       try FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true)
       report("patch", 0, profile.usesCoreML ? "preparing the model for CoreML" : "preparing the model")
-      let prepared = try preparer.prepare(model: model, into: staged, layout: profile.layout, policyOnNeuralEngine: profile.policyOnNeuralEngine) {
+      let prepared = try preparer.prepare(
+        model: model, into: staged, layout: profile.layout, policyOnNeuralEngine: profile.policyOnNeuralEngine,
+        visionWeightLimit: profile.visionWeightLimit
+      ) {
         CoreMLPreparation.cacheKey(stem: artifact.deletingPathExtension().lastPathComponent, part: $0)
       }
       log.info("prepared \(model.lastPathComponent): \(prepared.summary)")
-      let sessions = profile.sessions
-      guard prepared.parts.map(\.name) == sessions.map(\.name) else {
-        throw HostError.failed("the preparation wrote \(prepared.parts.map(\.name)), expected \(sessions.map(\.name))")
-      }
+      let sessions = try OrtBackend.sessions(for: prepared.parts.map(\.name), profile.sessions)
       report("patch", 1, "prepared")
 
       let took = (expect["compile_seconds"] as? NSNumber)?.doubleValue ?? OrtBackend.expectedCompileSeconds
@@ -338,6 +377,9 @@ public final class OrtBackend: EngineBackend {
       log.info("removed \(formatBytes(freed)) of converted model the compiled one replaces")
     }
     var meta = OrtArtifact.meta(self, manifest: manifest, providers: engine.providers, model: model, started: started)
+    if let limit = profile.visionWeightLimit {
+      meta["vision_weight_limit"] = limit
+    }
     let placement = placements(staged, manifest)
     if !placement.isEmpty {
       meta["placement"] = placement
@@ -365,6 +407,30 @@ public final class OrtBackend: EngineBackend {
     return entries
   }
 
+  /// Each prepared part's session, in order: the profile's own, or for a
+  /// trunk in pieces (vision, vision2, ...) the vision session's unit for
+  /// every piece.
+  static func sessions(for parts: [String], _ named: [(name: String, unit: OrtUnit)]) throws -> [(name: String, unit: OrtUnit)] {
+    let sessions = parts.compactMap { part in
+      named.first { $0.name == part || ($0.name == "vision" && part.hasPrefix("vision")) }.map { (name: part, unit: $0.unit) }
+    }
+    let kinds = parts.map { $0.hasPrefix("vision") ? "vision" : $0 }.reduce(into: [String]()) { if $0.last != $1 { $0.append($1) } }
+    guard sessions.count == parts.count, kinds == named.map(\.name) else {
+      throw HostError.failed("the preparation wrote \(parts), expected \(named.map(\.name))")
+    }
+    return sessions
+  }
+
+  /// Whether an artifact prepared before the trunk was cut holds it as one
+  /// vision model of more than `limit` bytes. Its file is the weights and
+  /// the graph, so a piece within the limit is never mistaken for one: the
+  /// graph is a few MB, and the margin 64.
+  static func oneOversizedTrunk(_ artifact: URL, _ manifest: [[String: Any]], limit: Int64) -> Bool {
+    let vision = manifest.compactMap { $0["model"] as? String }.filter { $0.hasPrefix("vision") }
+    guard vision.count == 1 else { return false }
+    return Files.size(of: artifact.appending(path: vision[0])) > limit + 64_000_000
+  }
+
   // MARK: load
 
   public func load(artifact: URL, report: @escaping ProgressFn) throws -> any Engine {
@@ -377,6 +443,12 @@ public final class OrtBackend: EngineBackend {
       guard case .coreML = unit, let cache = entry["cache"] as? String else { return nil }
       let contents = (try? FileManager.default.contentsOfDirectory(atPath: artifact.appending(path: cache, directoryHint: .isDirectory).path)) ?? []
       return contents.isEmpty ? "the CoreML cache for \(entry["model"] as? String ?? cache) is empty" : nil
+    }
+    if let limit = profile.visionWeightLimit, (meta["vision_weight_limit"] as? NSNumber)?.int64Value != limit,
+      OrtBackend.oneOversizedTrunk(artifact, manifest, limit: limit)
+    {
+      throw ArtifactInvalid(
+        "\(artifact.lastPathComponent): its vision trunk is one piece of over \(limit / 1_000_000) MB, which the Neural Engine does not take here")
     }
     let what = profile.usesCoreML ? "the CoreML model" : "the model"
     let (engine, seconds) = try Artifact.load(artifact, meta: meta, what: what, report: report) {

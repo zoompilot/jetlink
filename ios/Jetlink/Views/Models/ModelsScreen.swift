@@ -16,10 +16,12 @@ struct ModelsScreen: View {
 
   enum Confirmation: Identifiable {
     case delete(ModelRow), switchModel(ModelRow)
+    /// Too little room to download or prepare it (refused when `blocking`), or to keep it on the Neural Engine.
+    case notEnoughSpace(ModelRow, StorageShortfall)
 
     var row: ModelRow {
       switch self {
-      case let .delete(row), let .switchModel(row): row
+      case let .delete(row), let .switchModel(row), let .notEnoughSpace(row, _): row
       }
     }
 
@@ -27,6 +29,7 @@ struct ModelsScreen: View {
       switch self {
       case .delete: "delete-\(row.id)"
       case .switchModel: "use-\(row.id)"
+      case .notEnoughSpace: "space-\(row.id)"
       }
     }
   }
@@ -59,10 +62,20 @@ struct ModelsScreen: View {
       switch item {
       case let .delete(row):
         Button("Delete", role: .destructive) { models.forget(row, artifacts: true, model: true) }
+        Button("Cancel", role: .cancel) {}
       case let .switchModel(row):
         Button("Use Model") { models.use(row, confirmedInterruption: true) }
+        Button("Cancel", role: .cancel) {}
+      case let .notEnoughSpace(row, short):
+        // What cannot fit would stop part way and leave the disk full: the
+        // server refuses it too. The rest fits, with too little left over.
+        if short.blocking {
+          Button("OK", role: .cancel) {}
+        } else {
+          Button(short.step == .download ? "Get Anyway" : "Use Anyway") { use(row) }
+          Button("Cancel", role: .cancel) {}
+        }
       }
-      Button("Cancel", role: .cancel) {}
     } message: { item in
       Text(confirmationMessage(item))
     }
@@ -184,8 +197,17 @@ struct ModelsScreen: View {
   // MARK: actions
 
   private func startUse(_ row: ModelRow) {
+    if let short = models.storageShortfall(for: row) {
+      confirmation = .notEnoughSpace(row, short)
+    } else {
+      use(row)
+    }
+  }
+
+  private func use(_ row: ModelRow) {
     if models.useNeedsConfirmation(row) {
-      confirmation = .switchModel(row)
+      // after the alert this may come from has gone
+      Task { @MainActor in confirmation = .switchModel(row) }
     } else {
       models.use(row)
     }
@@ -217,6 +239,7 @@ struct ModelsScreen: View {
     switch confirmation {
     case let .delete(row): "Delete \(row.displayName)?"
     case let .switchModel(row): "Use \(row.displayName)?"
+    case let .notEnoughSpace(row, short): short.blocking ? "Not Enough Space for \(row.displayName)" : "Low Storage"
     case nil: ""
     }
   }
@@ -227,6 +250,8 @@ struct ModelsScreen: View {
       return "You can download it again later."
     case .switchModel:
       return "The comma uses its small model until this one is ready."
+    case let .notEnoughSpace(_, short):
+      return short.message
     }
   }
 

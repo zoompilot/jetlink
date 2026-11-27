@@ -211,15 +211,22 @@ import Testing
 
   /// A real model prepared on request, to check against the original with
   /// onnxruntime or to measure: JETLINK_PREPARE=<layout>:<model.onnx>:<directory>,
-  /// the layout whole, ane-whole, split or plain.
+  /// the layout whole, ane-whole, split, split-pieces (split with the
+  /// Neural Engine's weight limit), split-pieces-ane-both (that with the
+  /// policy's Neural Engine rewrites, as ane-both on a phone) or plain.
   @Test(.enabled(if: ProcessInfo.processInfo.environment["JETLINK_PREPARE"] != nil))
   func preparesARealModel() throws {
     let spec = ProcessInfo.processInfo.environment["JETLINK_PREPARE"]!.split(separator: ":", maxSplits: 2).map(String.init)
-    let layouts: [String: CoreMLPreparation.Layout] = ["whole": .whole, "ane-whole": .aneWhole, "split": .split, "plain": .plain]
+    let layouts: [String: CoreMLPreparation.Layout] = [
+      "whole": .whole, "ane-whole": .aneWhole, "split": .split, "split-pieces": .split, "split-pieces-ane-both": .split,
+      "plain": .plain,
+    ]
     let layout = try #require(layouts[spec[0]])
+    let limit = spec[0].hasPrefix("split-pieces") ? CoreMLPreparation.neuralEngineWeightLimit : nil
     let start = Date()
     let report = try CoreMLPreparation.prepare(
-      source: URL(fileURLWithPath: spec[1]), into: URL(fileURLWithPath: spec[2]), layout: layout, cacheKey: { "jetlink\($0)" })
+      source: URL(fileURLWithPath: spec[1]), into: URL(fileURLWithPath: spec[2]), layout: layout,
+      policyOnNeuralEngine: spec[0] == "split-pieces-ane-both", visionWeightLimit: limit, cacheKey: { "jetlink\($0)" })
     print("prepared in \(Date().timeIntervalSince(start)) s: \(report)")
   }
 }

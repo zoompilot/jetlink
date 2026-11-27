@@ -56,6 +56,10 @@ final class AppModel {
     state.health = device.health
     state.deviceName = ThisDevice.name
     state.needsForeground = !sceneActive && server.runState == .serving
+    let shortfall = models.runningShortfall
+    state.slowWarning = server.recent.flatMap { SlowFrames.warning(meanMs: $0.servedMs.mean, frames: $0.frames, storage: shortfall) }
+    // the slow frames' banner says it already
+    state.storageWarning = state.slowWarning == nil ? shortfall?.message : nil
     state.defaultModel = models.rows.first { $0.isDefault }
     state.hasPreparedModel = !(models.inventory?.artifacts.filter(\.current).isEmpty ?? true)
     state.catalogUnavailable = models.catalog?.error != nil && (models.catalog?.models.isEmpty ?? true)

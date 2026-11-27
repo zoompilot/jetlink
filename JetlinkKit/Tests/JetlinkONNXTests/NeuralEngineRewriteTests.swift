@@ -112,3 +112,84 @@ import Testing
     }
   }
 }
+
+/// Constant gathers as slices (Patches.constantGathersAsSlices), held to the
+/// graph they should leave and to the cases they must leave alone.
+@Suite struct GatherAsSliceTests {
+  static var none: Source { NeuralEngineRewriteTests.none }
+  static let f16 = DataType.float16
+
+  static func ints(_ g: Graph, _ name: String) throws -> [Int64] {
+    try Elements.integers(try #require(g.initializers.first { $0.key == name }), none)
+  }
+
+  /// Lebowski's history pick: GatherND by [[-9]...[-1]] of [25, 1, 512], the last 9 rows.
+  @Test func theLastRowsByGatherNDBecomeASlice() throws {
+    var b = OnnxGraphBuilder()
+    b.input("history", Self.f16, [25, 1, 512])
+    b.int64("rows", Array(-9...(-1)), dims: [9, 1])
+    b.node("GatherND", ["history", "rows"], ["recent"])
+    b.output("recent", Self.f16, [9, 1, 512])
+    var g = b.graph
+    #expect(try Patches.constantGathersAsSlices(&g, Self.none) == 1)
+    #expect(g.nodes.map(\.op) == ["Slice"])
+    #expect(g.nodes[0].inputs == ["history", "recent__starts", "recent__ends", "recent__axes"])
+    #expect(g.nodes[0].outputs == ["recent"])
+    #expect(try Self.ints(g, "recent__starts") == [16] && Self.ints(g, "recent__ends") == [25] && Self.ints(g, "recent__axes") == [0])
+  }
+
+  /// Lebowski's last token: Gather(axis 1) by the scalar 8 of [1, 9, 512], to [1, 512].
+  @Test func aScalarGatherBecomesASliceAndAReshape() throws {
+    var b = OnnxGraphBuilder()
+    b.input("tokens", Self.f16, [1, 9, 512])
+    b.int64("last", [8], dims: [])
+    b.node("Gather", ["tokens", "last"], ["select"], [.int("axis", 1)])
+    b.output("select", Self.f16, [1, 512])
+    var g = b.graph
+    #expect(try Patches.constantGathersAsSlices(&g, Self.none) == 1)
+    #expect(g.nodes.map(\.op) == ["Slice", "Reshape"])
+    #expect(g.nodes[0].outputs == ["select__slice"] && g.nodes[1].outputs == ["select"])
+    #expect(try Self.ints(g, "select__starts") == [8] && Self.ints(g, "select__ends") == [9] && Self.ints(g, "select__axes") == [1])
+    #expect(try Self.ints(g, "select__shape") == [1, 512])
+  }
+
+  @Test func aRunOfIndicesBecomesASlice() throws {
+    var b = OnnxGraphBuilder()
+    b.input("x", Self.f16, [4, 6])
+    b.int64("run", [-4, -3, -2], dims: [3])
+    b.node("Gather", ["x", "run"], ["y"], [.int("axis", -1)])
+    b.output("y", Self.f16, [4, 3])
+    var g = b.graph
+    #expect(try Patches.constantGathersAsSlices(&g, Self.none) == 1)
+    #expect(g.nodes.map(\.op) == ["Slice"])
+    #expect(try Self.ints(g, "y__starts") == [2] && Self.ints(g, "y__ends") == [5] && Self.ints(g, "y__axes") == [1])
+  }
+
+  /// Indices out of order, with gaps, by a computed tensor, or batched stay gathers.
+  @Test func whatASliceCannotSayStaysAGather() throws {
+    for (indices, dims) in [([Int64(2), 0], [Int64(2)]), ([0, 2], [2])] {
+      var b = OnnxGraphBuilder()
+      b.input("x", Self.f16, [4, 6])
+      b.int64("i", indices, dims: dims)
+      b.node("Gather", ["x", "i"], ["y"])
+      b.output("y", Self.f16, [2, 6])
+      var g = b.graph
+      #expect(try Patches.constantGathersAsSlices(&g, Self.none) == 0)
+      #expect(g.nodes.map(\.op) == ["Gather"])
+    }
+    var b = OnnxGraphBuilder()
+    b.input("x", Self.f16, [4, 6])
+    b.input("i", DataType.int64, [2])
+    b.node("Gather", ["x", "i"], ["y"])
+    b.output("y", Self.f16, [2, 6])
+    var g = b.graph
+    #expect(try Patches.constantGathersAsSlices(&g, Self.none) == 0)
+    var nd = OnnxGraphBuilder()
+    nd.input("x", Self.f16, [2, 4, 6])
+    nd.int64("rows", [0, 1], dims: [2, 1])
+    nd.node("GatherND", ["x", "rows"], ["y"], [.int("batch_dims", 1)])
+    nd.output("y", Self.f16, [2, 6])
+    var h = nd.graph
+    #expect(try Patches.constantGathersAsSlices(&h, Self.none) == 0)
+  }
+}

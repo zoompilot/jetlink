@@ -429,10 +429,29 @@ public final class ServerController: @unchecked Sendable {
     }
   }
 
+  /// Why a download is refused: the model and its prepared copy cannot both
+  /// fit, so it would only fill the disk. Nil when they fit, the model is
+  /// here already, or the backend makes no estimate.
+  private func downloadShortfall(_ state: Download) -> StorageShortfall? {
+    guard let need = server.host.backend.storageNeed(modelBytes: state.total),
+      let path = try? server.cache.modelPath(state.sha256), Files.size(of: path) != state.total,
+      let free = Files.freeBytes(at: server.cache.layout.root),
+      let short = need.shortfall(for: .download, free: free), short.blocking
+    else { return nil }
+    return short
+  }
+
   private func runDownload(_ state: Download) async {
     if state.cancel {
       downloadEvent(state, "cancelled")
       forgetDownload(state)
+      return
+    }
+    if let short = downloadShortfall(state) {
+      log.warning("not downloading \(state.sha256.prefix(16)): \(short.message)")
+      downloadEvent(state, "failed", detail: short.message)
+      forgetDownload(state)
+      server.host.fetchEnded(state.sha256)
       return
     }
     downloadEvent(state, "started")

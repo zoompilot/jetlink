@@ -182,7 +182,7 @@ struct ModelsView: View {
 
   private var diskSummary: String {
     guard let disk = models.inventory?.disk else { return "" }
-    return ModelFormatting.diskSummary(models: disk.modelsBytes, engines: disk.enginesBytes, free: disk.freeBytes)
+    return ModelFormatting.diskSummary(models: disk.modelsBytes, engines: disk.enginesBytes, neuralEngine: disk.neuralEngineBytes, free: disk.freeBytes)
   }
 
   // MARK: Actions

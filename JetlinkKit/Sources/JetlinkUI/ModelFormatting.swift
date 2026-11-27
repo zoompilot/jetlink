@@ -39,9 +39,11 @@
       return parts.joined(separator: " · ")
     }
 
-    /// "Downloads 2.3 GB · Prepared engines 6.9 GB · 13.6 GB available".
-    public static func diskSummary(models: Int64, engines: Int64, free: Int64) -> String {
-      "Downloads \(ByteCount.string(models)) · Prepared engines \(ByteCount.string(engines)) · \(ByteCount.string(free)) available"
+    /// "Downloads 2.3 GB · Prepared engines 6.9 GB · 13.6 GB available", with
+    /// "Neural Engine copies 1.5 GB" after the engines where there are any.
+    public static func diskSummary(models: Int64, engines: Int64, neuralEngine: Int64? = nil, free: Int64) -> String {
+      let copies = neuralEngine.map { " · Neural Engine copies \(ByteCount.string($0))" } ?? ""
+      return "Downloads \(ByteCount.string(models)) · Prepared engines \(ByteCount.string(engines))\(copies) · \(ByteCount.string(free)) available"
     }
 
     /// "CoreML, tinygrad": the backends a model already has an engine for.
