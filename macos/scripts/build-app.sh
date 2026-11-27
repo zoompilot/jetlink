@@ -15,7 +15,7 @@ command -v xcodegen >/dev/null 2>&1 || { echo "error: xcodegen is missing; run: 
 # makes `git describe --always` return a bare commit sha, which is not a legal
 # CFBundleShortVersionString, so anything that does not look like a dotted
 # version falls back to 0.0.0. Only v* tags count, not the moving `edge` tag.
-JETLINK_VERSION="${JETLINK_VERSION:-$(git -C "$MACOS_DIR" describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || echo 0.0.0)}"
+JETLINK_VERSION="${JETLINK_VERSION:-$(git -C "$MACOS_DIR" describe --tags --match 'v[0-9]*' --always 2>/dev/null || echo 0.0.0)}"
 JETLINK_VERSION="${JETLINK_VERSION#v}"
 case "$JETLINK_VERSION" in
   [0-9]*.[0-9]*) ;;
