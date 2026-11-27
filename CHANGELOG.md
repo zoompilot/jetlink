@@ -1,4 +1,20 @@
 <!-- Each release: a "Jetlink vX.Y.Z" heading underlined with =, newest first. A release that changes the fork contract ends with a **Forks** group (docs/publishing.md). -->
+Jetlink v0.10.2
+===============
+**iPhone & iPad**
+* **Lebowski runs on the Neural Engine.** A model too large for it is now split into pieces it takes. Thanks Alexandru (@alexandrupetraru)!
+* **Storage checks:** the app says when a model will not fit, or fits with too little room left to stay fast. Status shows **Low Storage** and **Big Model Running Slowly**.
+* Settings shows the space the Neural Engine's copies take.
+* Neural Engine Only is slightly faster.
+
+**Mac**
+* A download that cannot fit is refused and says what it needs.
+* Models shows the space the Neural Engine's copies take.
+
+**General Updates & Fixes**
+* Deleting a model frees its Neural Engine copies. Old copies and prepared models that can no longer load are removed, which can free several GB.
+* Models are prepared again the first time they load on Neural Engine Only, and take a little longer to load once on the others.
+
 Jetlink v0.10.1
 ===============
 **Mac, iPhone & iPad**
