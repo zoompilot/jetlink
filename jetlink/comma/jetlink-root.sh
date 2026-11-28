@@ -707,7 +707,8 @@ cmd_boot() {
   [[ $# -eq 1 ]] || usage
   local mode
   mode=$(cat "$1" 2>/dev/null) || return 0
-  [[ -n "$mode" && "$mode" != 0 ]] || return 0
+  # USB (1) and iOS (2) hold the port; off (0) and Wi-Fi (3) leave it alone
+  [[ "$mode" == 1 || "$mode" == 2 ]] || return 0
   cmd_draw off
 }
 

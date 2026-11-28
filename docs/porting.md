@@ -49,7 +49,9 @@ that ships a prebuilt params library must rebuild it.
 ```
 
 `JetlinkLink` is the setting: 0 off, 1 USB (a Jetson, PC, Mac or Android
-phone), 2 iOS (an iPhone or iPad). `JetlinkSpec` must survive a reboot, or
+phone), 2 iOS (an iPhone or iPad), 3 Wi-Fi (an iPhone's hotspot, for testing:
+set over SSH, never offered in the panels; modeld dials 172.20.10.1:5599 and
+the USB port is left alone). `JetlinkSpec` must survive a reboot, or
 every drive rebuilds the model for minutes. These names are `Stock.KEYS`; a
 fork that names them differently sets its own `KEYS` in the adapter.
 

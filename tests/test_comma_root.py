@@ -249,9 +249,10 @@ def test_a_voter_is_forced_and_let_go(tmp_path, lever, force, value):
   assert (lever / 'force_val').read_text().strip() == '0'
 
 
-@pytest.mark.parametrize('setting, cut', [('1', True), ('2', True), ('0', False), ('', False), (None, False)])
+@pytest.mark.parametrize('setting, cut', [('1', True), ('2', True), ('0', False), ('3', False), ('', False), (None, False)])
 def test_boot_cuts_the_draw_while_the_link_is_on(tmp_path, setting, cut):
-  # the launch script, before manager: usb and ios are on, off and no setting are not
+  # the launch script, before manager: usb and ios hold the port; off, Wi-Fi
+  # (3, which never touches it) and no setting do not
   lever = usb_icl(tmp_path)
   lever.mkdir()
   path = tmp_path / 'JetlinkLink'

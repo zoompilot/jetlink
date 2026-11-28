@@ -19,6 +19,7 @@ import time
 from typing import NamedTuple
 
 from jetlink.comma import gadget
+from jetlink.openpilot.interface import PORT_MODES, WIFI_DIAL
 
 # -- progress -----------------------------------------------------------------
 # Written by the provisioning run and the joining state, read by the UI: a
@@ -166,6 +167,8 @@ def link_transport(mode: str | None = None, live: dict | None = None) -> str:
   """What carries the link, for the panels: a host on the vendor interface,
   or an iPhone dialed in over the network one. `live` is the owner's record;
   without it, `mode` stands in until the owner has said. Never raises."""
+  if mode == 'wifi':
+    return "Wi-Fi ({}:{})".format(*WIFI_DIAL)
   try:
     if live is not None and live.get('link') in ('usb', 'cable'):
       kind, peer = live['link'], live.get('peer')
@@ -309,8 +312,9 @@ class Status(NamedTuple):
 
   @property
   def holds_port(self) -> bool:
-    """The link holds the comma's USB port, so ADB cannot have it."""
-    return self.enabled
+    """The link holds the comma's USB port, so ADB cannot have it. Over
+    Wi-Fi it does not."""
+    return self.enabled and self.mode in PORT_MODES
 
   @property
   def port_state(self) -> str | None:

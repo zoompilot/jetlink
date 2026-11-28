@@ -49,7 +49,7 @@ FORK_IMPORTS = {
 }
 # What jetlink.openpilot calls on a client and reads off one, off a loan, and
 # off the transport a client rides on: the comma's side of the link
-CLIENT_CALLS = ('open_socket', 'open_borrowed_ffs', 'open_ffs', 'hello', 'ensure_engine', 'infer_begin',
+CLIENT_CALLS = ('open_socket', 'open_borrowed_ffs', 'open_ffs', 'open_tcp', 'hello', 'ensure_engine', 'infer_begin',
                 'infer_end', 'ping', 'shutdown', 'leave', 'rebind', 'close')
 CLIENT_FIELDS = ('t', 'dead', 'deadline', 'last_timings', 'last_state')
 LOAN_MEMBERS = ('cable', 'mount', 'udc', 'bounce', 'accept', 'closed', 'note_server', 'close')

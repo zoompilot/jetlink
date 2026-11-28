@@ -104,7 +104,7 @@ class TestTheContract(unittest.TestCase):
 
   def test_the_settings_and_the_states_are_the_forks_names(self):
     # the panels store an index into MODES; selfdrived reads STATES as capnp enum names
-    self.assertEqual(jo.MODES, ('off', 'usb', 'ios'))
+    self.assertEqual(jo.MODES, ('off', 'usb', 'ios', 'wifi'))
     self.assertEqual(jo.STATES, ('none', 'joining', 'retrying', 'ready', 'running', 'unavailable'))
 
   def test_keys_without_a_model_manager(self):
@@ -212,7 +212,7 @@ class TestFileParams(unittest.TestCase):
     self.assertEqual(self.settings.mode(), 'off')
 
   def test_the_link_setting_is_an_index(self):
-    for raw, expected in ((b'0', 'off'), (b'1', 'usb'), (b'2', 'ios'), (b'3', 'off'), (b'-1', 'off'),
+    for raw, expected in ((b'0', 'off'), (b'1', 'usb'), (b'2', 'ios'), (b'3', 'wifi'), (b'4', 'off'), (b'-1', 'off'),
                           (b'usb', 'off'), (b'', 'off')):
       self.write('JetlinkLink', raw)
       self.assertEqual(self.settings.mode(), expected, raw)

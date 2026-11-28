@@ -112,6 +112,48 @@ class HoldingTheLink(ClockedTest):
     assert self.op.log.has('error closing the link', 'exception')
 
 
+class DialingThePhone(OpenpilotTest):
+  """Over Wi-Fi modeld dials the phone itself: no lease, no gadget, no wait
+  for an enumeration."""
+
+  def setUp(self):
+    super().setUp()
+    import socket
+    self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    self.srv.bind(('127.0.0.1', 0))
+    self.srv.listen(1)
+    self.addCleanup(self.srv.close)
+    self.link = link.Link(self.op.log, dial=self.srv.getsockname())
+    self.addCleanup(self.link.close)
+
+  def test_the_phone_is_dialed_and_nothing_is_borrowed(self):
+    with mock.patch.object(lending, 'borrow') as borrow, mock.patch.object(gadget, 'wait_for_host') as wait:
+      client = link.connect_patiently(self.link)
+    conn, _ = self.srv.accept()
+    conn.close()
+    assert client is self.link.client
+    borrow.assert_not_called()
+    wait.assert_not_called()
+    assert self.link.loan is None
+    assert self.op.log.has('dialed the phone at 127.0.0.1')
+
+  def test_the_dial_is_bounded(self):
+    with mock.patch('socket.create_connection', side_effect=TimeoutError('timed out')) as dial, \
+         self.assertRaises(TimeoutError):
+      self.link.open()
+    assert dial.call_args.kwargs['timeout'] == link.DIAL_TIMEOUT
+    assert self.link.client is None
+
+  def test_a_dead_client_is_dialed_again(self):
+    first = self.link.open()
+    self.srv.accept()[0].close()
+    first.dead = True
+    with mock.patch.object(first, 'close'):
+      second = self.link.open()
+    self.srv.accept()[0].close()
+    assert second is not first
+
+
 class BorrowingTheGadget(OpenpilotTest):
   """modeld does not bring the gadget up.
 

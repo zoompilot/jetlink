@@ -31,8 +31,14 @@ from pathlib import Path
 from typing import Any, Protocol
 
 # the Jetlink setting: off; a Jetson, a Linux PC or a Mac on USB; an
-# iPhone on the cable. The INT param holds the index
-MODES = ('off', 'usb', 'ios')
+# iPhone on the cable; an iPhone over its Wi-Fi hotspot. The INT param holds
+# the index. wifi is set over SSH only, for testing: the panels offer the rest
+MODES = ('off', 'usb', 'ios', 'wifi')
+# the modes that hold the comma's USB port, so ADB cannot have it
+PORT_MODES = ('usb', 'ios')
+# where wifi dials: an iPhone's Personal Hotspot is always 172.20.10.1, and the
+# app listens on 5599 while its developer settings are on
+WIFI_DIAL = ('172.20.10.1', 5599)
 # what a joining model reports as big_model_state, by the names of the fork's
 # modelDataV2SP.acceleratorState enum
 STATES = ('none', 'joining', 'retrying', 'ready', 'running', 'unavailable')

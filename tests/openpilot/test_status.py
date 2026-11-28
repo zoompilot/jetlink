@@ -362,6 +362,10 @@ class TestTransport(OpenpilotTest):
     gadget.note_link('cable', '192.168.60.3')
     self.assertEqual(status.link_transport(), 'iOS over USB (192.168.60.3)')
 
+  def test_wifi_names_the_phone_it_dials_whatever_the_records_say(self):
+    gadget.note_link('cable', '192.168.60.3')
+    self.assertEqual(status.link_transport('wifi'), 'Wi-Fi (172.20.10.1:5599)')
+
   def test_it_never_raises(self):
     with mock.patch.object(gadget, 'link_kind', side_effect=OSError('gone')):
       self.assertEqual(status.link_transport(), 'USB')
@@ -625,6 +629,10 @@ class TestWhatThePanelsDerive(unittest.TestCase):
     # ADB off while the link is on; beside a chestnut enabled is already False
     for enabled in (False, True):
       self.assertEqual(snapshot(enabled=enabled, present=not enabled).holds_port, enabled)
+
+  def test_wifi_leaves_the_port_to_adb(self):
+    self.assertFalse(snapshot(enabled=True, mode='wifi').holds_port)
+    self.assertTrue(snapshot(enabled=True, mode='ios').holds_port)
 
 
 class TestPhase(unittest.TestCase):

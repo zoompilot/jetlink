@@ -139,9 +139,12 @@ class JetlinkClient:
     return cls(FfsTransport.borrowed(mount, udc, bounce=bounce, owner_gadget=owner_gadget), **kw)
 
   @classmethod
-  def open_tcp(cls, host: str, port: int = 5599, **kw) -> JetlinkClient:
+  def open_tcp(cls, host: str, port: int = 5599, connect_timeout: float = 5.0, **kw) -> JetlinkClient:
+    """Dial a server: a Jetson on the LAN, or a phone over its hotspot (the
+    wifi setting). `connect_timeout` bounds the connect alone; a suspended
+    iOS app can leave one hanging rather than refused."""
     from jetlink.transport.tcp import TcpTransport
-    return cls(TcpTransport.connect(host, port), **kw)
+    return cls(TcpTransport.connect(host, port, timeout=connect_timeout), **kw)
 
   @classmethod
   def open_listen(cls, address: str, timeout: float | None = None, **kw) -> JetlinkClient:

@@ -49,6 +49,7 @@ import time
 
 from jetlink import protocol as P
 from jetlink.comma import gadget
+from jetlink.openpilot.interface import WIFI_DIAL
 from jetlink.openpilot.model_state import JetlinkModelState
 from jetlink.transport.priority import background_thread
 
@@ -743,7 +744,8 @@ def join(parts, cam_w: int, cam_h: int, small) -> JoiningModelState:
   op = parts.op
   face = op.model_face()
   ready: dict = {}
-  link = links.Link(parts.log)
+  # the setting as this modeld starts: a change waits for the next drive
+  link = links.Link(parts.log, dial=WIFI_DIAL if parts.settings.mode() == 'wifi' else None)
 
   def prepare():
     from jetlink.openpilot.interface import FrameWarp, conformance

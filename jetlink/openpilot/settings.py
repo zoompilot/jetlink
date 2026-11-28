@@ -27,7 +27,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from jetlink.openpilot.interface import MODES, Keys
+from jetlink.openpilot.interface import MODES, PORT_MODES, Keys
 
 
 class FileParams:
@@ -80,6 +80,11 @@ class Settings:
     writes the default before anything runs."""
     index = self.params.get_int(self.keys.link)
     return MODES[index] if index is not None and 0 <= index < len(MODES) else 'off'
+
+  def holds_port(self, mode: str | None = None) -> bool:
+    """Does the setting take the comma's USB port (USB or iOS)? Off and Wi-Fi
+    leave it alone. `mode` is the setting when the caller has read it already."""
+    return (self.mode() if mode is None else mode) in PORT_MODES
 
   def offroad(self) -> bool:
     """Is the car parked? The owner runs onroad too, to keep hold of the gadget,

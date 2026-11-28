@@ -627,9 +627,12 @@ class Owner:
   def step(self) -> None:
     # each read is a file; take them once and pass them down
     mode = self.mode = self.settings.mode()
-    if mode == 'off':
+    # over Wi-Fi modeld dials the phone itself and the USB port is not ours:
+    # no gadget, no run, no tuning, as with the link off. The owner stays up
+    # for its heartbeat, which the panels and the offroad alert read
+    if not self.settings.holds_port(mode):
       if self.transport is not None:
-        gadget.log.warning("jetlink: disabled, releasing the link")
+        gadget.log.warning("jetlink: link set to %s, releasing it", mode)
         self.close_link()
       self.stop_worker()
       self.wake()
@@ -651,15 +654,15 @@ class Owner:
       self.tuned = mode
 
   def link_wanted(self) -> bool:
-    """Is the link still wanted at a stop: set on, and no chestnut on the
-    port? Settings.mode() reads an unreadable param as 'off', as manager
+    """Is the link still wanted at a stop: set to a mode that holds the
+    port (not off, not Wi-Fi), and no chestnut on it? Settings.mode() reads an unreadable param as 'off', as manager
     does, so that is not wanted. The except only guards a bug: anything
     raised in the stop's finally would skip the teardown after it. manager's
     own chestnut test is chestnut_present(), cached 2 s, and this walks the
     USB ids itself, so a chestnut mid-re-enumeration can read as absent here
     and keep the tuning for that drive; accepted."""
     try:
-      return self.settings.mode() != 'off' and not port.chestnut_attached(self.port.chestnut_ids)
+      return self.settings.holds_port() and not port.chestnut_attached(self.port.chestnut_ids)
     except Exception:
       gadget.log.exception("jetlink: could not tell whether the link is still wanted; keeping its tuning")
       return True

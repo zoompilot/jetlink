@@ -1430,6 +1430,16 @@ class AnyForkTest(OpenpilotTest):
     self.assertEqual(s.run({}, {}, {}), {'from': 'small'})
     self.assertEqual([id(b) for b in zeroed], held)
 
+  def test_on_wifi_the_link_dials_the_phone(self):
+    for mode, dial in (('wifi', ('172.20.10.1', 5599)), ('ios', None), ('usb', None)):
+      with self.subTest(mode):
+        self.op.set_mode(mode)
+        s = joining.join(self.parts, 1928, 1208, fakes.SHAPES[0]()[0])
+        self.addCleanup(JoiningBase._close, s)
+        self.assertTrue(wait_for(lambda: link.open_link.called))
+        self.assertEqual(link.open_link.call_args.args[1].dial, dial)
+        link.open_link.reset_mock()
+
   def test_every_small_model_shape_is_reset_in_place(self):
     for shape in fakes.SHAPES:
       with self.subTest(shape.__name__):

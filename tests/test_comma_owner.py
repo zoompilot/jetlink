@@ -613,6 +613,25 @@ class TestTheToggle(OwnerTest):
     self.write('JetlinkLink', b'0')
     o.step()
     o.port.off.assert_called_once()
+
+  def test_on_wifi_the_port_and_the_gadget_are_let_go(self):
+    # modeld dials the phone itself: nothing of the owner's is on the link
+    o = self.owner()
+    worker = o.worker = mock.Mock(**{'poll.return_value': None})
+    self.write('JetlinkLink', b'3')
+    o.step()
+    o.close_link.assert_called_once()
+    worker.terminate.assert_called_once()
+    o.port.off.assert_called_once()
+    o.port.update.assert_not_called()
+    self.assertNotIn('gadget', [c.args[0] for c in self.root_run.call_args_list])
+
+  def test_on_wifi_the_tuning_is_not_wanted_at_a_stop(self):
+    o = self.owner()
+    self.write('JetlinkLink', b'3')
+    self.assertFalse(o.link_wanted())
+    self.write('JetlinkLink', b'2')
+    self.assertTrue(o.link_wanted())
     o.port.update.assert_not_called()
 
   def test_stopping_gives_the_port_back(self):

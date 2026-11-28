@@ -36,6 +36,9 @@ CONNECT_DELAY = 0.5
 INFERENCE_TIMEOUT = 0.2
 # between joins while neither end has the picked model and nothing else is built
 MODEL_WAIT = 60.0
+# one dial of the phone over Wi-Fi: a refused or unreachable one fails at once,
+# and a suspended app can leave one hanging. connect_patiently dials again
+DIAL_TIMEOUT = 1.0
 # how long the load may wait for the early gadget bind; a provisioning run may
 # still be letting go of the endpoints
 PRESENT_TIMEOUT = 5.0
@@ -93,12 +96,14 @@ class Link:
   cycle. So an attempt that cannot use the link leaves it here rather than
   closing it, and only a deliberate close() lets go. On the cable the lease
   is the listener, and a client that died is replaced by the phone's next
-  dial on it.
+  dial on it. Over Wi-Fi (`dial`, the wifi setting's (host, port)) there is
+  no gadget and no lease: each open dials the phone.
   """
 
-  def __init__(self, log, name: str = 'modeld'):
+  def __init__(self, log, name: str = 'modeld', dial: tuple[str, int] | None = None):
     self.log = log
     self.name = name
+    self.dial = dial
     self.client = None
     self.loan = None
     self._lock = threading.Lock()
@@ -110,7 +115,13 @@ class Link:
     reusing it fails the next attempt with EBADF."""
     if self.client is not None and self.client.dead:
       self.close()
-    if self.client is None:
+    if self.client is None and self.dial is not None:
+      from jetlink.client import FRAME_TIMEOUT, JetlinkClient
+      host, port = self.dial
+      self.client = JetlinkClient.open_tcp(host, port, connect_timeout=DIAL_TIMEOUT, deadline=FRAME_TIMEOUT,
+                                           name=self.name)
+      self.log.warning("jetlink: dialed the phone at %s:%d over Wi-Fi", host, port)
+    elif self.client is None:
       from jetlink.comma import lending
       self.client = connect(self.log, name=self.name, loan=self._borrow(deadline),
                             wait=_left(deadline, lending.BORROW_TIMEOUT))
@@ -207,6 +218,9 @@ def connect_patiently(link: Link):
     except Exception as e:
       client, last = None, e
     if client is not None:
+      # over Wi-Fi there is no gadget, and the dial proved the phone is there
+      if link.dial is not None:
+        return client
       # over a phone's cable wait_for_host returns at once and a TCP client's
       # rebind is a no-op, so its network interface is never bounced
       if gadget.wait_for_host(max(0.0, deadline - time.monotonic()), bounce=client.rebind,
