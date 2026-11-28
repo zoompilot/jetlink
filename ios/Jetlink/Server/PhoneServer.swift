@@ -117,8 +117,8 @@ final class PhoneServer: ServerControlling {
     do {
       let root = try PhoneServer.prepareCacheDirectory()
       let embedded = try EmbeddedServer(
-        // The listener is only for bench tools over Wi-Fi; the comma never dials the phone.
-        configuration: Server.Configuration(port: settings.port, cacheRoot: root, preload: following == nil, listen: settings.developer, keepPlans: 2),
+        // The listener is for a comma on Wi-Fi and bench tools; over the cable the phone dials the comma.
+        configuration: Server.Configuration(port: settings.port, cacheRoot: root, preload: following == nil, listen: settings.listening, keepPlans: 2),
         backend: OrtBackend(
           profile: profile, preparer: ONNXPreparer(), keepAlive: settings.keepGPUAwake, keepCPUWarm: settings.keepCPUWarm))
       self.embedded = embedded

@@ -79,7 +79,7 @@ struct SettingsScreen: View {
       .onChange(of: settings.device) { app.server.restart() }
       .onChange(of: settings.keepGPUAwake) { app.server.restart() }
       .onChange(of: settings.keepCPUWarm) { app.server.restart() }
-      .onChange(of: settings.developer) { app.server.restart() }
+      .onChange(of: settings.listening) { app.server.restart() }
       .sensoryFeedback(.success, trigger: settings.developer)
     }
   }
@@ -94,35 +94,46 @@ struct SettingsScreen: View {
 
   // MARK: developer
 
-  /// The port bench tools on a Mac reach the phone on over Wi-Fi. Driving
-  /// never uses it: over the cable the phone dials the comma.
+  /// Connect over Wi-Fi, and the port a comma on Wi-Fi or bench tools on a Mac
+  /// reach the phone on. Driving over the cable never uses it: the phone dials the comma.
   private var developer: some View {
-    Section {
-      LabeledContent("Port") {
-        TextField("5599", text: $portText)
-          .keyboardType(.numberPad)
-          .multilineTextAlignment(.trailing)
-          .monospacedDigit()
-          .onSubmit(applyPort)
-      }
-      if portChanged {
-        Button("Use Port \(portText)", action: applyPort)
-      }
-      // The cable's address is the comma's to hand out and the phone's to
-      // dial; nobody types it.
-      ForEach(app.network.addresses.filter { $0.kind != .cable }) { address in
-        LabeledContent {
-          Text("\(address.address):\(app.server.port.map(String.init) ?? portText)")
-            .monospacedDigit()
-            .textSelection(.enabled)
-        } label: {
-          Label(address.kind.title, systemImage: address.kind.symbol)
-        }
+    @Bindable var settings = app.settings
+    return Section {
+      Toggle("Connect over Wi-Fi", isOn: $settings.overWiFi)
+      if settings.overWiFi {
+        wiFiDetails
       }
     } header: {
       Text("Developer")
     } footer: {
-      Text("Lets bench tools on a Mac reach the phone over Wi-Fi. Driving does not need it.")
+      Text(
+        "Lets a comma with Jetlink set to Wi-Fi, and bench tools on a Mac, reach the phone over Wi-Fi. Use Personal Hotspot with Maximize Compatibility off; the comma dials port 5599. Driving over the cable does not need it."
+      )
+    }
+  }
+
+  @ViewBuilder
+  private var wiFiDetails: some View {
+    LabeledContent("Port") {
+      TextField("5599", text: $portText)
+        .keyboardType(.numberPad)
+        .multilineTextAlignment(.trailing)
+        .monospacedDigit()
+        .onSubmit(applyPort)
+    }
+    if portChanged {
+      Button("Use Port \(portText)", action: applyPort)
+    }
+    // The cable's address is the comma's to hand out and the phone's to
+    // dial; nobody types it.
+    ForEach(app.network.addresses.filter { $0.kind != .cable }) { address in
+      LabeledContent {
+        Text("\(address.address):\(app.server.port.map(String.init) ?? portText)")
+          .monospacedDigit()
+          .textSelection(.enabled)
+      } label: {
+        Label(address.kind.title, systemImage: address.kind.symbol)
+      }
     }
   }
 

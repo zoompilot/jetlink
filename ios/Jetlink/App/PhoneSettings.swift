@@ -8,19 +8,29 @@ import Observation
 final class PhoneSettings {
   private let defaults: UserDefaults
 
-  /// The TCP port the server listens on while `developer` is on, where bench
-  /// tools such as `bench_link.py --host` reach the phone over Wi-Fi. Over
-  /// the cable the phone dials the comma instead.
+  /// The TCP port the server listens on while `listening`, where a comma with
+  /// Jetlink set to Wi-Fi, and bench tools such as `bench_link.py --host`,
+  /// reach the phone over Wi-Fi. Over the cable the phone dials the comma instead.
   var port: UInt16 {
     didSet { defaults.set(Int(port), forKey: Keys.port) }
   }
 
-  /// Developer settings shown, and the server listening on `port`. Off, the
-  /// phone only dials the comma, which is all driving needs. Seven taps on
-  /// the version turn it on or off.
+  /// Developer settings shown. Seven taps on the version turn it on or off.
   var developer: Bool {
     didSet { defaults.set(developer, forKey: Keys.developer) }
   }
+
+  /// Connect over Wi-Fi, a developer setting: the server listens on `port`
+  /// for a comma with Jetlink set to Wi-Fi, or a bench tool. Off by default,
+  /// since it listens on every network the phone is on.
+  var overWiFi: Bool {
+    didSet { defaults.set(overWiFi, forKey: Keys.overWiFi) }
+  }
+
+  /// Does the server listen on `port`? Only with Connect over Wi-Fi on and the
+  /// developer settings shown; otherwise the phone only dials the comma over
+  /// the cable, which is all driving needs.
+  var listening: Bool { developer && overWiFi }
 
   /// What runs the model. Automatic until one is chosen by hand.
   var device: Processor {
@@ -65,6 +75,7 @@ final class PhoneSettings {
     let port = defaults.integer(forKey: Keys.port)
     self.port = port > 0 && port < 65_536 ? UInt16(port) : 5599
     self.developer = defaults.bool(forKey: Keys.developer)
+    self.overWiFi = defaults.bool(forKey: Keys.overWiFi)
     // A device stored before Automatic existed was chosen by hand, and stays.
     self.device = defaults.string(forKey: Keys.device).flatMap(Processor.init(rawValue:)) ?? .automatic
     self.automaticPicks = defaults.dictionary(forKey: Keys.automaticPicks) as? [String: String] ?? [:]
@@ -83,6 +94,7 @@ final class PhoneSettings {
   private enum Keys {
     static let port = "port"
     static let developer = "developer"
+    static let overWiFi = "overWiFi"
     static let device = "device"
     static let automaticPicks = "automaticPicks"
     static let keepGPUAwake = "keepGPUAwake"
