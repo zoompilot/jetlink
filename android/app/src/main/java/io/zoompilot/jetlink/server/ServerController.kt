@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.util.Log
+import io.zoompilot.jetlink.BuildConfig
 import io.zoompilot.jetlink.settings.Chip
 import io.zoompilot.jetlink.settings.SettingsValues
 import kotlinx.coroutines.CoroutineScope
@@ -99,6 +100,10 @@ class ServerController(private val context: Context, private val scope: Coroutin
         // a model compiled for the NPU is good for this system build alone
         put("firmware", Build.FINGERPRINT)
         put("native_library_dir", context.applicationInfo.nativeLibraryDir)
+        put("qnn_shared_io", BuildConfig.QNN_SHARED_IO)
+        put("qnn_strict", BuildConfig.QNN_STRICT)
+        put("qnn_no_activation_fusion", BuildConfig.QNN_NO_ACTIVATION_FUSION)
+        put("qnn_runtime_identity", BuildConfig.QNN_RUNTIME_IDENTITY)
     }
 
     /** Follows the snapshot and the log for as long as the app runs. */
